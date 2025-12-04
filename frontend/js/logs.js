@@ -16,6 +16,14 @@ async function initLogsPage() {
   }
 
   await loadLogFiles();
+
+  // 🔄 Auto-refresh log every 2 seconds
+  setInterval(() => {
+    const file = document.getElementById("log-files").value;
+    if (file && file !== "No log files" && file !== "Error loading logs") {
+      loadLog(true); // auto-refresh mode
+    }
+  }, 2000);
 }
 
 async function loadLogFiles() {
@@ -28,6 +36,7 @@ async function loadLogFiles() {
   try {
     const data = await apiGet(`/logs/${svc}`);
     filesSelect.innerHTML = "";
+
     if (!data.files || data.files.length === 0) {
       const opt = document.createElement("option");
       opt.textContent = "No log files";
@@ -35,12 +44,16 @@ async function loadLogFiles() {
       filesSelect.appendChild(opt);
       return;
     }
+
     data.files.forEach(file => {
       const opt = document.createElement("option");
       opt.value = file;
       opt.textContent = file;
       filesSelect.appendChild(opt);
     });
+
+    // Load first log automatically
+    loadLog(false);
   } catch (err) {
     filesSelect.innerHTML = "";
     const opt = document.createElement("option");
@@ -50,19 +63,30 @@ async function loadLogFiles() {
   }
 }
 
-async function loadLog() {
+async function loadLog(isRefresh = false) {
   const serviceSelect = document.getElementById("service-select");
   const filesSelect = document.getElementById("log-files");
   const svc = serviceSelect.value;
   const file = filesSelect.value;
   const content = document.getElementById("log-content");
+
   if (!file || file === "No log files" || file === "Error loading logs") {
     content.textContent = "(no log loaded)";
     return;
   }
+
   try {
     const data = await apiGet(`/logs/${svc}/${encodeURIComponent(file)}`);
+    const previousScrollBottom =
+      content.scrollHeight - content.scrollTop - content.clientHeight < 40;
+
     content.textContent = data.content || "(empty)";
+
+    // Auto-scroll only if user was already at bottom OR the load is manual
+    if (!isRefresh || previousScrollBottom) {
+      content.scrollTop = content.scrollHeight;
+    }
+
   } catch (err) {
     content.textContent = "Error loading log: " + err.message;
   }
@@ -73,4 +97,8 @@ document.addEventListener("DOMContentLoaded", () => {
   document
     .getElementById("service-select")
     .addEventListener("change", loadLogFiles);
+
+  document
+    .getElementById("log-files")
+    .addEventListener("change", () => loadLog(false));
 });

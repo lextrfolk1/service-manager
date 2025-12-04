@@ -1,3 +1,6 @@
+/* --------------------------------------------------------- */
+/* Global Styles                                              */
+/* --------------------------------------------------------- */
 body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   margin: 0;
@@ -5,6 +8,10 @@ body {
   background: #f5f7fb;
   color: #222;
 }
+
+/* --------------------------------------------------------- */
+/* Header + Navigation                                        */
+/* --------------------------------------------------------- */
 
 header {
   background: #1f2933;
@@ -20,22 +27,25 @@ header h1 {
   font-size: 20px;
 }
 
+nav {
+  display: flex;
+  gap: 20px;
+  margin-top: 10px;
+}
+
 nav a {
-  color: #e5e7eb;
-  margin-left: 12px;
+  color: #eee;
   text-decoration: none;
-  font-size: 14px;
+  font-weight: 500;
 }
 
 nav a:hover {
   text-decoration: underline;
 }
 
-main {
-  padding: 24px;
-  max-width: 960px;
-  margin: 0 auto;
-}
+/* --------------------------------------------------------- */
+/* Services + Cards                                           */
+/* --------------------------------------------------------- */
 
 .service-card {
   background: white;
@@ -65,6 +75,7 @@ main {
   margin-top: 4px;
 }
 
+/* Badges */
 .badge {
   display: inline-flex;
   align-items: center;
@@ -84,6 +95,7 @@ main {
   color: #15803d;
 }
 
+/* Status indicators */
 .status-dot {
   width: 8px;
   height: 8px;
@@ -105,6 +117,7 @@ main {
   color: #374151;
 }
 
+/* Buttons */
 .btn {
   border: none;
   border-radius: 9999px;
@@ -134,18 +147,8 @@ main {
   cursor: default;
 }
 
-pre.log {
-  background: #111827;
-  color: #e5e7eb;
-  padding: 16px;
-  border-radius: 8px;
-  font-size: 12px;
-  overflow: auto;
-  max-height: 500px;
-}
-
-select,
-input {
+/* Inputs */
+select, input {
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid #d1d5db;
@@ -164,37 +167,96 @@ label {
   margin-bottom: 8px;
 }
 
-header {
-  background: #222;
-  color: #fff;
-  padding: 10px 20px;
+/* --------------------------------------------------------- */
+/* Logs Page Full-Width                                      */
+/* --------------------------------------------------------- */
+
+body.logs-page main {
+  max-width: none !important;
+  width: 100% !important;
+  margin: 0 !important;
 }
 
-nav {
-  display: flex;
-  gap: 20px;
-  margin-top: 10px;
-}
-
-nav a {
-  color: #eee;
-  text-decoration: none;
-  font-weight: 500;
-}
-
-nav a:hover {
-  text-decoration: underline;
-}
-
-#action-section {
-  position: sticky;
-  top: 70px;
-  z-index: 100;
-  background: #1a1a1a;
-  padding-bottom: 10px;
-}
-
-#output {
-  max-height: 150px;
+/* Logs content viewer */
+#log-content {
+  width: 100%;
+  max-width: 100%;
+  height: 70vh;
   overflow-y: auto;
+  overflow-x: auto;
+  background: #111;
+  color: #eee;
+  padding: 12px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+/* --------------------------------------------------------- */
+/* DASHBOARD SPLIT LAYOUT (Services Left, Output Right)      */
+/* --------------------------------------------------------- */
+
+#dashboard-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;   /* left grows, right fixed */
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+#services-column {
+  width: 100%;
+}
+
+#action-column {
+  width: 100%;
+  position: relative;
+}
+
+/* Action output container */
+#action-section {
+  background: #1a1a1a;
+  padding: 16px;
+  border-radius: 10px;
+  color: #e5e7eb;
+  position: sticky;
+  top: 90px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+
+/* Log output inside action panel */
+#output {
+  background: #0d1117;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 65vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+/* --------------------------------------------------------- */
+/* Mobile Fallback                                           */
+/* --------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  #dashboard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  #action-section {
+    position: static;
+    max-height: none;
+  }
 }

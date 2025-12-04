@@ -14,15 +14,19 @@
       <a href="admin.html">Admin</a>
     </nav>
   </header>
-  <main>
-     <section id="action-section">
-    <h3>Last Action Output</h3>
-    <pre class="log" id="output">(no actions yet)</pre>
-  </section>
+ <main id="dashboard-layout">
+  <div id="services-column">
     <h2>Services</h2>
     <div id="services"></div>
-    
-  </main>
+  </div>
+
+  <div id="action-column">
+    <section id="action-section">
+      <h3>Last Action Output</h3>
+      <pre class="log" id="output">(no actions yet)</pre>
+    </section>
+  </div>
+</main>
   <script src="js/utils.js"></script>
   <script src="js/services.js"></script>
 </body>
