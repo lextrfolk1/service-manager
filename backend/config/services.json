@@ -1,5 +1,12 @@
 {
   "services": {
+    "frontend-service": {
+      "type": "npm",
+      "port": 3000,
+      "dir": "~/codebase/lextr/frontend-service",
+      "command": "npm run dev"
+    },
+
     "config-service": {
       "type": "java",
       "port": 8888,
