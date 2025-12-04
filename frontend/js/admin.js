@@ -1,27 +1,18 @@
 async function loadConfig() {
   const editor = document.getElementById("config-editor");
   const status = document.getElementById("save-status");
+
   status.textContent = "Loading...";
+
   try {
-    const data = await apiGet("/services");
-    const template = {
-      services: {}
-    };
-    data.services.forEach(svc => {
-      template.services[svc.name] = {
-        type: svc.type,
-        port: svc.port,
-        dir: "/path/to/your/service/dir",
-        command: "your-start-command-here"
-      };
-    });
-    editor.value = JSON.stringify(template, null, 2);
-    status.textContent =
-      "Loaded (template based on current services). Edit and Save to overwrite backend config.";
+    const data = await apiGet("/config/services");
+    editor.value = JSON.stringify(data, null, 2);
+    status.textContent = "Loaded actual services.json. Edit and Save to apply.";
   } catch (err) {
     status.textContent = "Failed to load config: " + err.message;
   }
 }
+
 
 async function saveConfig() {
   const editor = document.getElementById("config-editor");

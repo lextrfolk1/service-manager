@@ -116,6 +116,18 @@ app.get("/logs/:name/:file", (req, res) => {
   }
 });
 
+app.get("/config/services", (req, res) => {
+  try {
+    const configPath = path.join(__dirname, "../config/services.json");
+    const raw = fs.readFileSync(configPath, "utf-8");
+    const json = JSON.parse(raw);
+    res.json(json);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load services.json", details: err.message });
+  }
+});
+
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Service Manager backend running on http://localhost:${PORT}`);
