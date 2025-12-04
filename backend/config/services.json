@@ -1,0 +1,52 @@
+{
+  "services": {
+    "config-service": {
+      "type": "java",
+      "port": 8888,
+      "dir": "/path/to/config-service",
+      "command": "mvn spring-boot:run",
+      "build": "mvn clean install -DskipTests",
+      "description": "Spring Boot config server"
+    },
+    "generic-service": {
+      "type": "java",
+      "port": 8053,
+      "dir": "/path/to/generic-service",
+      "command": "mvn spring-boot:run",
+      "build": "mvn clean install -DskipTests"
+    },
+    "workflow-service": {
+      "type": "java",
+      "port": 8051,
+      "dir": "/path/to/workflow-service",
+      "command": "mvn spring-boot:run",
+      "build": "mvn clean install -DskipTests"
+    },
+    "execution-service": {
+      "type": "python",
+      "port": 5002,
+      "dir": "/path/to/execution-service",
+      "command": "uvicorn app:app --host 0.0.0.0 --port 5002"
+    },
+    "data-service": {
+      "type": "python",
+      "port": 5005,
+      "dir": "/path/to/data-service",
+      "command": "uvicorn app:app --host 0.0.0.0 --port 5005"
+    },
+    "redis": {
+      "type": "redis",
+      "port": 6379,
+      "command": "redis-server",
+      "description": "Redis in-memory data store"
+    },
+    "neo4j": {
+      "type": "neo4j",
+      "port": 7687,
+      "dir": "/path/to/neo4j",
+      "command": "./bin/neo4j start",
+      "stopCommand": "./bin/neo4j stop",
+      "description": "Neo4j graph database"
+    }
+  }
+}

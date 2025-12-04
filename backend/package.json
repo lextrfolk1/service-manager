@@ -1,0 +1,27 @@
+{
+  "name": "service-manager-backend",
+  "version": "1.0.0",
+  "description": "Generic service orchestration backend for Java, Python, Redis, Neo4j, and custom services.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "service-manager",
+    "orchestration",
+    "dev-tools",
+    "java",
+    "python",
+    "redis",
+    "neo4j"
+  ],
+  "license": "MIT"
+}

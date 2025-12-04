@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Service Manager Admin</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Service Manager Admin</h1>
+    <nav>
+      <a href="index.html">Dashboard</a>
+      <a href="logs.html">Logs</a>
+      <a href="admin.html">Admin</a>
+    </nav>
+  </header>
+  <main>
+    <h2>Service Metadata</h2>
+    <p>Use this page to edit the metadata JSON that defines all services. Be careful: invalid JSON will break the backend.</p>
+    <textarea id="config-editor" style="width:100%; height:400px; font-family: monospace; font-size: 12px;"></textarea>
+    <div style="margin-top: 12px;">
+      <button class="btn btn-primary" onclick="saveConfig()">Save</button>
+      <span id="save-status" style="margin-left: 12px; font-size: 13px;"></span>
+    </div>
+  </main>
+  <script src="js/utils.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>
