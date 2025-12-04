@@ -5,6 +5,7 @@
   <title>Service Logs</title>
   <link rel="stylesheet" href="css/styles.css" />
 </head>
+
 <body class="logs-page">
   <header>
     <h1>Service Logs</h1>
@@ -14,19 +15,38 @@
       <a href="admin.html">Admin</a>
     </nav>
   </header>
+
   <main>
     <h2 id="log-title">Logs</h2>
+
     <div class="field-group">
       <label for="service-select">Service</label>
       <select id="service-select"></select>
     </div>
+
     <div class="field-group">
       <label for="log-files">Log file</label>
       <select id="log-files"></select>
     </div>
+
     <button class="btn btn-secondary" onclick="loadLog()">Load Log</button>
+
+    <!-- ------------------------------------------------------ -->
+    <!-- LOG VIEWER HEADER (Wrap / Maximize integrated)         -->
+    <!-- ------------------------------------------------------ -->
+    <div id="log-view-header">
+      <span>Log Output</span>
+
+      <div id="log-view-controls">
+        <button class="icon-btn" id="wrap-toggle">Wrap</button>
+        <button class="icon-btn" id="maximize-toggle">Maximize</button>
+      </div>
+    </div>
+
+    <!-- LOG CONTENT AREA -->
     <pre class="log" id="log-content">(no log loaded)</pre>
   </main>
+
   <script src="js/utils.js"></script>
   <script src="js/logs.js"></script>
 </body>
