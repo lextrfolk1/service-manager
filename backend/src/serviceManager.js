@@ -36,9 +36,29 @@ class ServiceManager {
     }
 
     const resolvedDir = resolveHome(svc.dir);
-
     const logFile = logger.createLogFile(name);
     const out = fs.openSync(logFile, "a");
+    let gitAutoPull = svc.gitAutoPull || true;
+
+    if (gitAutoPull) {
+    await new Promise((resolve, reject) => {
+      exec(
+        `git -C "${resolvedDir}" pull`,
+        { shell: true },
+        (err, stdout, stderr) => {
+          fs.appendFileSync(logFile, `\n[GIT PULL STDOUT]\n${stdout || ""}`);
+          fs.appendFileSync(logFile, `\n[GIT PULL STDERR]\n${stderr || ""}`);
+
+          if (err) {
+            return reject(
+              new Error(`Git pull failed for ${name}: ${err.message}`)
+            );
+          }
+          resolve();
+        }
+      );
+    });
+  }
 
     // Optional build step for Java
     if (svc.build) {
