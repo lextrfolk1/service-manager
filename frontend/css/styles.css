@@ -1,0 +1,288 @@
+/* --------------------------------------------------------- */
+/* Global Styles                                              */
+/* --------------------------------------------------------- */
+body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  margin: 0;
+  padding: 0;
+  background: #f5f7fb;
+  color: #222;
+}
+
+/* --------------------------------------------------------- */
+/* Header + Navigation                                        */
+/* --------------------------------------------------------- */
+
+header {
+  background: #1f2933;
+  color: white;
+  padding: 16px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+nav {
+  display: flex;
+  gap: 20px;
+  margin-top: 10px;
+}
+
+nav a {
+  color: #eee;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+nav a:hover {
+  text-decoration: underline;
+}
+
+/* --------------------------------------------------------- */
+/* Services + Cards                                           */
+/* --------------------------------------------------------- */
+
+.service-card {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.service-info h2 {
+  margin: 0 0 4px 0;
+  font-size: 16px;
+}
+
+.service-info p {
+  margin: 0;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.service-meta {
+  font-size: 12px;
+  color: #4b5563;
+  margin-top: 4px;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  margin-right: 6px;
+}
+
+.badge-type { background: #eff6ff; color: #1d4ed8; }
+.badge-port { background: #ecfdf3; color: #15803d; }
+
+/* Status indicators */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  display: inline-block;
+  margin-right: 4px;
+}
+
+.status-running { background: #22c55e; }
+.status-stopped { background: #9ca3af; }
+.status-text { font-size: 12px; color: #374151; }
+
+/* Buttons */
+.btn {
+  border: none;
+  border-radius: 9999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+
+.btn-primary { background: #2563eb; color: white; }
+.btn-secondary { background: #e5e7eb; color: #111827; }
+.btn-danger { background: #ef4444; color: white; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+
+/* Inputs */
+select, input {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid #d1d5db;
+  font-size: 14px;
+}
+
+label {
+  font-size: 13px;
+  color: #374151;
+  display: block;
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+.field-group { margin-bottom: 8px; }
+
+/* --------------------------------------------------------- */
+/* Logs Page Full-Width                                      */
+/* --------------------------------------------------------- */
+
+body.logs-page main {
+  max-width: none !important;
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+/* --------------------------------------------------------- */
+/* LOG VIEWER HEADER                                         */
+/* --------------------------------------------------------- */
+
+#log-view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #1f2937;
+  color: #eee;
+  padding: 8px 12px;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  border: 1px solid #444;
+  border-bottom: none;
+  margin-top: 16px;
+  font-size: 14px;
+  box-sizing: border-box;
+}
+
+#log-view-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.icon-btn {
+  background: #374151;
+  color: #eee;
+  border: 1px solid #555;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: #4b5563;
+}
+
+/* --------------------------------------------------------- */
+/* LOG VIEWER                                                */
+/* --------------------------------------------------------- */
+
+#log-content {
+  width: 100%;
+  max-width: 100%;
+  height: 70vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: #111;
+  color: #eee;
+  padding: 12px;
+  border: 1px solid #444;
+  border-radius: 0 0 6px 6px; /* Attach cleanly to header */
+  box-sizing: border-box;
+  font-size: 14px;
+  line-height: 1.4;
+  white-space: pre; /* default unwrap */
+}
+
+/* --------------------------------------------------------- */
+/* DASHBOARD SPLIT LAYOUT                                    */
+/* --------------------------------------------------------- */
+
+#dashboard-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+#services-column { width: 100%; }
+#action-column { width: 100%; position: relative; }
+
+/* Action panel */
+#action-section {
+  background: #1a1a1a;
+  padding: 16px;
+  border-radius: 10px;
+  color: #e5e7eb;
+  position: sticky;
+  top: 90px;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+}
+
+/* Output inside action panel */
+#output {
+  background: #0d1117;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 65vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+/* --------------------------------------------------------- */
+/* Mobile Fallback                                           */
+/* --------------------------------------------------------- */
+
+@media (max-width: 900px) {
+  #dashboard-layout { grid-template-columns: 1fr; }
+  #action-section { position: static; max-height: none; }
+}
+
+/* --------------------------------------------------------- */
+/* LOG MAXIMIZE / RESTORE                                    */
+/* --------------------------------------------------------- */
+
+body.maximized-log { overflow: hidden; }
+
+#log-content.maximized {
+  position: fixed;
+  top: 70px;
+  left: 20px;
+  right: 20px;
+  bottom: 20px;
+  z-index: 9999;
+
+  background: #111;
+  border: 2px solid #2563eb;
+  box-shadow: 0 0 18px rgba(0,0,0,0.7);
+
+  padding: 16px;
+  width: auto !important;
+  max-width: none !important;
+  height: auto !important;
+  max-height: none !important;
+
+  box-sizing: border-box;
+  overflow-y: auto;
+  overflow-x: auto;
+}
