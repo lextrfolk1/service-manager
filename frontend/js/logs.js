@@ -32,34 +32,35 @@ async function loadLogFiles() {
   const filesSelect = document.getElementById("log-files");
   const content = document.getElementById("log-content");
   content.textContent = "(no log loaded)";
+  filesSelect.innerHTML = "";
 
   try {
     const data = await apiGet(`/logs/${svc}`);
-    filesSelect.innerHTML = "";
+    let files = data.files || [];
 
-    if (!data.files || data.files.length === 0) {
-      const opt = document.createElement("option");
-      opt.textContent = "No log files";
-      opt.disabled = true;
-      filesSelect.appendChild(opt);
+    if (files.length === 0) {
+      filesSelect.innerHTML = `<option disabled>No log files</option>`;
       return;
     }
 
-    data.files.forEach(file => {
+    files.sort((a, b) => b.localeCompare(a));
+    // Populate dropdown
+    files.forEach(file => {
       const opt = document.createElement("option");
       opt.value = file;
       opt.textContent = file;
       filesSelect.appendChild(opt);
     });
 
-    // Load first log automatically
-    loadLog(false);
+    // Auto-select newest log file
+    const latest = files[0];
+    filesSelect.value = latest;
+
+    // Load newest log automatically
+    await loadLog(false);
+
   } catch (err) {
-    filesSelect.innerHTML = "";
-    const opt = document.createElement("option");
-    opt.textContent = "Error loading logs";
-    opt.disabled = true;
-    filesSelect.appendChild(opt);
+    filesSelect.innerHTML = `<option disabled>Error loading logs</option>`;
   }
 }
 
