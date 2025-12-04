@@ -8,7 +8,7 @@ It provides a simple web dashboard to start, stop, restart, view logs, and confi
 ## 🚀 Features
 - Unified dashboard for all services  
 - Start / Stop / Restart with automatic port cleanup  
-- Optional Git pull + Maven build before start  i.e gitAutoPull flag
+- Optional Git pull + Maven build before start  
 - Auto-load + auto-refresh log viewer  
 - Delete log files directly from UI  
 - Configurable service definitions via `services.json`  
@@ -44,8 +44,7 @@ Each service entry defines how it should be built, started, and monitored.
       "dir": "~/codebase/lextr/config-service",
       "command": "mvn spring-boot:run",
       "build": "mvn clean install -DskipTests",
-      "description": "Spring Cloud Config Server",
-      "gitAutoPull": true
+      "description": "Spring Cloud Config Server"
     },
 
     "generic-service": {
@@ -53,8 +52,7 @@ Each service entry defines how it should be built, started, and monitored.
       "port": 8053,
       "dir": "~/codebase/lextr/generic-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests",
-      "gitAutoPull": false
+      "build": "mvn clean install -DskipTests"
     },
 
     "workflow-service": {

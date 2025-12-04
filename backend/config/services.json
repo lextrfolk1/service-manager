@@ -69,21 +69,21 @@
       "type": "python",
       "port": 5002,
       "dir": "~/codebase/lextr/execution-service",
-      "command": "uvicorn app:app --host 0.0.0.0 --port 5002"
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002"
     },
 
     "data-service": {
       "type": "python",
       "port": 5005,
       "dir": "~/codebase/lextr/data-service",
-      "command": "uvicorn app:app --host 0.0.0.0 --port 5005"
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005"
     },
 
     "lexie-ai": {
       "type": "python",
       "port": 8004,
       "dir": "~/codebase/lextr/lexie-ai",
-      "command": "uvicorn app:app --host 0.0.0.0 --port 8004"
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004"
     },
 
     "redis": {
