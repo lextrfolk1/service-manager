@@ -16,6 +16,15 @@
       "description": "Spring Cloud Config Server"
     },
 
+    "auth-service": {
+      "type": "java",
+      "port": 8057,
+      "dir": "~/codebase/lextr/auth-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Spring Cloud Config Server"
+    },
+    
     "generic-service": {
       "type": "java",
       "port": 8053,

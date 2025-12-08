@@ -14,19 +14,28 @@
       <a href="admin.html">Admin</a>
     </nav>
   </header>
- <main id="dashboard-layout">
-  <div id="services-column">
-    <h2>Services</h2>
-    <div id="services"></div>
-  </div>
+  <main id="dashboard-layout">
+    <!-- Left Side: Services Column -->
+    <div id="services-column">
+      <h2>Services</h2>
+      <!-- Search bar -->
+      <div id="search-box">
+        <input id="search-input" placeholder="Search services..." />
+      </div>
 
-  <div id="action-column">
-    <section id="action-section">
-      <h3>Last Action Output</h3>
-      <pre class="log" id="output">(no actions yet)</pre>
-    </section>
-  </div>
-</main>
+      <!-- Services rendered here -->
+      <div id="services" class="service-grid"></div>
+
+    </div>
+
+    <!-- Right Side: Action Output Panel -->
+    <div id="action-column">
+      <section id="action-section">
+        <h3>Last Action Output</h3>
+        <pre class="log" id="output">(no actions yet)</pre>
+      </section>
+    </div>
+  </main>
   <script src="js/utils.js"></script>
   <script src="js/services.js"></script>
 </body>
