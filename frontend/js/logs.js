@@ -1,39 +1,48 @@
+document.addEventListener("DOMContentLoaded", () => {
+  initLogsPage();
+
+  document.getElementById("service-select")
+      .addEventListener("change", loadLogFiles);
+
+  document.getElementById("log-files")
+      .addEventListener("change", () => loadLog(false));
+
+  setupWrapToggle();
+  setupMaximizeToggle();
+  setupClearButton();
+});
+
+
 async function initLogsPage() {
   const serviceSelect = document.getElementById("service-select");
   const svcFromQuery = getQueryParam("service");
 
-  // Load services
+   // Load services 
   const data = await apiGet("/services");
   serviceSelect.innerHTML = "";
   data.services.forEach(svc => {
-    const opt = document.createElement("option");
-    opt.value = svc.name;
-    opt.textContent = svc.name;
-    serviceSelect.appendChild(opt);
+    const o = document.createElement("option");
+    o.value = svc.name;
+    o.textContent = svc.name;
+    serviceSelect.appendChild(o);
   });
 
   if (svcFromQuery) {
     serviceSelect.value = svcFromQuery;
   }
-
+  
   await loadLogFiles();
 
-  setupWrapToggle();
-  setupMaximizeToggle();
-
-  // Auto-refresh log every 2 seconds
+  // Auto refresh
   setInterval(() => {
     const file = document.getElementById("log-files").value;
-    if (file && file !== "No log files" && file !== "Error loading logs") {
-      loadLog(true);
-    }
+    if (file && file !== "No log files") loadLog(true);
   }, 2000);
 }
 
 
 async function loadLogFiles() {
-  const serviceSelect = document.getElementById("service-select");
-  const svc = serviceSelect.value;
+  const svc = document.getElementById("service-select").value;
   const filesSelect = document.getElementById("log-files");
   const content = document.getElementById("log-content");
 
@@ -42,29 +51,21 @@ async function loadLogFiles() {
 
   try {
     const data = await apiGet(`/logs/${svc}`);
-    let files = data.files || [];
+    const files = (data.files || []).sort().reverse();
 
-    if (files.length === 0) {
+    if (!files.length) {
       filesSelect.innerHTML = `<option disabled>No log files</option>`;
       return;
     }
 
-    // Sort newest first
-    files.sort((a, b) => b.localeCompare(a));
-
-    // Populate dropdown
-    files.forEach(file => {
+    files.forEach(f => {
       const opt = document.createElement("option");
-      opt.value = file;
-      opt.textContent = file;
+      opt.value = opt.textContent = f;
       filesSelect.appendChild(opt);
     });
 
-    // Select latest log
     filesSelect.value = files[0];
-
     await loadLog(false);
-
   } catch (err) {
     filesSelect.innerHTML = `<option disabled>Error loading logs</option>`;
   }
@@ -72,27 +73,21 @@ async function loadLogFiles() {
 
 
 async function loadLog(isRefresh = false) {
-  const serviceSelect = document.getElementById("service-select");
-  const filesSelect = document.getElementById("log-files");
-  const svc = serviceSelect.value;
-  const file = filesSelect.value;
+  const svc = document.getElementById("service-select").value;
+  const file = document.getElementById("log-files").value;
   const content = document.getElementById("log-content");
 
-  if (!file || file === "No log files" || file === "Error loading logs") {
-    content.textContent = "(no log loaded)";
-    return;
-  }
+  if (!file) return;
 
   try {
     const data = await apiGet(`/logs/${svc}/${encodeURIComponent(file)}`);
 
-    // Track whether user is near bottom
-    const isAtBottom =
+    const atBottom =
       content.scrollHeight - content.scrollTop - content.clientHeight < 40;
 
     content.textContent = data.content || "(empty)";
 
-    if (!isRefresh || isAtBottom) {
+    if (!isRefresh || atBottom) {
       content.scrollTop = content.scrollHeight;
     }
 
@@ -102,59 +97,42 @@ async function loadLog(isRefresh = false) {
 }
 
 
-/* ------------------------------------------------------------------
-   WRAP / UNWRAP TOGGLE
---------------------------------------------------------------------*/
+/* Wrap / Unwrap */
 function setupWrapToggle() {
   const btn = document.getElementById("wrap-toggle");
   const log = document.getElementById("log-content");
 
-  // Default → unwrap (no wrapping)
-  log.style.whiteSpace = "pre";
-  btn.textContent = "Wrap";
-
   btn.addEventListener("click", () => {
     if (log.style.whiteSpace === "pre") {
-      log.style.whiteSpace = "pre-wrap";  // enable wrapping
+      log.style.whiteSpace = "pre-wrap";
       btn.textContent = "Unwrap";
     } else {
-      log.style.whiteSpace = "pre"; // disable wrapping
+      log.style.whiteSpace = "pre";
       btn.textContent = "Wrap";
     }
   });
 }
 
 
-/* ------------------------------------------------------------------
-   MAXIMIZE / RESTORE LOG VIEWER
---------------------------------------------------------------------*/
+/* Maximize / Restore */
 function setupMaximizeToggle() {
   const btn = document.getElementById("maximize-toggle");
   const log = document.getElementById("log-content");
 
   btn.addEventListener("click", () => {
-    if (log.classList.contains("maximized")) {
-      log.classList.remove("maximized");
-      document.body.classList.remove("maximized-log");
-      btn.textContent = "Maximize";
-    } else {
-      log.classList.add("maximized");
-      document.body.classList.add("maximized-log");
-      btn.textContent = "Restore";
-    }
+    const isMax = log.classList.toggle("maximized");
+    document.body.classList.toggle("maximized-log", isMax);
+    btn.textContent = isMax ? "Restore" : "Maximize";
   });
 }
 
 
-/* ------------------------------------------------------------------
-   Event Listeners
---------------------------------------------------------------------*/
-document.addEventListener("DOMContentLoaded", () => {
-  initLogsPage();
+/* Clear log viewer */
+function setupClearButton() {
+  const btn = document.getElementById("clear-log");
+  const log = document.getElementById("log-content");
 
-  document.getElementById("service-select")
-    .addEventListener("change", loadLogFiles);
-
-  document.getElementById("log-files")
-    .addEventListener("change", () => loadLog(false));
-});
+  btn.addEventListener("click", () => {
+    log.textContent = "";
+  });
+}
