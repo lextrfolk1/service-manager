@@ -311,6 +311,62 @@ body.maximized-log #log-toolbar {
 }
 
 
+/* --------------------------------------------------------- */
+/* Logs Page – Controls Layout (Single Row)                  */
+/* --------------------------------------------------------- */
+
+/* Outer wrapper */
+.log-controls {
+  margin-top: 16px;
+  margin-bottom: 24px;
+  padding: 18px;
+  background: #ffffff;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+}
+
+/* Inner row (actual horizontal layout) */
+.log-controls-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  flex-wrap: nowrap;
+}
+
+/* Label + select field block */
+.control-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.control-row label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.control-row select {
+  width: 260px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: white;
+  font-size: 14px;
+}
+
+.control-row select:focus {
+  border-color: #2563eb;
+}
+
+/* Load Log button aligned vertically to bottom */
+#load-log-btn {
+  height: 38px;
+  padding: 0 16px;
+  margin: 0;
+  align-self: flex-end;
+}
 
 
 /* --------------------------------------------------------- */
