@@ -6,12 +6,13 @@ It provides a simple web dashboard to start, stop, restart, view logs, and confi
 ---
 
 ## 🚀 Features
-- Unified dashboard for all services  
-- Start / Stop / Restart with automatic port cleanup  
-- Optional Git pull + Maven build before start  
-- Auto-load + auto-refresh log viewer  
-- Delete log files directly from UI  
-- Configurable service definitions via `services.json`  
+
+- Unified dashboard for all services
+- Start / Stop / Restart with automatic port cleanup
+- Optional Git pull + Maven build before start
+- Auto-load + auto-refresh log viewer
+- Delete log files directly from UI
+- Configurable service definitions via `services.json`
 - One-command startup script (`start-application.sh`)
 
 ---
@@ -23,9 +24,11 @@ service-manager/
 ├── backend/                # Node.js API server
 │   ├── src/
 │   └── services.json       # Service definitions
-├── frontend/               # Dashboard UI
+├── frontend/               # Original Dashboard UI (HTML/JS)
+├── react-frontend/         # React version of Dashboard UI
 ├── logs/                   # Captured logs
-└── start-application.sh    # Starts backend + frontend
+├── start-application.sh    # Starts backend + original frontend
+└── start-react-app.sh      # Starts backend + React frontend
 ```
 
 ---
@@ -35,6 +38,7 @@ service-manager/
 Each service entry defines how it should be built, started, and monitored.
 
 ### Sample Configuration
+
 ```json
 {
   "services": {
@@ -91,26 +95,61 @@ Each service entry defines how it should be built, started, and monitored.
 
 ## ▶️ Starting the Application
 
-Run:
+### Start All Services (Recommended)
 
 ```bash
 bash start-application.sh
 ```
 
-The script:
-- Stops previous backend/frontend processes
-- Starts backend
-- Starts frontend
-- Writes logs to `/logs`
+This starts **both frontends simultaneously**:
+
+- Original HTML/JS frontend on port 4002
+- React frontend on port 4005
+- Backend API on port 4000
+
+### Start Individual Frontends
+
+```bash
+# Start only React frontend + backend
+bash start-react-app.sh
+```
+
+All scripts:
+
+- Stop previous backend/frontend processes
+- Start backend API server
+- Start respective frontend(s)
+- Write logs to `/logs`
+
+**Available Options:**
+
+- `bash start-application.sh` - Starts **both frontends** + backend (recommended)
+- `bash start-react-app.sh` - Starts only React frontend + backend
 
 ---
 
 ## 🌐 Access URLs
 
-| Component    | URL                        |
-|--------------|----------------------------|
-| Dashboard UI | http://localhost:4002      |
-| Backend API  | http://localhost:4000      |
+| Component             | URL                   |
+| --------------------- | --------------------- |
+| Original Dashboard UI | http://localhost:4002 |
+| React Dashboard UI    | http://localhost:4005 |
+| Backend API           | http://localhost:4000 |
+
+---
+
+## ⚛️ React Version
+
+The React version provides the same functionality as the original with modern improvements:
+
+- **Component-based architecture** with reusable React components
+- **Better state management** using React hooks
+- **Client-side routing** with React Router
+- **Improved error handling** and loading states
+- **Modern development experience** with hot reload
+- **Same API compatibility** - works with existing backend
+
+See `react-frontend/README.md` for detailed React-specific documentation.
 
 ---
 
