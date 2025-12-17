@@ -95,24 +95,36 @@ Each service entry defines how it should be built, started, and monitored.
 
 ## ▶️ Starting the Application
 
-### Original HTML/JS Version
+### Start All Services (Recommended)
 
 ```bash
 bash start-application.sh
 ```
 
-### React Version
+This starts **both frontends simultaneously**:
+
+- Original HTML/JS frontend on port 4002
+- React frontend on port 4005
+- Backend API on port 4000
+
+### Start Individual Frontends
 
 ```bash
+# Start only React frontend + backend
 bash start-react-app.sh
 ```
 
-Both scripts:
+All scripts:
 
 - Stop previous backend/frontend processes
 - Start backend API server
-- Start respective frontend
+- Start respective frontend(s)
 - Write logs to `/logs`
+
+**Available Options:**
+
+- `bash start-application.sh` - Starts **both frontends** + backend (recommended)
+- `bash start-react-app.sh` - Starts only React frontend + backend
 
 ---
 
@@ -121,7 +133,7 @@ Both scripts:
 | Component             | URL                   |
 | --------------------- | --------------------- |
 | Original Dashboard UI | http://localhost:4002 |
-| React Dashboard UI    | http://localhost:3000 |
+| React Dashboard UI    | http://localhost:4005 |
 | Backend API           | http://localhost:4000 |
 
 ---

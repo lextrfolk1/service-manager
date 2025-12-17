@@ -25,7 +25,7 @@ trap cleanup SIGINT SIGTERM EXIT
 # Kill any existing processes on our ports
 echo "🧹 Cleaning up existing processes..."
 lsof -ti:4000 | xargs kill -9 2>/dev/null || true
-lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+lsof -ti:4005 | xargs kill -9 2>/dev/null || true
 
 # Start backend server
 echo "🔧 Starting backend server..."
@@ -59,10 +59,10 @@ npm start > ../logs/frontend.log 2>&1 &
 FRONTEND_PID=$!
 cd ..
 
-echo "✅ React frontend starting on http://localhost:3000"
+echo "✅ React frontend starting on http://localhost:4005"
 echo ""
 echo "🌐 Application URLs:"
-echo "   Frontend (React): http://localhost:3000"
+echo "   Frontend (React): http://localhost:4005"
 echo "   Backend API:      http://localhost:4000"
 echo ""
 echo "📝 Logs are written to:"

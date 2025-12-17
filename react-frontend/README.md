@@ -41,7 +41,7 @@ npm install
 npm start
 ```
 
-The application will open at `http://localhost:3000` and proxy API requests to `http://localhost:4000`.
+The application will open at `http://localhost:4005` and proxy API requests to `http://localhost:4000`.
 
 ### Building for Production
 
