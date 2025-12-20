@@ -15,11 +15,13 @@ import {
   Refresh as RestartIcon,
   Article as LogsIcon,
   Circle as StatusIcon,
+  Build as BuildIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 
 const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
   const [status, setStatus] = useState({ running: false, loading: true });
+  const [buildEnabled, setBuildEnabled] = useState(false);
 
   useEffect(() => {
     // On mount, check if there's a stale action state and do an immediate status check
@@ -118,10 +120,17 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
   const executeAction = async (action) => {
     const actionType = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
     setActionState(actionType);
-    onActionOutput(`${action.toUpperCase()} ${service.name}...\n`);
+    
+    const actionText = action === 'start' && buildEnabled ? 'BUILD & START' : action.toUpperCase();
+    onActionOutput(`${actionText} ${service.name}...\n`);
 
     try {
-      const result = await api.post(`/service/${service.name}/${action}`);
+      let endpoint = `/service/${service.name}/${action}`;
+      if (action === 'start' && buildEnabled) {
+        endpoint += '?build=true';
+      }
+      
+      const result = await api.post(endpoint);
       onActionOutput(JSON.stringify(result, null, 2));
     } catch (error) {
       onActionOutput(`Error: ${error.message}`);
@@ -296,6 +305,36 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
 
       {/* Actions */}
       <CardActions sx={{ p: 2, pt: 0 }}>
+        {/* Build Toggle - only show for services that have build commands */}
+        {service.type && ['java', 'npm'].includes(service.type.toLowerCase()) && (
+          <Box sx={{ width: "100%", mb: 1 }}>
+            <Chip
+              icon={<BuildIcon sx={{ fontSize: '0.7rem' }} />}
+              label="Build Mode"
+              variant={buildEnabled ? "filled" : "outlined"}
+              color={buildEnabled ? "warning" : "default"}
+              onClick={() => setBuildEnabled(!buildEnabled)}
+              size="small"
+              sx={{
+                fontSize: '0.7rem',
+                height: '24px',
+                cursor: 'pointer',
+                '&.MuiChip-filled': {
+                  background: 'linear-gradient(45deg, #FF9800 30%, #FFC107 90%)',
+                  color: 'white'
+                },
+                '&:hover': {
+                  transform: 'scale(1.05)',
+                  boxShadow: buildEnabled 
+                    ? '0 2px 8px rgba(255, 152, 0, 0.3)'
+                    : '0 1px 4px rgba(0, 0, 0, 0.1)'
+                },
+                transition: 'all 0.2s ease'
+              }}
+            />
+          </Box>
+        )}
+        
         <Box sx={{ display: "flex", gap: 1, width: "100%" }}>
           <Button
             variant="contained"
@@ -304,12 +343,18 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
             disabled={status.running || isActionInProgress}
             sx={{
               flex: 1,
-              backgroundColor: "#4CAF50",
-              "&:hover": { backgroundColor: "#45a049" },
-              "&:disabled": { backgroundColor: "#e0e0e0" }
+              backgroundColor: buildEnabled ? "#FF9800" : "#4CAF50",
+              "&:hover": { 
+                backgroundColor: buildEnabled ? "#F57C00" : "#45a049" 
+              },
+              "&:disabled": { backgroundColor: "#e0e0e0" },
+              fontSize: '0.75rem'
             }}
           >
-            {actionState?.action === 'starting' ? 'Starting...' : 'Start'}
+            {actionState?.action === 'starting' 
+              ? (buildEnabled ? 'Building...' : 'Starting...') 
+              : (buildEnabled ? 'Build & Start' : 'Start')
+            }
           </Button>
           <Button
             variant="contained"
@@ -320,7 +365,8 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
               flex: 1,
               backgroundColor: "#f44336",
               "&:hover": { backgroundColor: "#d32f2f" },
-              "&:disabled": { backgroundColor: "#e0e0e0" }
+              "&:disabled": { backgroundColor: "#e0e0e0" },
+              fontSize: '0.75rem'
             }}
           >
             {actionState?.action === 'stopping' ? 'Stopping...' : 'Stop'}
@@ -341,7 +387,8 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
               "&:disabled": { 
                 borderColor: "#e0e0e0",
                 color: "#e0e0e0"
-              }
+              },
+              fontSize: '0.75rem'
             }}
           >
             {actionState?.action === 'restarting' ? 'Restarting...' : 'Restart'}
@@ -357,7 +404,8 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
               "&:hover": {
                 borderColor: "#333",
                 backgroundColor: "rgba(0,0,0,0.04)"
-              }
+              },
+              fontSize: '0.75rem'
             }}
           >
             Logs

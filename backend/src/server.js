@@ -102,7 +102,8 @@ app.put("/config/services", (req, res) => {
 // Start service
 app.post("/service/:name/start", async (req, res) => {
   try {
-    const result = await manager.start(req.params.name);
+    const buildFlag = req.query.build === 'true';
+    const result = await manager.start(req.params.name, buildFlag);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

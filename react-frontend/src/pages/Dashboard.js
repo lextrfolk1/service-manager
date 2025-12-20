@@ -22,7 +22,8 @@ import {
   Stop as StoppedIcon,
   Code as CodeIcon,
   PlaylistPlay as StartAllIcon,
-  StopCircle as StopAllIcon
+  StopCircle as StopAllIcon,
+  Build as BuildIcon
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
 import api from "../services/api";
@@ -40,6 +41,7 @@ const Dashboard = ({ onViewLogs }) => {
   const [serviceStatuses, setServiceStatuses] = useState({}); // Store service statuses
   const [bulkActionInProgress, setBulkActionInProgress] = useState(false);
   const [currentBulkAction, setCurrentBulkAction] = useState(null);
+  const [buildEnabled, setBuildEnabled] = useState(false); // Build flag state
 
   useEffect(() => {
     loadServices();
@@ -167,11 +169,13 @@ const Dashboard = ({ onViewLogs }) => {
   };
 
   // Sequential service management functions with config-based ordering
-  const startAllServices = async () => {
+  const startAllServices = async (withBuild = false) => {
     setBulkActionInProgress(true);
     setCurrentBulkAction('starting');
     
-    let outputLog = "🚀 Starting all services sequentially (config order)...\n\n";
+    let outputLog = withBuild 
+      ? "🚀 Building & Starting all services sequentially (config order)...\n\n"
+      : "🚀 Starting all services sequentially (config order)...\n\n";
     handleActionOutput(outputLog);
     
     // Get services in config order by creating a map of service names to their config order
@@ -192,11 +196,12 @@ const Dashboard = ({ onViewLogs }) => {
     for (let i = 0; i < stoppedServices.length; i++) {
       const service = stoppedServices[i];
       try {
-        outputLog += `[${i + 1}/${stoppedServices.length}] Starting ${service.name}...\n`;
+        outputLog += `[${i + 1}/${stoppedServices.length}] ${withBuild ? 'Building & Starting' : 'Starting'} ${service.name}...\n`;
         handleActionOutput(outputLog);
         
-        await api.post(`/service/${service.name}/start`);
-        outputLog += `✅ ${service.name} started successfully\n`;
+        const endpoint = withBuild ? `/service/${service.name}/start?build=true` : `/service/${service.name}/start`;
+        await api.post(endpoint);
+        outputLog += `✅ ${service.name} ${withBuild ? 'built & started' : 'started'} successfully\n`;
         
         // Wait a bit between services to avoid overwhelming the system
         if (i < stoppedServices.length - 1) {
@@ -205,12 +210,12 @@ const Dashboard = ({ onViewLogs }) => {
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       } catch (error) {
-        outputLog += `❌ Failed to start ${service.name}: ${error.message}\n`;
+        outputLog += `❌ Failed to ${withBuild ? 'build & start' : 'start'} ${service.name}: ${error.message}\n`;
       }
       handleActionOutput(outputLog);
     }
     
-    outputLog += `\n🎉 Bulk start operation completed! Started ${stoppedServices.length} services.`;
+    outputLog += `\n🎉 Bulk ${withBuild ? 'build & start' : 'start'} operation completed! ${withBuild ? 'Built & started' : 'Started'} ${stoppedServices.length} services.`;
     handleActionOutput(outputLog);
     
     setBulkActionInProgress(false);
@@ -458,6 +463,33 @@ const Dashboard = ({ onViewLogs }) => {
                 {/* Divider */}
                 <Box sx={{ width: '1px', height: '20px', backgroundColor: '#ddd', mx: 0.5 }} />
 
+                {/* Build Toggle */}
+                <Chip
+                  icon={<BuildIcon sx={{ fontSize: '0.8rem' }} />}
+                  label="Build Mode"
+                  variant={buildEnabled ? "filled" : "outlined"}
+                  color={buildEnabled ? "warning" : "default"}
+                  onClick={() => setBuildEnabled(!buildEnabled)}
+                  size="small"
+                  sx={{
+                    borderRadius: 2,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    '&.MuiChip-filled': {
+                      background: 'linear-gradient(45deg, #FF9800 30%, #FFC107 90%)',
+                      color: 'white'
+                    },
+                    '&:hover': {
+                      transform: 'translateY(-1px)',
+                      boxShadow: buildEnabled 
+                        ? '0 4px 12px rgba(255, 152, 0, 0.3)'
+                        : '0 2px 8px rgba(0, 0, 0, 0.1)'
+                    },
+                    transition: 'all 0.2s ease'
+                  }}
+                />
+
                 {/* Bulk Action Chips */}
                 <Chip
                   icon={bulkActionInProgress && currentBulkAction === 'starting' ? 
@@ -466,23 +498,31 @@ const Dashboard = ({ onViewLogs }) => {
                   }
                   label={bulkActionInProgress && currentBulkAction === 'starting' ? 
                     'Starting...' : 
-                    `Start All (${serviceCounts.stopped})`
+                    buildEnabled 
+                      ? `Build & Start All (${serviceCounts.stopped})`
+                      : `Start All (${serviceCounts.stopped})`
                   }
-                  onClick={startAllServices}
+                  onClick={() => startAllServices(buildEnabled)}
                   disabled={bulkActionInProgress || serviceCounts.stopped === 0}
                   size="small"
                   sx={{
                     borderRadius: 2,
                     fontSize: '0.75rem',
                     fontWeight: 600,
-                    background: 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
+                    background: buildEnabled 
+                      ? 'linear-gradient(45deg, #FF9800 30%, #4CAF50 90%)'
+                      : 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
                     color: 'white',
                     border: 'none',
                     cursor: 'pointer',
                     '&:hover': {
-                      background: 'linear-gradient(45deg, #45a049 30%, #7cb342 90%)',
+                      background: buildEnabled
+                        ? 'linear-gradient(45deg, #F57C00 30%, #45a049 90%)'
+                        : 'linear-gradient(45deg, #45a049 30%, #7cb342 90%)',
                       transform: 'translateY(-1px)',
-                      boxShadow: '0 4px 12px rgba(76, 175, 80, 0.3)'
+                      boxShadow: buildEnabled
+                        ? '0 4px 12px rgba(255, 152, 0, 0.3)'
+                        : '0 4px 12px rgba(76, 175, 80, 0.3)'
                     },
                     '&:disabled': {
                       background: '#e0e0e0',

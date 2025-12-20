@@ -40,7 +40,7 @@ class ServiceManager {
     return svc;
   }
 
-  async start(name) {
+  async start(name, forceBuild = false) {
     const svc = this._getService(name);
 
     if (!svc.command) {
@@ -75,8 +75,8 @@ class ServiceManager {
       });
     }
 
-    // Optional build step
-    if (svc.build) {
+    // Optional build step - only run if forceBuild is true
+    if (forceBuild && svc.build) {
       const resolvedBuild = resolvePlaceholders(svc.build, this.basePaths);
       await new Promise((resolve, reject) => {
         exec(
