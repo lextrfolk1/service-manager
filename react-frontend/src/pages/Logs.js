@@ -31,14 +31,13 @@ import {
 } from "@mui/icons-material";
 import api from "../services/api";
 
-const LogViewer = ({ serviceName, onClose, isActive, openServices, activeServiceTab, onServiceTabChange, onCloseService }) => {
+const LogViewer = ({ serviceName, onClose, isActive, openServices, activeServiceTab, onServiceTabChange, onCloseService, isMaximized, onToggleMaximize }) => {
   const [logFiles, setLogFiles] = useState([]);
   const [selectedLogFile, setSelectedLogFile] = useState("");
   const [logContent, setLogContent] = useState("(no log loaded)");
   const [isWrapped, setIsWrapped] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('disconnected'); // disconnected, connecting, connected, error
-  const [isMaximized, setIsMaximized] = useState(false);
   const logContentRef = useRef(null);
   const eventSourceRef = useRef(null);
 
@@ -61,11 +60,11 @@ const LogViewer = ({ serviceName, onClose, isActive, openServices, activeService
   useEffect(() => {
     const handleKeyPress = (event) => {
       if (event.key === 'Escape' && isMaximized) {
-        setIsMaximized(false);
+        onToggleMaximize();
       }
       if (event.key === 'F11' && isActive) {
         event.preventDefault();
-        toggleMaximize();
+        onToggleMaximize();
       }
       
       // Tab switching in maximized mode
@@ -89,7 +88,7 @@ const LogViewer = ({ serviceName, onClose, isActive, openServices, activeService
       document.addEventListener('keydown', handleKeyPress);
       return () => document.removeEventListener('keydown', handleKeyPress);
     }
-  }, [isMaximized, isActive, openServices, activeServiceTab, onServiceTabChange]);
+  }, [isMaximized, isActive, openServices, activeServiceTab, onServiceTabChange, onToggleMaximize]);
 
   const loadLogFiles = async () => {
     if (!serviceName) return;
@@ -224,10 +223,6 @@ const LogViewer = ({ serviceName, onClose, isActive, openServices, activeService
 
   const toggleWrap = () => {
     setIsWrapped(!isWrapped);
-  };
-
-  const toggleMaximize = () => {
-    setIsMaximized(!isMaximized);
   };
 
   const clearLog = async () => {
@@ -618,7 +613,7 @@ const LogViewer = ({ serviceName, onClose, isActive, openServices, activeService
             </IconButton>
             <IconButton
               size="small"
-              onClick={toggleMaximize}
+              onClick={onToggleMaximize}
               sx={{ 
                 color: "#fff",
                 "&:hover": { backgroundColor: "rgba(255,255,255,0.1)" }
@@ -668,6 +663,11 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [services, setServices] = useState([]);
   const [availableService, setAvailableService] = useState("");
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false); // Lifted maximized state
+
+  const toggleMaximize = () => {
+    setIsMaximized(!isMaximized);
+  };
 
   useImperativeHandle(ref, () => ({
     addService: (serviceName) => {
@@ -849,6 +849,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                 activeServiceTab={activeServiceTab}
                 onServiceTabChange={handleServiceTabChange}
                 onCloseService={closeServiceTab}
+                isMaximized={isMaximized}
+                onToggleMaximize={toggleMaximize}
               />
             </Box>
           ))
