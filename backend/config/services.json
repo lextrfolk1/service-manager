@@ -3,13 +3,14 @@
     "frontend-service": {
       "type": "npm",
       "port": 3000,
-      "dir": "~/Desktop/Lextr/UI/frontend-service",
-      "command": "npm run dev"
+      "dir": "~/codebase/lextr/frontend-service",
+      "command": "npm run dev",
+      "description": "React Frontend Service"
     },
     "config-service": {
       "type": "java",
       "port": 8888,
-      "dir": "~/Desktop/Lextr/Java/config-service",
+      "dir": "~/codebase/lextr/config-service",
       "command": "mvn spring-boot:run",
       "build": "mvn clean install -DskipTests",
       "description": "Spring Cloud Config Server"
@@ -17,76 +18,87 @@
     "generic-service": {
       "type": "java",
       "port": 8053,
-      "dir": "~/Desktop/Lextr/Java/generic-service",
+      "dir": "~/codebase/lextr/generic-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "A generic service for common functionalities"
     },
     "workflow-service": {
       "type": "java",
       "port": 8051,
-      "dir": "~/Desktop/Lextr/Java/workflow-service",
+      "dir": "~/codebase/lextr/workflow-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to manage workflows"
     },
     "supplemental-service": {
       "type": "java",
       "port": 8082,
-      "dir": "~/Desktop/Lextr/Java/su-service",
+      "dir": "~/codebase/lextr/su-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "Supplemental service for data uploads"
     },
     "workbench-service": {
       "type": "java",
       "port": 9090,
-      "dir": "~/Desktop/Lextr/Java/workbench-service",
+      "dir": "~/codebase/lextr/workbench-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to manage workbench operations"
     },
     "rules-service": {
       "type": "java",
       "port": 8054,
-      "dir": "~/Desktop/Lextr/Java/rules-service",
+      "dir": "~/codebase/lextr/rules-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to manage business rules"
     },
     "reportgeneration-service": {
       "type": "java",
       "port": 8056,
-      "dir": "~/Desktop/Lextr/Java/reportgeneration-service",
+      "dir": "~/codebase/lextr/reportgeneration-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to handle report generation"
     },
     "gateway-service": {
       "type": "java",
       "port": 8080,
-      "dir": "~/Desktop/Lextr/Java/gateway-service",
+      "dir": "~/codebase/lextr/gateway-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "API Gateway Service"
     },
     "auth-service": {
       "type": "java",
       "port": 8057,
-      "dir": "~/Desktop/Lextr/Java/auth-service",
+      "dir": "~/codebase/lextr/auth-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
+      "build": "mvn clean install -DskipTests",
+      "description": "Authentication and Authorization Service"
     },
     "execution-service": {
       "type": "python",
       "port": 5002,
-      "dir": "~/Desktop/Lextr/Backend/execution-service",
-      "command": "export PATH='/Library/Frameworks/Python.framework/Versions/3.12/bin:$PATH' & $(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002"
+      "dir": "~/codebase/lextr/execution-service",
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "description": "Service to handle code execution tasks"
     },
     "data-service": {
       "type": "python",
       "port": 5005,
-      "dir": "~/Desktop/Lextr/Backend/data-service",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005"
+      "dir": "~/codebase/lextr/data-service",
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005",
+      "description": "Service to manage data operations"
     },
     "lexie-ai": {
       "type": "python",
       "port": 8004,
-      "dir": "~/Desktop/Lextr/Backend/lexie-ai",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004"
+      "dir": "~/codebase/lextr/lexie-ai",
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004",
+      "description": "AI-powered assistant service"
     },
     "redis": {
       "type": "redis",
@@ -101,6 +113,13 @@
       "command": "./bin/neo4j start",
       "stopCommand": "./bin/neo4j stop",
       "description": "Neo4j graph database"
+    },
+    "execution-service-listener": {
+      "type": "listener",
+      "dir": "~/codebase/lextr/execution-service",
+      "command": "export PYTHONPATH=/Users/tejalf/codebase/lextr/execution-service && $(pwd)/.venv/bin/python /Users/tejalf/codebase/lextr/execution-service/utils/pg_sync_worker.py",
+      "stopCommand": "pkill -f pg_sync_worker.py",
+      "description": "Execution Service listener"
     }
   }
 }
