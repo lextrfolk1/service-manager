@@ -569,8 +569,10 @@ const Admin = () => {
                 </Button>
               </Box>
               
-              <Typography variant="body2" color="text.secondary">
-                Configure the base directory paths for different service types. Services use these paths with <code>${basePaths.type}</code> templates.
+              <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+                Configure base directory paths for different service types. Services use these paths with template variables like <code>${basePaths.keyName}</code>.
+                <br />
+                <strong>Common keys:</strong> java, python, npm, listener, redis, neo4j, microservices, frontend, backend
               </Typography>
             </Box>
 
@@ -586,22 +588,40 @@ const Admin = () => {
                       {Object.entries(basePaths).map(([key, value]) => (
                         <Grid item xs={12} sm={6} key={key}>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <TextField
-                              fullWidth
-                              label={`${key.charAt(0).toUpperCase() + key.slice(1)} Path`}
-                              value={value}
-                              onChange={(e) => setBasePaths(prev => ({ ...prev, [key]: e.target.value }))}
-                              sx={{ 
-                                '& .MuiOutlinedInput-root': {
-                                  borderRadius: 2,
-                                }
-                              }}
-                            />
+                            <Box sx={{ flexGrow: 1 }}>
+                              <TextField
+                                fullWidth
+                                label={`${key.charAt(0).toUpperCase() + key.slice(1)} Path`}
+                                value={value}
+                                onChange={(e) => setBasePaths(prev => ({ ...prev, [key]: e.target.value }))}
+                                sx={{ 
+                                  '& .MuiOutlinedInput-root': {
+                                    borderRadius: 2,
+                                  }
+                                }}
+                              />
+                              <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                                <Chip
+                                  label={`\${basePaths.${key}}`}
+                                  size="small"
+                                  sx={{
+                                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                                    color: '#667eea',
+                                    fontFamily: 'monospace',
+                                    fontSize: '0.7rem',
+                                    height: 20
+                                  }}
+                                />
+                                <Typography variant="caption" color="text.secondary">
+                                  Use this in service paths
+                                </Typography>
+                              </Box>
+                            </Box>
                             <Tooltip title="Remove Path">
                               <IconButton 
                                 color="error" 
                                 onClick={() => removePath(key)}
-                                sx={{ ml: 1 }}
+                                sx={{ ml: 1, alignSelf: 'flex-start', mt: 1 }}
                               >
                                 <DeleteIcon />
                               </IconButton>
@@ -864,32 +884,122 @@ const Admin = () => {
       </Box>
 
       {/* Add Path Dialog */}
-      <Dialog open={addPathDialog} onClose={() => setAddPathDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add New Base Path</DialogTitle>
-        <DialogContent>
+      <Dialog open={addPathDialog} onClose={() => setAddPathDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle
+          sx={{
+            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            color: "white",
+            fontWeight: 600,
+            textAlign: "center"
+          }}
+        >
+          Add New Base Path
+        </DialogTitle>
+        <DialogContent sx={{ pt: 3 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3, lineHeight: 1.6 }}>
+            Base paths are used in service configurations with template variables like <code>${basePaths.keyName}</code>.
+            Choose a logical key name that represents the type of services or technology.
+          </Typography>
+          
+          {/* Common Key Examples */}
+          <Paper 
+            elevation={1} 
+            sx={{ 
+              p: 2, 
+              mb: 3, 
+              background: "rgba(102, 126, 234, 0.05)",
+              border: "1px solid rgba(102, 126, 234, 0.2)"
+            }}
+          >
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, color: "#667eea" }}>
+              Common Key Names:
+            </Typography>
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+              {['java', 'python', 'npm', 'listener', 'frontend', 'backend', 'microservices'].map((key) => (
+                <Chip
+                  key={key}
+                  label={key}
+                  size="small"
+                  clickable
+                  onClick={() => setNewPathKey(key)}
+                  sx={{
+                    backgroundColor: newPathKey === key ? '#667eea' : 'rgba(102, 126, 234, 0.1)',
+                    color: newPathKey === key ? 'white' : '#667eea',
+                    '&:hover': {
+                      backgroundColor: newPathKey === key ? '#5a6fd8' : 'rgba(102, 126, 234, 0.2)',
+                    }
+                  }}
+                />
+              ))}
+            </Box>
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+              Click a chip to use that key name, or type your own custom key below.
+            </Typography>
+          </Paper>
+
           <TextField
             autoFocus
             margin="dense"
-            label="Path Key"
+            label="Path Key Name"
             fullWidth
             variant="outlined"
             value={newPathKey}
             onChange={(e) => setNewPathKey(e.target.value)}
-            sx={{ mb: 2 }}
+            placeholder="e.g., java, python, microservices"
+            helperText="Use lowercase, no spaces. This will be used as ${basePaths.keyName} in service paths."
+            sx={{ mb: 3 }}
           />
           <TextField
             margin="dense"
-            label="Path Value"
+            label="Directory Path"
             fullWidth
             variant="outlined"
             value={newPathValue}
             onChange={(e) => setNewPathValue(e.target.value)}
-            placeholder="~/path/to/directory"
+            placeholder="~/codebase/java-services (Unix) or C:/codebase/java-services (Windows)"
+            helperText="Absolute path or use ~ for home directory. Use forward slashes (/) for cross-platform compatibility."
           />
+          
+          {newPathKey && newPathValue && (
+            <Paper
+              elevation={1}
+              sx={{
+                mt: 3,
+                p: 2,
+                background: "rgba(76, 175, 80, 0.05)",
+                border: "1px solid rgba(76, 175, 80, 0.2)"
+              }}
+            >
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: "#4CAF50", mb: 1 }}>
+                Usage Example:
+              </Typography>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', color: '#333' }}>
+                "path": "$&#123;basePaths.{newPathKey}&#125;/my-service"
+              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                This will resolve to: <strong>{newPathValue}/my-service</strong>
+              </Typography>
+            </Paper>
+          )}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setAddPathDialog(false)}>Cancel</Button>
-          <Button onClick={addNewPath} variant="contained">Add</Button>
+        <DialogActions sx={{ p: 3, pt: 1 }}>
+          <Button 
+            onClick={() => setAddPathDialog(false)}
+            sx={{ color: '#666' }}
+          >
+            Cancel
+          </Button>
+          <Button 
+            onClick={addNewPath} 
+            variant="contained"
+            disabled={!newPathKey || !newPathValue}
+            sx={{
+              background: 'linear-gradient(45deg, #4CAF50 30%, #45a049 90%)',
+              '&:disabled': { background: '#ccc' }
+            }}
+          >
+            Add Base Path
+          </Button>
         </DialogActions>
       </Dialog>
 
