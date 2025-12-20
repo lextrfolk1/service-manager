@@ -33,9 +33,34 @@ service-manager/
 
 ---
 
-## ⚙️ Service Configuration (`services.json`)
+## ⚙️ Service Configuration
 
-Each service entry defines how it should be built, started, and monitored.
+### Base Path Configuration (`config.json`)
+
+Struo supports different base paths for different service types, allowing you to organize your projects by technology:
+
+```json
+{
+  "basePaths": {
+    "java": "~/workspace/java-services",
+    "python": "~/workspace/python-services", 
+    "npm": "~/workspace/frontend-services",
+    "redis": null,
+    "neo4j": "~/databases/neo4j",
+    "listener": "~/workspace/python-services",
+    "default": "~/workspace/microservices"
+  }
+}
+```
+
+**Setup:**
+1. Copy `backend/config/config.example.json` to `backend/config/config.json`
+2. Edit the base paths to match your project structure
+3. Use `${basePath.type}` placeholders in `services.json`
+
+### Service Definitions (`services.json`)
+
+Each service entry defines how it should be built, started, and monitored. Service directories are resolved using `${basePath.type}` placeholders.
 
 ### Sample Configuration
 
@@ -45,33 +70,24 @@ Each service entry defines how it should be built, started, and monitored.
     "config-service": {
       "type": "java",
       "port": 8888,
-      "dir": "~/codebase/lextr/config-service",
+      "dir": "${basePath.java}/config-service",
       "command": "mvn spring-boot:run",
       "build": "mvn clean install -DskipTests",
       "description": "Spring Cloud Config Server"
     },
 
-    "generic-service": {
-      "type": "java",
-      "port": 8053,
-      "dir": "~/codebase/lextr/generic-service",
-      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
-    },
-
-    "workflow-service": {
-      "type": "java",
-      "port": 8051,
-      "dir": "~/codebase/lextr/workflow-service",
-      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests"
-    },
-
     "execution-service": {
       "type": "python",
       "port": 5002,
-      "dir": "~/codebase/lextr/execution-service",
-      "command": "uvicorn app:app --host 0.0.0.0 --port 5002"
+      "dir": "${basePath.python}/execution-service",
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002"
+    },
+
+    "frontend-service": {
+      "type": "npm",
+      "port": 3000,
+      "dir": "${basePath.npm}/frontend-service",
+      "command": "npm run dev"
     },
 
     "redis": {
@@ -83,13 +99,44 @@ Each service entry defines how it should be built, started, and monitored.
     "neo4j": {
       "type": "neo4j",
       "port": 7687,
-      "dir": "~/neo4j",
+      "dir": "${basePath.neo4j}",
       "command": "./bin/neo4j start",
       "stopCommand": "./bin/neo4j stop"
     }
   }
 }
 ```
+
+**Transparent Path Resolution:**
+- `${basePath.java}` → Resolves to the Java base path from config.json
+- `${basePath.python}` → Resolves to the Python base path from config.json  
+- `${basePath.npm}` → Resolves to the NPM base path from config.json
+- `${basePath.neo4j}` → Resolves to the Neo4j base path from config.json
+
+**Path Resolution Examples:**
+With base paths configured as:
+```json
+{
+  "basePaths": {
+    "java": "~/workspace/java-services",
+    "python": "~/workspace/python-services",
+    "npm": "~/workspace/frontend-services",
+    "neo4j": "~/databases/neo4j"
+  }
+}
+```
+
+Services resolve to:
+- `${basePath.java}/config-service` → `~/workspace/java-services/config-service`
+- `${basePath.python}/execution-service` → `~/workspace/python-services/execution-service`  
+- `${basePath.npm}/frontend-service` → `~/workspace/frontend-services/frontend-service`
+- `${basePath.neo4j}` → `~/databases/neo4j`
+
+**Special Path Handling:**
+- Absolute paths (`/full/path`) are used as-is
+- Home paths (`~/path`) are expanded to user home directory
+- Placeholder paths (`${basePath.type}/service`) are resolved using config.json base paths
+- Services without directories (like Redis) don't need path resolution
 
 ---
 

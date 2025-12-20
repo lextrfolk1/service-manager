@@ -14,9 +14,21 @@ function resolveHome(p) {
   return p;
 }
 
+// Function to resolve template variables like ${basePaths.java}
+function resolvePlaceholders(str, basePaths) {
+  if (!str) return str;
+  
+  return str.replace(/\$\{basePaths\.(\w+)\}/g, (match, type) => {
+    const basePath = basePaths[type];
+    return basePath ? resolveHome(basePath) : '';
+  });
+}
+
 class ServiceManager {
-  constructor(services) {
-    this.services = services;
+  constructor(config) {
+    this.config = config;
+    this.services = config.services;
+    this.basePaths = config.config.basePaths;
     this.processes = {}; // name -> pid
   }
 
@@ -35,36 +47,40 @@ class ServiceManager {
       throw new Error(`Service ${name} has no command configured`);
     }
 
-    const resolvedDir = resolveHome(svc.dir);
+    // Resolve placeholders in path and command using basePaths
+    const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
+    const resolvedCommand = resolvePlaceholders(svc.command, this.basePaths);
+    
     const logFile = logger.createLogFile(name);
     const out = fs.openSync(logFile, "a");
     let gitAutoPull = svc.gitAutoPull || true;
 
-    if (gitAutoPull) {
-    await new Promise((resolve, reject) => {
-      exec(
-        `git -C "${resolvedDir}" pull`,
-        { shell: true },
-        (err, stdout, stderr) => {
-          fs.appendFileSync(logFile, `\n[GIT PULL STDOUT]\n${stdout || ""}`);
-          fs.appendFileSync(logFile, `\n[GIT PULL STDERR]\n${stderr || ""}`);
-
-          if (err) {
-            return reject(
-              new Error(`Git pull failed for ${name}: ${err.message}`)
-            );
-          }
-          resolve();
-        }
-      );
-    });
-  }
-
-    // Optional build step for Java
-    if (svc.build) {
+    if (gitAutoPull && resolvedDir) {
       await new Promise((resolve, reject) => {
         exec(
-          svc.build,
+          `git -C "${resolvedDir}" pull`,
+          { shell: true },
+          (err, stdout, stderr) => {
+            fs.appendFileSync(logFile, `\n[GIT PULL STDOUT]\n${stdout || ""}`);
+            fs.appendFileSync(logFile, `\n[GIT PULL STDERR]\n${stderr || ""}`);
+
+            if (err) {
+              return reject(
+                new Error(`Git pull failed for ${name}: ${err.message}`)
+              );
+            }
+            resolve();
+          }
+        );
+      });
+    }
+
+    // Optional build step
+    if (svc.build) {
+      const resolvedBuild = resolvePlaceholders(svc.build, this.basePaths);
+      await new Promise((resolve, reject) => {
+        exec(
+          resolvedBuild,
           { cwd: resolvedDir, shell: true },
           (err, stdout, stderr) => {
             fs.appendFileSync(logFile, `\n[BUILD STDOUT]\n${stdout || ""}`);
@@ -90,11 +106,11 @@ class ServiceManager {
       stdio: ["ignore", out, out]
     };
 
-    if (svc.dir) {
+    if (resolvedDir) {
       spawnOptions.cwd = resolvedDir;
     }
 
-    const child = spawn(svc.command, spawnOptions);
+    const child = spawn(resolvedCommand, spawnOptions);
     this.processes[name] = child.pid;
 
     if (svc.port) {
@@ -106,14 +122,15 @@ class ServiceManager {
 
   async stop(name) {
     const svc = this._getService(name);
-    const resolvedDir = resolveHome(svc.dir);
+    const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
 
     if (svc.stopCommand) {
+      const resolvedStopCommand = resolvePlaceholders(svc.stopCommand, this.basePaths);
       await new Promise((resolve, reject) => {
         exec(
-          svc.stopCommand,
+          resolvedStopCommand,
           { cwd: resolvedDir, shell: true },
-          (err, stdout, stderr) => {
+          (err) => {
             if (err) {
               return reject(
                 new Error(`stopCommand failed for ${name}: ${err.message}`)
@@ -150,7 +167,8 @@ class ServiceManager {
       service: name,
       running,
       port: svc.port || null,
-      type: svc.type || null
+      type: svc.type || null,
+      path: svc.path || null
     };
   }
 }
