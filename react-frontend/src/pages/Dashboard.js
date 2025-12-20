@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Grid,
   Typography,
@@ -8,7 +8,6 @@ import {
   CircularProgress,
   Alert,
   InputAdornment,
-  Container,
 } from "@mui/material";
 import { Search as SearchIcon } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
@@ -82,38 +81,24 @@ const Dashboard = ({ onViewLogs }) => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Container maxWidth="xl" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-        <Grid container spacing={2} sx={{ flexGrow: 1 }}>
-          {/* Services Column */}
-          <Grid item xs={12} lg={8} sx={{ display: 'flex', flexDirection: 'column' }}>
-            <Paper
-              elevation={6}
-              sx={{
-                p: 3,
-                borderRadius: 3,
-                background: "rgba(255, 255, 255, 0.95)",
-                backdropFilter: "blur(10px)",
-                flexGrow: 1,
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-              <Typography
-                variant="h4"
-                component="h1"
-                gutterBottom
-                sx={{
-                  fontWeight: 700,
-                  background: "linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)",
-                  backgroundClip: "text",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  mb: 2,
-                }}
-              >
-                Services Dashboard
-              </Typography>
-
+      <Grid container spacing={2} sx={{ flexGrow: 1, p: 2, minHeight: 0 }}>
+        {/* Services Column */}
+        <Grid item xs={12} lg={8} sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <Paper
+            elevation={6}
+            sx={{
+              borderRadius: 3,
+              background: "rgba(255, 255, 255, 0.95)",
+              backdropFilter: "blur(10px)",
+              flexGrow: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              overflow: 'hidden'
+            }}
+          >
+            {/* Fixed Search Header */}
+            <Box sx={{ p: 3, flexShrink: 0 }}>
               <TextField
                 fullWidth
                 variant="outlined"
@@ -121,7 +106,6 @@ const Dashboard = ({ onViewLogs }) => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 sx={{
-                  mb: 3,
                   "& .MuiOutlinedInput-root": {
                     borderRadius: 3,
                     background: "rgba(255, 255, 255, 0.8)",
@@ -135,57 +119,61 @@ const Dashboard = ({ onViewLogs }) => {
                   ),
                 }}
               />
+            </Box>
 
-              <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-                <Grid container spacing={2}>
-                  {filteredServices.length === 0 ? (
-                    <Grid item xs={12}>
-                      <Paper
-                        sx={{
-                          p: 3,
-                          textAlign: "center",
-                          borderRadius: 2,
-                          background: "rgba(255, 255, 255, 0.7)",
-                        }}
-                      >
-                        <Typography variant="body1" color="text.secondary">
-                          No matching services found.
-                        </Typography>
-                      </Paper>
+            {/* Scrollable Services Grid */}
+            <Box sx={{ flexGrow: 1, overflow: 'auto', px: 3, pb: 3 }}>
+              <Grid container spacing={2}>
+                {filteredServices.length === 0 ? (
+                  <Grid item xs={12}>
+                    <Paper
+                      sx={{
+                        p: 3,
+                        textAlign: "center",
+                        borderRadius: 2,
+                        background: "rgba(255, 255, 255, 0.7)",
+                      }}
+                    >
+                      <Typography variant="body1" color="text.secondary">
+                        No matching services found.
+                      </Typography>
+                    </Paper>
+                  </Grid>
+                ) : (
+                  filteredServices.map((service) => (
+                    <Grid item xs={12} sm={6} xl={4} key={service.name}>
+                      <ServiceCard
+                        service={service}
+                        onActionOutput={handleActionOutput}
+                        onViewLogs={onViewLogs}
+                      />
                     </Grid>
-                  ) : (
-                    filteredServices.map((service) => (
-                      <Grid item xs={12} sm={6} xl={4} key={service.name}>
-                        <ServiceCard
-                          service={service}
-                          onActionOutput={handleActionOutput}
-                          onViewLogs={onViewLogs}
-                        />
-                      </Grid>
-                    ))
-                  )}
-                </Grid>
-              </Box>
-            </Paper>
-          </Grid>
+                  ))
+                )}
+              </Grid>
+            </Box>
+          </Paper>
+        </Grid>
 
-          {/* Action Output Column */}
-          <Grid item xs={12} lg={4} sx={{ display: 'flex' }}>
-            <Paper
-              elevation={6}
-              sx={{
-                p: 3,
-                borderRadius: 3,
-                background: "linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)",
-                color: "#e5e7eb",
-                width: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
+        {/* Action Output Column */}
+        <Grid item xs={12} lg={4} sx={{ display: 'flex', minHeight: 0 }}>
+          <Paper
+            elevation={6}
+            sx={{
+              borderRadius: 3,
+              background: "linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)",
+              color: "#e5e7eb",
+              width: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              minHeight: 0,
+              overflow: 'hidden'
+            }}
+          >
+            {/* Fixed Header */}
+            <Box sx={{ p: 3, pb: 2, flexShrink: 0 }}>
               <Typography
                 variant="h6"
-                gutterBottom
                 sx={{
                   color: "#fff",
                   fontWeight: 600,
@@ -193,34 +181,37 @@ const Dashboard = ({ onViewLogs }) => {
                   backgroundClip: "text",
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
-                  mb: 2,
                 }}
               >
-                Last Action Output
+                Action Output
               </Typography>
-              <Box
-                component="pre"
-                sx={{
-                  backgroundColor: "#0d1117",
-                  border: "1px solid #333",
-                  borderRadius: 2,
-                  p: 2,
-                  fontSize: "0.8rem",
-                  lineHeight: 1.4,
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  overflow: "auto",
-                  fontFamily: "monospace",
-                  flexGrow: 1,
-                  minHeight: '300px',
-                }}
-              >
-                {output}
-              </Box>
-            </Paper>
-          </Grid>
+            </Box>
+
+            {/* Scrollable Output Area */}
+            <Box
+              component="pre"
+              sx={{
+                backgroundColor: "#0d1117",
+                border: "1px solid #333",
+                borderRadius: 2,
+                p: 2,
+                fontSize: "0.8rem",
+                lineHeight: 1.4,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                overflow: "auto",
+                fontFamily: "monospace",
+                flexGrow: 1,
+                mx: 3,
+                mb: 3,
+                minHeight: 0
+              }}
+            >
+              {output}
+            </Box>
+          </Paper>
         </Grid>
-      </Container>
+      </Grid>
     </Box>
   );
 };

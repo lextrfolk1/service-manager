@@ -74,6 +74,15 @@ function App() {
     }
   };
 
+  const getPageTitle = () => {
+    switch (currentTab) {
+      case 0: return "Dashboard";
+      case 1: return "Logs";
+      case 2: return "Configuration";
+      default: return "";
+    }
+  };
+
   return (
     <Box
       sx={{
@@ -93,16 +102,42 @@ function App() {
         }}
       >
         <Toolbar sx={{ justifyContent: 'space-between', py: 1 }}>
-          <Typography 
-            variant="h5" 
-            sx={{ 
-              fontWeight: 700,
-              color: 'white',
-              textShadow: '0 2px 4px rgba(0,0,0,0.3)'
-            }}
-          >
-            Service Manager
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography 
+              variant="h5" 
+              sx={{ 
+                fontWeight: 700,
+                color: 'white',
+                textShadow: '0 2px 4px rgba(0,0,0,0.3)'
+              }}
+            >
+              Service Manager
+            </Typography>
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.15)',
+                borderRadius: 2,
+                px: 2,
+                py: 0.5,
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255,255,255,0.2)'
+              }}
+            >
+              <Typography 
+                variant="body1" 
+                sx={{ 
+                  fontWeight: 600,
+                  color: 'white',
+                  fontSize: '0.95rem',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.2)'
+                }}
+              >
+                {getPageTitle()}
+              </Typography>
+            </Box>
+          </Box>
           
           <Tabs
             value={currentTab}

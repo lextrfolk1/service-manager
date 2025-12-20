@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import {
-  Container,
   Typography,
   Paper,
   TextField,
@@ -246,408 +245,444 @@ const Admin = () => {
 
   if (loading) {
     return (
-      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-        <Box display="flex" justifyContent="center" alignItems="center" minHeight="50vh">
-          <CircularProgress size={60} />
-        </Box>
-      </Container>
+      <Box sx={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+        <CircularProgress size={60} />
+      </Box>
     );
   }
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <Container maxWidth="xl" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-        <Typography 
-          variant="h4" 
-          component="h1" 
-          gutterBottom 
+      {/* Fixed Tabs - No header */}
+      <Box sx={{ p: 2, flexShrink: 0 }}>
+        <Paper 
+          elevation={3} 
           sx={{ 
-            fontWeight: 700,
-            background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-            backgroundClip: 'text',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            mb: 3,
-            textAlign: 'center'
+            borderRadius: 2,
+            overflow: 'hidden',
+            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+            flexShrink: 0
           }}
         >
-          Configuration Management
-        </Typography>
-
-      <Paper 
-        elevation={3} 
-        sx={{ 
-          mb: 2,
-          borderRadius: 2,
-          overflow: 'hidden',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-        }}
-      >
-        <Tabs
-          value={currentTab}
-          onChange={handleTabChange}
-          variant="fullWidth"
-          sx={{ 
-            '& .MuiTab-root': {
-              color: 'white',
-              fontWeight: 600,
-              '&.Mui-selected': {
-                color: '#fff',
-                backgroundColor: 'rgba(255,255,255,0.1)'
+          <Tabs
+            value={currentTab}
+            onChange={handleTabChange}
+            variant="fullWidth"
+            sx={{ 
+              minHeight: 48,
+              '& .MuiTab-root': {
+                color: 'white',
+                fontWeight: 600,
+                minHeight: 48,
+                '&.Mui-selected': {
+                  color: '#fff',
+                  backgroundColor: 'rgba(255,255,255,0.1)'
+                }
+              },
+              '& .MuiTabs-indicator': {
+                backgroundColor: '#fff',
+                height: 3
               }
-            },
-            '& .MuiTabs-indicator': {
-              backgroundColor: '#fff',
-              height: 3
-            }
-          }}
-        >
-          <Tab icon={<StorageIcon />} label="Base Paths" />
-          <Tab icon={<SettingsIcon />} label="Services" />
-          <Tab icon={<CodeIcon />} label="Raw JSON" />
-        </Tabs>
-      </Paper>
+            }}
+          >
+            <Tab icon={<StorageIcon />} label="Base Paths" />
+            <Tab icon={<SettingsIcon />} label="Services" />
+            <Tab icon={<CodeIcon />} label="Raw JSON" />
+          </Tabs>
+        </Paper>
+      </Box>
 
-      <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+      {/* Scrollable Content Area */}
+      <Box sx={{ flexGrow: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', p: 2, pt: 0, minHeight: 0 }}>
         {/* Base Paths Tab */}
         {currentTab === 0 && (
-          <Paper elevation={3} sx={{ p: 4, borderRadius: 2, height: '100%', overflow: 'auto' }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-            <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
-              Base Paths Configuration
-            </Typography>
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => setAddPathDialog(true)}
-              sx={{
-                background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
-                boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
-              }}
-            >
-              Add Path
-            </Button>
-          </Box>
-          
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-            Configure the base directory paths for different service types. Services use these paths with <code>${basePaths.type}</code> templates.
-          </Typography>
-
-          <Grid container spacing={3}>
-            <Grid item xs={12}>
-              <Card variant="outlined" sx={{ p: 3, mb: 3, borderRadius: 2, boxShadow: 2 }}>
-                <Typography variant="h6" gutterBottom sx={{ color: '#555', fontWeight: 600 }}>
-                  Global Settings
+          <Paper 
+            elevation={3} 
+            sx={{ 
+              borderRadius: 2, 
+              flexGrow: 1, 
+              display: 'flex', 
+              flexDirection: 'column',
+              overflow: 'hidden',
+              minHeight: 0
+            }}
+          >
+            {/* Fixed Header */}
+            <Box sx={{ p: 4, pb: 2, flexShrink: 0 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
+                  Base Paths Configuration
                 </Typography>
-                <TextField
-                  fullWidth
-                  label="Config Server URL"
-                  value={globalConfig.configServerUrl}
-                  onChange={(e) => setGlobalConfig(prev => ({ ...prev, configServerUrl: e.target.value }))}
-                  sx={{ 
-                    '& .MuiOutlinedInput-root': {
-                      borderRadius: 2,
-                    }
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => setAddPathDialog(true)}
+                  sx={{
+                    background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
+                    boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
                   }}
-                />
-              </Card>
-            </Grid>
+                >
+                  Add Path
+                </Button>
+              </Box>
+              
+              <Typography variant="body2" color="text.secondary">
+                Configure the base directory paths for different service types. Services use these paths with <code>${basePaths.type}</code> templates.
+              </Typography>
+            </Box>
 
-            <Grid item xs={12}>
-              <Card variant="outlined" sx={{ p: 3, borderRadius: 2, boxShadow: 2 }}>
-                <Typography variant="h6" gutterBottom sx={{ color: '#555', fontWeight: 600 }}>
-                  Base Paths
-                </Typography>
-                <Grid container spacing={2}>
-                  {Object.entries(basePaths).map(([key, value]) => (
-                    <Grid item xs={12} sm={6} key={key}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <TextField
-                          fullWidth
-                          label={`${key.charAt(0).toUpperCase() + key.slice(1)} Path`}
-                          value={value}
-                          onChange={(e) => setBasePaths(prev => ({ ...prev, [key]: e.target.value }))}
-                          sx={{ 
-                            '& .MuiOutlinedInput-root': {
-                              borderRadius: 2,
-                            }
-                          }}
-                        />
-                        <Tooltip title="Remove Path">
-                          <IconButton 
-                            color="error" 
-                            onClick={() => removePath(key)}
-                            sx={{ ml: 1 }}
-                          >
-                            <DeleteIcon />
-                          </IconButton>
-                        </Tooltip>
-                      </Box>
-                    </Grid>
-                  ))}
+            {/* Scrollable Content */}
+            <Box sx={{ flexGrow: 1, overflow: 'auto', px: 4, pb: 4 }}>
+              <Grid container spacing={3}>
+                <Grid item xs={12}>
+                  <Card variant="outlined" sx={{ p: 3, mb: 3, borderRadius: 2, boxShadow: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ color: '#555', fontWeight: 600 }}>
+                      Global Settings
+                    </Typography>
+                    <TextField
+                      fullWidth
+                      label="Config Server URL"
+                      value={globalConfig.configServerUrl}
+                      onChange={(e) => setGlobalConfig(prev => ({ ...prev, configServerUrl: e.target.value }))}
+                      sx={{ 
+                        '& .MuiOutlinedInput-root': {
+                          borderRadius: 2,
+                        }
+                      }}
+                    />
+                  </Card>
                 </Grid>
-              </Card>
-            </Grid>
-          </Grid>
 
-          <Box sx={{ mt: 4, display: 'flex', gap: 2 }}>
-            <Button
-              variant="contained"
-              startIcon={<SaveIcon />}
-              onClick={savePaths}
-              disabled={saving}
-              size="large"
-              sx={{
-                background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
-                px: 4,
-                py: 1.5,
-              }}
-            >
-              Save Base Paths
-            </Button>
-          </Box>
-        </Paper>
+                <Grid item xs={12}>
+                  <Card variant="outlined" sx={{ p: 3, borderRadius: 2, boxShadow: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ color: '#555', fontWeight: 600 }}>
+                      Base Paths
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {Object.entries(basePaths).map(([key, value]) => (
+                        <Grid item xs={12} sm={6} key={key}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <TextField
+                              fullWidth
+                              label={`${key.charAt(0).toUpperCase() + key.slice(1)} Path`}
+                              value={value}
+                              onChange={(e) => setBasePaths(prev => ({ ...prev, [key]: e.target.value }))}
+                              sx={{ 
+                                '& .MuiOutlinedInput-root': {
+                                  borderRadius: 2,
+                                }
+                              }}
+                            />
+                            <Tooltip title="Remove Path">
+                              <IconButton 
+                                color="error" 
+                                onClick={() => removePath(key)}
+                                sx={{ ml: 1 }}
+                              >
+                                <DeleteIcon />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  </Card>
+                </Grid>
+
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', gap: 2 }}>
+                    <Button
+                      variant="contained"
+                      startIcon={<SaveIcon />}
+                      onClick={savePaths}
+                      disabled={saving}
+                      size="large"
+                      sx={{
+                        background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                        boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
+                        px: 4,
+                        py: 1.5,
+                      }}
+                    >
+                      Save Base Paths
+                    </Button>
+                  </Box>
+                </Grid>
+              </Grid>
+            </Box>
+          </Paper>
         )}
 
         {/* Services Tab */}
         {currentTab === 1 && (
-          <Paper elevation={3} sx={{ p: 4, borderRadius: 2, height: '100%', overflow: 'auto' }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-            <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
-              Services Configuration
-            </Typography>
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => setAddServiceDialog(true)}
-              sx={{
-                background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
-                boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
-              }}
-            >
-              Add Service
-            </Button>
-          </Box>
-          
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
-            Manage individual service configurations. Paths use template variables like <code>${basePaths.java}/service-name</code>.
-          </Typography>
-
-          <Grid container spacing={3}>
-            {Object.entries(services).map(([serviceName, service]) => (
-              <Grid item xs={12} key={serviceName}>
-                <Card 
-                  variant="outlined" 
-                  sx={{ 
-                    p: 3, 
-                    borderRadius: 2, 
-                    boxShadow: 2,
-                    transition: 'all 0.3s ease',
-                    '&:hover': {
-                      boxShadow: 4,
-                      transform: 'translateY(-2px)'
-                    }
+          <Paper 
+            elevation={3} 
+            sx={{ 
+              borderRadius: 2, 
+              flexGrow: 1, 
+              display: 'flex', 
+              flexDirection: 'column',
+              overflow: 'hidden',
+              minHeight: 0
+            }}
+          >
+            {/* Fixed Header */}
+            <Box sx={{ p: 4, pb: 2, flexShrink: 0 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
+                  Services Configuration
+                </Typography>
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => setAddServiceDialog(true)}
+                  sx={{
+                    background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
+                    boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
                   }}
                 >
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600, color: '#333' }}>
-                      {serviceName}
-                    </Typography>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Chip 
-                        label={service.type || 'Unknown'} 
-                        color="primary" 
-                        size="small"
-                        sx={{ fontWeight: 600 }}
-                      />
-                      <Tooltip title="Remove Service">
-                        <IconButton 
-                          color="error" 
-                          size="small"
-                          onClick={() => removeService(serviceName)}
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </Tooltip>
-                    </Box>
-                  </Box>
-                  
-                  <Grid container spacing={2}>
-                    <Grid item xs={12} sm={6} md={3}>
-                      <FormControl fullWidth size="small">
-                        <InputLabel>Type</InputLabel>
-                        <Select
-                          value={service.type || ''}
-                          onChange={(e) => handleServiceChange(serviceName, 'type', e.target.value)}
-                          label="Type"
-                          sx={{ borderRadius: 2 }}
-                        >
-                          <MenuItem value="java">Java</MenuItem>
-                          <MenuItem value="python">Python</MenuItem>
-                          <MenuItem value="npm">NPM</MenuItem>
-                          <MenuItem value="redis">Redis</MenuItem>
-                          <MenuItem value="neo4j">Neo4j</MenuItem>
-                          <MenuItem value="listener">Listener</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid item xs={12} sm={6} md={3}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Port"
-                        type="number"
-                        value={service.port || ''}
-                        onChange={(e) => handleServiceChange(serviceName, 'port', e.target.value)}
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Path"
-                        value={service.path || ''}
-                        onChange={(e) => handleServiceChange(serviceName, 'path', e.target.value)}
-                        placeholder="${basePaths.java}/service-name"
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Command"
-                        value={service.command || ''}
-                        onChange={(e) => handleServiceChange(serviceName, 'command', e.target.value)}
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Stop Command (optional)"
-                        value={service.stopCommand || ''}
-                        onChange={(e) => handleServiceChange(serviceName, 'stopCommand', e.target.value)}
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                        placeholder="redis-cli shutdown"
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Build Command (optional)"
-                        value={service.build || ''}
-                        onChange={(e) => handleServiceChange(serviceName, 'build', e.target.value)}
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Description"
-                        value={service.description || ''}
-                        onChange={(e) => handleServiceChange(serviceName, 'description', e.target.value)}
-                        sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-                      />
-                    </Grid>
-                  </Grid>
-                </Card>
-              </Grid>
-            ))}
-          </Grid>
+                  Add Service
+                </Button>
+              </Box>
+              
+              <Typography variant="body2" color="text.secondary">
+                Manage individual service configurations. Paths use template variables like <code>${basePaths.java}/service-name</code>.
+              </Typography>
+            </Box>
 
-          <Box sx={{ mt: 4 }}>
-            <Button
-              variant="contained"
-              startIcon={<SaveIcon />}
-              onClick={saveServices}
-              disabled={saving}
-              size="large"
-              sx={{
-                background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
-                px: 4,
-                py: 1.5,
-              }}
-            >
-              Save Services
-            </Button>
-          </Box>
-        </Paper>
+            {/* Scrollable Content */}
+            <Box sx={{ flexGrow: 1, overflow: 'auto', px: 4, pb: 4 }}>
+              <Grid container spacing={3}>
+                {Object.entries(services).map(([serviceName, service]) => (
+                  <Grid item xs={12} key={serviceName}>
+                    <Card 
+                      variant="outlined" 
+                      sx={{ 
+                        p: 3, 
+                        borderRadius: 2, 
+                        boxShadow: 2,
+                        transition: 'all 0.3s ease',
+                        '&:hover': {
+                          boxShadow: 4,
+                          transform: 'translateY(-2px)'
+                        }
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                        <Typography variant="h6" sx={{ fontWeight: 600, color: '#333' }}>
+                          {serviceName}
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 1 }}>
+                          <Chip 
+                            label={service.type || 'Unknown'} 
+                            color="primary" 
+                            size="small"
+                            sx={{ fontWeight: 600 }}
+                          />
+                          <Tooltip title="Remove Service">
+                            <IconButton 
+                              color="error" 
+                              size="small"
+                              onClick={() => removeService(serviceName)}
+                            >
+                              <DeleteIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </Box>
+                      
+                      <Grid container spacing={2}>
+                        <Grid item xs={12} sm={6} md={3}>
+                          <FormControl fullWidth size="small">
+                            <InputLabel>Type</InputLabel>
+                            <Select
+                              value={service.type || ''}
+                              onChange={(e) => handleServiceChange(serviceName, 'type', e.target.value)}
+                              label="Type"
+                              sx={{ borderRadius: 2 }}
+                            >
+                              <MenuItem value="java">Java</MenuItem>
+                              <MenuItem value="python">Python</MenuItem>
+                              <MenuItem value="npm">NPM</MenuItem>
+                              <MenuItem value="redis">Redis</MenuItem>
+                              <MenuItem value="neo4j">Neo4j</MenuItem>
+                              <MenuItem value="listener">Listener</MenuItem>
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                        <Grid item xs={12} sm={6} md={3}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Port"
+                            type="number"
+                            value={service.port || ''}
+                            onChange={(e) => handleServiceChange(serviceName, 'port', e.target.value)}
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          />
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Path"
+                            value={service.path || ''}
+                            onChange={(e) => handleServiceChange(serviceName, 'path', e.target.value)}
+                            placeholder="${basePaths.java}/service-name"
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Command"
+                            value={service.command || ''}
+                            onChange={(e) => handleServiceChange(serviceName, 'command', e.target.value)}
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Stop Command (optional)"
+                            value={service.stopCommand || ''}
+                            onChange={(e) => handleServiceChange(serviceName, 'stopCommand', e.target.value)}
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                            placeholder="redis-cli shutdown"
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Build Command (optional)"
+                            value={service.build || ''}
+                            onChange={(e) => handleServiceChange(serviceName, 'build', e.target.value)}
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Description"
+                            value={service.description || ''}
+                            onChange={(e) => handleServiceChange(serviceName, 'description', e.target.value)}
+                            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+                          />
+                        </Grid>
+                      </Grid>
+                    </Card>
+                  </Grid>
+                ))}
+
+                <Grid item xs={12}>
+                  <Button
+                    variant="contained"
+                    startIcon={<SaveIcon />}
+                    onClick={saveServices}
+                    disabled={saving}
+                    size="large"
+                    sx={{
+                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                      boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
+                      px: 4,
+                      py: 1.5,
+                    }}
+                  >
+                    Save Services
+                  </Button>
+                </Grid>
+              </Grid>
+            </Box>
+          </Paper>
         )}
 
         {/* Raw JSON Tab */}
         {currentTab === 2 && (
-          <Paper elevation={3} sx={{ p: 4, borderRadius: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-          <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, color: '#333' }}>
-            Raw JSON Editor
-          </Typography>
-          <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
-            Edit the complete configuration as JSON. Be careful: invalid JSON will break the backend.
-          </Alert>
-
-          <Box sx={{ mb: 3, display: "flex", gap: 2, flexWrap: "wrap" }}>
-            <Button
-              variant="contained"
-              startIcon={<SaveIcon />}
-              onClick={saveRawConfig}
-              disabled={saving}
-              sx={{
-                background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
-              }}
-            >
-              {saving ? "Saving..." : "Save Configuration"}
-            </Button>
-            <Button
-              variant="outlined"
-              startIcon={<RefreshIcon />}
-              onClick={loadConfig}
-              disabled={loading || saving}
-              sx={{ borderRadius: 2 }}
-            >
-              Reload
-            </Button>
-            <Button 
-              variant="outlined" 
-              onClick={formatJson} 
-              disabled={saving}
-              sx={{ borderRadius: 2 }}
-            >
-              Format JSON
-            </Button>
-          </Box>
-
-          <TextField
-            fullWidth
-            multiline
-            value={rawConfig}
-            onChange={(e) => setRawConfig(e.target.value)}
-            variant="outlined"
-            sx={{
-              flexGrow: 1,
-              "& .MuiInputBase-input": {
-                fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
-                fontSize: "0.875rem",
-                lineHeight: 1.5,
-              },
-              "& .MuiOutlinedInput-root": {
-                borderRadius: 2,
-                height: '100%',
-                '& textarea': {
-                  height: '100% !important',
-                  overflow: 'auto !important',
-                }
-              }
+          <Paper 
+            elevation={3} 
+            sx={{ 
+              borderRadius: 2, 
+              flexGrow: 1, 
+              display: 'flex', 
+              flexDirection: 'column',
+              overflow: 'hidden',
+              minHeight: 0
             }}
-            disabled={saving}
-          />
-        </Paper>
+          >
+            {/* Fixed Header */}
+            <Box sx={{ p: 4, pb: 2, flexShrink: 0 }}>
+              <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, color: '#333' }}>
+                Raw JSON Editor
+              </Typography>
+              <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
+                Edit the complete configuration as JSON. Be careful: invalid JSON will break the backend.
+              </Alert>
+
+              <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                <Button
+                  variant="contained"
+                  startIcon={<SaveIcon />}
+                  onClick={saveRawConfig}
+                  disabled={saving}
+                  sx={{
+                    background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                    boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
+                  }}
+                >
+                  {saving ? "Saving..." : "Save Configuration"}
+                </Button>
+                <Button
+                  variant="outlined"
+                  startIcon={<RefreshIcon />}
+                  onClick={loadConfig}
+                  disabled={loading || saving}
+                  sx={{ borderRadius: 2 }}
+                >
+                  Reload
+                </Button>
+                <Button 
+                  variant="outlined" 
+                  onClick={formatJson} 
+                  disabled={saving}
+                  sx={{ borderRadius: 2 }}
+                >
+                  Format JSON
+                </Button>
+              </Box>
+            </Box>
+
+            {/* Scrollable JSON Editor */}
+            <Box sx={{ flexGrow: 1, px: 4, pb: 4, minHeight: 0 }}>
+              <TextField
+                fullWidth
+                multiline
+                value={rawConfig}
+                onChange={(e) => setRawConfig(e.target.value)}
+                variant="outlined"
+                sx={{
+                  height: '100%',
+                  "& .MuiInputBase-input": {
+                    fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
+                    fontSize: "0.875rem",
+                    lineHeight: 1.5,
+                  },
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 2,
+                    height: '100%',
+                    '& textarea': {
+                      height: '100% !important',
+                      overflow: 'auto !important',
+                    }
+                  }
+                }}
+                disabled={saving}
+              />
+            </Box>
+          </Paper>
         )}
       </Box>
 
@@ -712,7 +747,6 @@ const Admin = () => {
           {snackbarMessage}
         </Alert>
       </Snackbar>
-      </Container>
     </Box>
   );
 };
