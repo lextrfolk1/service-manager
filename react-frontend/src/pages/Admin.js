@@ -435,6 +435,7 @@ const Admin = ({ onConfigReload }) => {
       setNewPathKey("");
       setNewPathValue("");
       setAddPathDialog(false);
+      showSnackbar(`Base path "${newPathKey}" added successfully`, "success");
     }
   };
 
@@ -593,17 +594,31 @@ const Admin = ({ onConfigReload }) => {
                 <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
                   Base Paths Configuration
                 </Typography>
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={() => setAddPathDialog(true)}
-                  sx={{
-                    background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
-                    boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
-                  }}
-                >
-                  Add Path
-                </Button>
+                <Box sx={{ display: 'flex', gap: 2 }}>
+                  <Button
+                    variant="contained"
+                    startIcon={<SaveIcon />}
+                    onClick={savePaths}
+                    disabled={saving}
+                    sx={{
+                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                      boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
+                    }}
+                  >
+                    Save Base Paths
+                  </Button>
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={() => setAddPathDialog(true)}
+                    sx={{
+                      background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
+                      boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
+                    }}
+                  >
+                    Add Path
+                  </Button>
+                </Box>
               </Box>
               
               <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
@@ -642,8 +657,8 @@ const Admin = ({ onConfigReload }) => {
                                   label={`\${basePaths.${key}}`}
                                   size="small"
                                   sx={{
-                                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
-                                    color: '#667eea',
+                                    backgroundColor: 'rgba(21, 101, 192, 0.1)', // Professional blue tint
+                                    color: '#1565C0', // Professional blue
                                     fontFamily: 'monospace',
                                     fontSize: '0.7rem',
                                     height: 20
@@ -668,26 +683,6 @@ const Admin = ({ onConfigReload }) => {
                       ))}
                     </Grid>
                   </Card>
-                </Grid>
-
-                <Grid item xs={12}>
-                  <Box sx={{ display: 'flex', gap: 2 }}>
-                    <Button
-                      variant="contained"
-                      startIcon={<SaveIcon />}
-                      onClick={savePaths}
-                      disabled={saving}
-                      size="large"
-                      sx={{
-                        background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                        boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
-                        px: 4,
-                        py: 1.5,
-                      }}
-                    >
-                      Save Base Paths
-                    </Button>
-                  </Box>
                 </Grid>
               </Grid>
             </Box>
@@ -1011,8 +1006,8 @@ const Admin = ({ onConfigReload }) => {
                   clickable
                   onClick={() => setNewPathKey(key)}
                   sx={{
-                    backgroundColor: newPathKey === key ? '#667eea' : 'rgba(102, 126, 234, 0.1)',
-                    color: newPathKey === key ? 'white' : '#667eea',
+                    backgroundColor: newPathKey === key ? '#1565C0' : 'rgba(21, 101, 192, 0.1)', // Professional blue
+                    color: newPathKey === key ? 'white' : '#1565C0', // Professional blue
                     '&:hover': {
                       backgroundColor: newPathKey === key ? '#5a6fd8' : 'rgba(102, 126, 234, 0.2)',
                     }
@@ -1082,8 +1077,8 @@ const Admin = ({ onConfigReload }) => {
             variant="contained"
             disabled={!newPathKey || !newPathValue}
             sx={{
-              background: 'linear-gradient(45deg, #4CAF50 30%, #45a049 90%)',
-              '&:disabled': { background: '#ccc' }
+              background: 'linear-gradient(45deg, #2E7D32 30%, #388E3C 90%)', // Professional green gradient
+              '&:disabled': { background: '#E0E0E0' }
             }}
           >
             Add Base Path
