@@ -1,19 +1,20 @@
 # Struo – Local Microservices Manager
 
 Struo is a lightweight tool for managing local microservices during development.  
-It provides a simple web dashboard to start, stop, restart, view logs, and configure multiple Java/Python/Node/DB services from one place.
+It provides a React-based web dashboard to start, stop, restart, view logs, and configure multiple Java/Python/Node/DB services from one place.
 
 ---
 
 ## 🚀 Features
 
-- Unified dashboard for all services
+- Unified React dashboard for all services
 - Start / Stop / Restart with automatic port cleanup
-- Optional Git pull + Maven build before start
-- Auto-load + auto-refresh log viewer
-- Delete log files directly from UI
+- Build mode toggle for services that need compilation
+- Real-time service status monitoring
+- Multi-service log viewer with tabs
 - Configurable service definitions via `services.json`
-- One-command startup script (`start-application.sh`)
+- Support for listener services (background processes)
+- One-command startup script
 
 ---
 
@@ -23,44 +24,39 @@ It provides a simple web dashboard to start, stop, restart, view logs, and confi
 service-manager/
 ├── backend/                # Node.js API server
 │   ├── src/
-│   └── services.json       # Service definitions
-├── frontend/               # Original Dashboard UI (HTML/JS)
-├── react-frontend/         # React version of Dashboard UI
+│   └── config/
+│       └── services.json   # Service definitions
+├── react-frontend/         # React Dashboard UI
 ├── logs/                   # Captured logs
-├── start-application.sh    # Starts backend + original frontend
-└── start-react-app.sh      # Starts backend + React frontend
+└── start-application.sh    # Single startup script with auto-dependencies
 ```
 
 ---
 
 ## ⚙️ Service Configuration
 
-### Base Path Configuration (`config.json`)
+### Base Path Configuration
 
 Struo supports different base paths for different service types, allowing you to organize your projects by technology:
 
 ```json
 {
-  "basePaths": {
-    "java": "~/workspace/java-services",
-    "python": "~/workspace/python-services", 
-    "npm": "~/workspace/frontend-services",
-    "redis": null,
-    "neo4j": "~/databases/neo4j",
-    "listener": "~/workspace/python-services",
-    "default": "~/workspace/microservices"
+  "config": {
+    "basePaths": {
+      "java": "~/workspace/java-services",
+      "python": "~/workspace/python-services", 
+      "npm": "~/workspace/npm-services",
+      "neo4j": "~/databases/neo4j",
+      "listener": "~/workspace/python-services",
+      "default": "~/workspace/microservices"
+    }
   }
 }
 ```
 
-**Setup:**
-1. Copy `backend/config/config.example.json` to `backend/config/config.json`
-2. Edit the base paths to match your project structure
-3. Use `${basePath.type}` placeholders in `services.json`
-
 ### Service Definitions (`services.json`)
 
-Each service entry defines how it should be built, started, and monitored. Service directories are resolved using `${basePath.type}` placeholders.
+Each service entry defines how it should be built, started, and monitored. Service directories are resolved using `${basePaths.type}` placeholders.
 
 ### Sample Configuration
 
@@ -70,7 +66,7 @@ Each service entry defines how it should be built, started, and monitored. Servi
     "config-service": {
       "type": "java",
       "port": 8888,
-      "dir": "${basePath.java}/config-service",
+      "path": "${basePaths.java}/config-service",
       "command": "mvn spring-boot:run",
       "build": "mvn clean install -DskipTests",
       "description": "Spring Cloud Config Server"
@@ -79,131 +75,99 @@ Each service entry defines how it should be built, started, and monitored. Servi
     "execution-service": {
       "type": "python",
       "port": 5002,
-      "dir": "${basePath.python}/execution-service",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002"
-    },
-
-    "frontend-service": {
-      "type": "npm",
-      "port": 3000,
-      "dir": "${basePath.npm}/frontend-service",
-      "command": "npm run dev"
+      "path": "${basePaths.python}/execution-service",
+      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "description": "Code execution service"
     },
 
     "redis": {
       "type": "redis",
       "port": 6379,
-      "command": "redis-server"
+      "command": "redis-server",
+      "stopCommand": "redis-cli shutdown",
+      "description": "Redis in-memory data store"
     },
 
-    "neo4j": {
-      "type": "neo4j",
-      "port": 7687,
-      "dir": "${basePath.neo4j}",
-      "command": "./bin/neo4j start",
-      "stopCommand": "./bin/neo4j stop"
+    "execution-listener": {
+      "type": "listener",
+      "path": "${basePaths.listener}/execution-service",
+      "command": "$(pwd)/.venv/bin/python worker.py",
+      "stopCommand": "pkill -f worker.py",
+      "healthCommand": "pgrep -f worker.py > /dev/null",
+      "description": "Background execution worker"
     }
   }
 }
 ```
 
-**Transparent Path Resolution:**
-- `${basePath.java}` → Resolves to the Java base path from config.json
-- `${basePath.python}` → Resolves to the Python base path from config.json  
-- `${basePath.npm}` → Resolves to the NPM base path from config.json
-- `${basePath.neo4j}` → Resolves to the Neo4j base path from config.json
-
 **Path Resolution Examples:**
-With base paths configured as:
-```json
-{
-  "basePaths": {
-    "java": "~/workspace/java-services",
-    "python": "~/workspace/python-services",
-    "npm": "~/workspace/frontend-services",
-    "neo4j": "~/databases/neo4j"
-  }
-}
-```
-
-Services resolve to:
-- `${basePath.java}/config-service` → `~/workspace/java-services/config-service`
-- `${basePath.python}/execution-service` → `~/workspace/python-services/execution-service`  
-- `${basePath.npm}/frontend-service` → `~/workspace/frontend-services/frontend-service`
-- `${basePath.neo4j}` → `~/databases/neo4j`
-
-**Special Path Handling:**
-- Absolute paths (`/full/path`) are used as-is
-- Home paths (`~/path`) are expanded to user home directory
-- Placeholder paths (`${basePath.type}/service`) are resolved using config.json base paths
-- Services without directories (like Redis) don't need path resolution
+- `${basePaths.java}/config-service` → `~/workspace/java-services/config-service`
+- `${basePaths.python}/execution-service` → `~/workspace/python-services/execution-service`  
+- `${basePaths.neo4j}` → `~/databases/neo4j`
 
 ---
 
 ## ▶️ Starting the Application
 
-### Start All Services (Recommended)
+### Start Application
 
 ```bash
 bash start-application.sh
 ```
 
-This starts **both frontends simultaneously**:
+This script will:
+- **Auto-install dependencies** for both backend and React frontend (if not present)
+- **Stop any existing processes** on ports 4000 and 4005
+- **Start backend API** on port 4000
+- **Start React frontend** on port 4005
+- **Provide colored output** with clear status messages
+- **Handle graceful shutdown** with Ctrl+C
 
-- Original HTML/JS frontend on port 4002
-- React frontend on port 4005
-- Backend API on port 4000
-
-### Start Individual Frontends
-
-```bash
-# Start only React frontend + backend
-bash start-react-app.sh
-```
-
-All scripts:
-
-- Stop previous backend/frontend processes
-- Start backend API server
-- Start respective frontend(s)
-- Write logs to `/logs`
-
-**Available Options:**
-
-- `bash start-application.sh` - Starts **both frontends** + backend (recommended)
-- `bash start-react-app.sh` - Starts only React frontend + backend
+The script includes:
+- Automatic dependency detection and installation
+- Health checks for backend readiness
+- Colored terminal output for better visibility
+- Proper cleanup on exit
+- Comprehensive logging
 
 ---
 
 ## 🌐 Access URLs
 
-| Component             | URL                   |
-| --------------------- | --------------------- |
-| Original Dashboard UI | http://localhost:4002 |
-| React Dashboard UI    | http://localhost:4005 |
-| Backend API           | http://localhost:4000 |
+| Component          | URL                   |
+| ------------------ | --------------------- |
+| React Dashboard    | http://localhost:4005 |
+| Backend API        | http://localhost:4000 |
 
 ---
 
-## ⚛️ React Version
+## ⚛️ React Dashboard Features
 
-The React version provides the same functionality as the original with modern improvements:
+The React dashboard provides modern service management with:
 
-- **Component-based architecture** with reusable React components
-- **Better state management** using React hooks
-- **Client-side routing** with React Router
-- **Improved error handling** and loading states
-- **Modern development experience** with hot reload
-- **Same API compatibility** - works with existing backend
+- **Real-time status monitoring** for all service types
+- **Build mode toggle** - enable/disable builds per service or globally
+- **Multi-service log viewer** - monitor logs from multiple services simultaneously
+- **Advanced filtering** - filter by service type, status, or search text
+- **Bulk operations** - start/stop all services with progress tracking
+- **Listener service support** - manage background processes without ports
+- **Responsive design** - works on desktop and mobile
+- **Toast notifications** - real-time feedback for all operations
 
-See `react-frontend/README.md` for detailed React-specific documentation.
+### Service Types Supported:
+- **Java** services (with Maven build support)
+- **Python** services (with virtual environment support)
+- **NPM** services (with build support)
+- **Database** services (Redis, Neo4j)
+- **Listener** services (background processes)
 
 ---
 
 ## 📝 Notes
 
 - Java + Maven required for Java services
-- Python + Uvicorn required for Python services
-- Redis/Neo4j binaries must exist for those services
+- Python + virtual environments recommended for Python services
+- Redis/Neo4j binaries must exist for database services
+- Listener services require `healthCommand` for status monitoring
 - `~` is automatically expanded to your home directory
-- Latest log file is auto-loaded and refreshed every 2 seconds
+- Build mode can be toggled per service or globally
