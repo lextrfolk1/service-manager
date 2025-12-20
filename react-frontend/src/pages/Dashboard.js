@@ -20,7 +20,9 @@ import {
   FilterList as FilterListIcon,
   PlayArrow as RunningIcon,
   Stop as StoppedIcon,
-  Code as CodeIcon
+  Code as CodeIcon,
+  PlaylistPlay as StartAllIcon,
+  StopCircle as StopAllIcon
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
 import api from "../services/api";
@@ -36,6 +38,8 @@ const Dashboard = ({ onViewLogs }) => {
   const [statusFilter, setStatusFilter] = useState("all"); // all, running, stopped
   const [typeFilter, setTypeFilter] = useState("all"); // all, java, npm, redis, etc.
   const [serviceStatuses, setServiceStatuses] = useState({}); // Store service statuses
+  const [bulkActionInProgress, setBulkActionInProgress] = useState(false);
+  const [currentBulkAction, setCurrentBulkAction] = useState(null);
 
   useEffect(() => {
     loadServices();
@@ -122,12 +126,6 @@ const Dashboard = ({ onViewLogs }) => {
     setFilteredServices(filtered);
   };
 
-  // Helper function to get service status from our status map
-  const getServiceStatus = (service) => {
-    const isRunning = serviceStatuses[service.name];
-    return isRunning ? "Running" : "Stopped";
-  };
-
   // Get categorized service types for filter options
   const getServiceTypes = () => {
     const mainTypes = ['java', 'python', 'npm']; // Main types in desired order
@@ -168,7 +166,112 @@ const Dashboard = ({ onViewLogs }) => {
     setShowToast(true);
   };
 
-  const handleCloseToast = (event, reason) => {
+  // Sequential service management functions with config-based ordering
+  const startAllServices = async () => {
+    setBulkActionInProgress(true);
+    setCurrentBulkAction('starting');
+    
+    let outputLog = "🚀 Starting all services sequentially (config order)...\n\n";
+    handleActionOutput(outputLog);
+    
+    // Get services in config order by creating a map of service names to their config order
+    const serviceOrderMap = {};
+    Object.keys(services).forEach((serviceName, index) => {
+      serviceOrderMap[serviceName] = index;
+    });
+    
+    // Filter stopped services and sort them by config order
+    const stoppedServices = services
+      .filter(service => !serviceStatuses[service.name])
+      .sort((a, b) => {
+        const orderA = serviceOrderMap[a.name] ?? 999;
+        const orderB = serviceOrderMap[b.name] ?? 999;
+        return orderA - orderB;
+      });
+    
+    for (let i = 0; i < stoppedServices.length; i++) {
+      const service = stoppedServices[i];
+      try {
+        outputLog += `[${i + 1}/${stoppedServices.length}] Starting ${service.name}...\n`;
+        handleActionOutput(outputLog);
+        
+        await api.post(`/service/${service.name}/start`);
+        outputLog += `✅ ${service.name} started successfully\n`;
+        
+        // Wait a bit between services to avoid overwhelming the system
+        if (i < stoppedServices.length - 1) {
+          outputLog += `⏳ Waiting 2 seconds before starting next service...\n\n`;
+          handleActionOutput(outputLog);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      } catch (error) {
+        outputLog += `❌ Failed to start ${service.name}: ${error.message}\n`;
+      }
+      handleActionOutput(outputLog);
+    }
+    
+    outputLog += `\n🎉 Bulk start operation completed! Started ${stoppedServices.length} services.`;
+    handleActionOutput(outputLog);
+    
+    setBulkActionInProgress(false);
+    setCurrentBulkAction(null);
+    
+    // Refresh service statuses after bulk operation
+    setTimeout(() => {
+      loadServiceStatuses();
+    }, 1000);
+  };
+
+  const stopAllServices = async () => {
+    setBulkActionInProgress(true);
+    setCurrentBulkAction('stopping');
+    
+    let outputLog = "🛑 Stopping all services...\n\n";
+    handleActionOutput(outputLog);
+    
+    const runningServices = services.filter(service => serviceStatuses[service.name]);
+    
+    // Stop services in parallel for faster shutdown
+    const stopPromises = runningServices.map(async (service, index) => {
+      try {
+        outputLog += `[${index + 1}/${runningServices.length}] Stopping ${service.name}...\n`;
+        handleActionOutput(outputLog);
+        
+        await api.post(`/service/${service.name}/stop`);
+        outputLog += `✅ ${service.name} stopped successfully\n`;
+        handleActionOutput(outputLog);
+        return { service: service.name, success: true };
+      } catch (error) {
+        outputLog += `❌ Failed to stop ${service.name}: ${error.message}\n`;
+        handleActionOutput(outputLog);
+        return { service: service.name, success: false, error: error.message };
+      }
+    });
+    
+    await Promise.all(stopPromises);
+    
+    outputLog += `\n🏁 Bulk stop operation completed! Stopped ${runningServices.length} services.`;
+    handleActionOutput(outputLog);
+    
+    setBulkActionInProgress(false);
+    setCurrentBulkAction(null);
+    
+    // Refresh service statuses after bulk operation
+    setTimeout(() => {
+      loadServiceStatuses();
+    }, 1000);
+  };
+
+  // Get counts for button labels
+  const getServiceCounts = () => {
+    const running = services.filter(service => serviceStatuses[service.name]).length;
+    const stopped = services.filter(service => !serviceStatuses[service.name]).length;
+    return { running, stopped, total: services.length };
+  };
+
+  const serviceCounts = getServiceCounts();
+
+  const handleCloseToast = (_, reason) => {
     if (reason === 'clickaway') {
       return;
     }
@@ -256,11 +359,11 @@ const Dashboard = ({ onViewLogs }) => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
                 <FilterListIcon sx={{ color: '#666', fontSize: '1.1rem' }} />
                 <Typography variant="caption" sx={{ color: '#666', fontWeight: 600, fontSize: '0.75rem' }}>
-                  QUICK FILTERS:
+                  QUICK FILTERS & ACTIONS:
                 </Typography>
               </Box>
 
-              {/* Filter Chips */}
+              {/* Filter Chips with Bulk Actions */}
               <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
                 {/* Status Filters */}
                 <Chip
@@ -351,6 +454,82 @@ const Dashboard = ({ onViewLogs }) => {
                     }}
                   />
                 ))}
+
+                {/* Divider */}
+                <Box sx={{ width: '1px', height: '20px', backgroundColor: '#ddd', mx: 0.5 }} />
+
+                {/* Bulk Action Chips */}
+                <Chip
+                  icon={bulkActionInProgress && currentBulkAction === 'starting' ? 
+                    <CircularProgress size={14} sx={{ color: 'inherit' }} /> : 
+                    <StartAllIcon sx={{ fontSize: '0.8rem' }} />
+                  }
+                  label={bulkActionInProgress && currentBulkAction === 'starting' ? 
+                    'Starting...' : 
+                    `Start All (${serviceCounts.stopped})`
+                  }
+                  onClick={startAllServices}
+                  disabled={bulkActionInProgress || serviceCounts.stopped === 0}
+                  size="small"
+                  sx={{
+                    borderRadius: 2,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
+                    color: 'white',
+                    border: 'none',
+                    cursor: 'pointer',
+                    '&:hover': {
+                      background: 'linear-gradient(45deg, #45a049 30%, #7cb342 90%)',
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 4px 12px rgba(76, 175, 80, 0.3)'
+                    },
+                    '&:disabled': {
+                      background: '#e0e0e0',
+                      color: '#999',
+                      cursor: 'not-allowed',
+                      transform: 'none',
+                      boxShadow: 'none'
+                    },
+                    transition: 'all 0.2s ease'
+                  }}
+                />
+                
+                <Chip
+                  icon={bulkActionInProgress && currentBulkAction === 'stopping' ? 
+                    <CircularProgress size={14} sx={{ color: 'inherit' }} /> : 
+                    <StopAllIcon sx={{ fontSize: '0.8rem' }} />
+                  }
+                  label={bulkActionInProgress && currentBulkAction === 'stopping' ? 
+                    'Stopping...' : 
+                    `Stop All (${serviceCounts.running})`
+                  }
+                  onClick={stopAllServices}
+                  disabled={bulkActionInProgress || serviceCounts.running === 0}
+                  size="small"
+                  sx={{
+                    borderRadius: 2,
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    background: 'linear-gradient(45deg, #f44336 30%, #ff5722 90%)',
+                    color: 'white',
+                    border: 'none',
+                    cursor: 'pointer',
+                    '&:hover': {
+                      background: 'linear-gradient(45deg, #d32f2f 30%, #f4511e 90%)',
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 4px 12px rgba(244, 67, 54, 0.3)'
+                    },
+                    '&:disabled': {
+                      background: '#e0e0e0',
+                      color: '#999',
+                      cursor: 'not-allowed',
+                      transform: 'none',
+                      boxShadow: 'none'
+                    },
+                    transition: 'all 0.2s ease'
+                  }}
+                />
               </Stack>
             </Box>
 
