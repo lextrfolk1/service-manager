@@ -49,9 +49,6 @@ const Admin = () => {
 
   // Form states for base paths
   const [basePaths, setBasePaths] = useState({});
-  const [globalConfig, setGlobalConfig] = useState({
-    configServerUrl: "",
-  });
 
   // Form state for services
   const [services, setServices] = useState({});
@@ -77,9 +74,6 @@ const Admin = () => {
       
       // Populate form states
       setBasePaths(data.config.basePaths || {});
-      setGlobalConfig({
-        configServerUrl: data.config.configServerUrl || "",
-      });
       setServices(data.services || {});
       setRawConfig(JSON.stringify(data, null, 2));
       
@@ -100,7 +94,6 @@ const Admin = () => {
         ...config,
         config: {
           ...config.config,
-          configServerUrl: globalConfig.configServerUrl,
           basePaths: basePaths,
         },
       };
@@ -154,9 +147,6 @@ const Admin = () => {
       await api.put("/config", parsedConfig);
       setConfig(parsedConfig);
       setBasePaths(parsedConfig.config.basePaths || {});
-      setGlobalConfig({
-        configServerUrl: parsedConfig.config.configServerUrl || "",
-      });
       setServices(parsedConfig.services || {});
       showSnackbar("Configuration saved successfully", "success");
     } catch (error) {
@@ -334,25 +324,6 @@ const Admin = () => {
             {/* Scrollable Content */}
             <Box sx={{ flexGrow: 1, overflow: 'auto', px: 4, pb: 4 }}>
               <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <Card variant="outlined" sx={{ p: 3, mb: 3, borderRadius: 2, boxShadow: 2 }}>
-                    <Typography variant="h6" gutterBottom sx={{ color: '#555', fontWeight: 600 }}>
-                      Global Settings
-                    </Typography>
-                    <TextField
-                      fullWidth
-                      label="Config Server URL"
-                      value={globalConfig.configServerUrl}
-                      onChange={(e) => setGlobalConfig(prev => ({ ...prev, configServerUrl: e.target.value }))}
-                      sx={{ 
-                        '& .MuiOutlinedInput-root': {
-                          borderRadius: 2,
-                        }
-                      }}
-                    />
-                  </Card>
-                </Grid>
-
                 <Grid item xs={12}>
                   <Card variant="outlined" sx={{ p: 3, borderRadius: 2, boxShadow: 2 }}>
                     <Typography variant="h6" gutterBottom sx={{ color: '#555', fontWeight: 600 }}>
