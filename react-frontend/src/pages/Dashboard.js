@@ -10,11 +10,17 @@ import {
   InputAdornment,
   Snackbar,
   IconButton,
+  Chip,
+  Stack,
 } from "@mui/material";
 import { 
   Search as SearchIcon,
   Close as CloseIcon,
-  Terminal as TerminalIcon
+  Terminal as TerminalIcon,
+  FilterList as FilterListIcon,
+  PlayArrow as RunningIcon,
+  Stop as StoppedIcon,
+  Code as CodeIcon
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
 import api from "../services/api";
@@ -27,14 +33,26 @@ const Dashboard = ({ onViewLogs }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showToast, setShowToast] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all"); // all, running, stopped
+  const [typeFilter, setTypeFilter] = useState("all"); // all, java, npm, redis, etc.
+  const [serviceStatuses, setServiceStatuses] = useState({}); // Store service statuses
 
   useEffect(() => {
     loadServices();
   }, []);
 
   useEffect(() => {
+    if (services.length > 0) {
+      loadServiceStatuses();
+      // Set up periodic status checking every 5 seconds
+      const interval = setInterval(loadServiceStatuses, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [services]);
+
+  useEffect(() => {
     filterServices();
-  }, [services, searchQuery]);
+  }, [services, searchQuery, statusFilter, typeFilter, serviceStatuses]);
 
   const loadServices = async () => {
     try {
@@ -49,21 +67,100 @@ const Dashboard = ({ onViewLogs }) => {
     }
   };
 
+  const loadServiceStatuses = async () => {
+    try {
+      const statusPromises = services.map(async (service) => {
+        try {
+          const statusData = await api.get(`/service/${service.name}/status`);
+          return { name: service.name, running: statusData.running };
+        } catch (error) {
+          return { name: service.name, running: false };
+        }
+      });
+
+      const statuses = await Promise.all(statusPromises);
+      const statusMap = {};
+      statuses.forEach(status => {
+        statusMap[status.name] = status.running;
+      });
+      setServiceStatuses(statusMap);
+    } catch (error) {
+      console.error('Failed to load service statuses:', error);
+    }
+  };
+
   const filterServices = () => {
-    if (!searchQuery.trim()) {
-      setFilteredServices(services);
-      return;
+    let filtered = [...services];
+
+    // Apply text search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(
+        (service) =>
+          service.name.toLowerCase().includes(query) ||
+          (service.description || "").toLowerCase().includes(query) ||
+          (service.type || "").toLowerCase().includes(query)
+      );
     }
 
-    const query = searchQuery.toLowerCase();
-    const filtered = services.filter(
-      (service) =>
-        service.name.toLowerCase().includes(query) ||
-        (service.description || "").toLowerCase().includes(query) ||
-        (service.type || "").toLowerCase().includes(query)
-    );
+    // Apply status filter
+    if (statusFilter !== "all") {
+      filtered = filtered.filter((service) => {
+        const isRunning = serviceStatuses[service.name] || false;
+        return statusFilter === "running" ? isRunning : !isRunning;
+      });
+    }
+
+    // Apply type filter
+    if (typeFilter !== "all") {
+      filtered = filtered.filter((service) => {
+        const categorizedType = categorizeServiceType(service.type);
+        return categorizedType === typeFilter.toLowerCase();
+      });
+    }
 
     setFilteredServices(filtered);
+  };
+
+  // Helper function to get service status from our status map
+  const getServiceStatus = (service) => {
+    const isRunning = serviceStatuses[service.name];
+    return isRunning ? "Running" : "Stopped";
+  };
+
+  // Get categorized service types for filter options
+  const getServiceTypes = () => {
+    const mainTypes = ['java', 'python', 'npm']; // Main types in desired order
+    const allTypes = [...new Set(services.map(service => service.type).filter(Boolean))];
+    
+    // Check if there are any services with types other than java/python/npm
+    const hasOtherTypes = allTypes.some(type => 
+      !mainTypes.includes(type.toLowerCase())
+    );
+    
+    // Return main types in order + "others" at the end if there are other types
+    const result = [];
+    
+    // Add main types in specific order if they exist
+    mainTypes.forEach(type => {
+      if (allTypes.some(serviceType => serviceType.toLowerCase() === type)) {
+        result.push(type);
+      }
+    });
+    
+    // Add "others" at the end if there are other types
+    if (hasOtherTypes) {
+      result.push('others');
+    }
+    
+    return result; // Don't sort, maintain the order
+  };
+
+  // Helper function to categorize service type
+  const categorizeServiceType = (serviceType) => {
+    if (!serviceType) return 'others';
+    const type = serviceType.toLowerCase();
+    return ['java', 'python', 'npm'].includes(type) ? type : 'others';
   };
 
   const handleActionOutput = (newOutput) => {
@@ -146,8 +243,9 @@ const Dashboard = ({ onViewLogs }) => {
               overflow: 'hidden'
             }}
           >
-            {/* Fixed Search Header */}
+            {/* Enhanced Search and Filter Header */}
             <Box sx={{ p: 3, flexShrink: 0 }}>
+              {/* Search Bar */}
               <TextField
                 fullWidth
                 variant="outlined"
@@ -155,6 +253,7 @@ const Dashboard = ({ onViewLogs }) => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 sx={{
+                  mb: 2,
                   "& .MuiOutlinedInput-root": {
                     borderRadius: 3,
                     background: "rgba(255, 255, 255, 0.8)",
@@ -168,6 +267,113 @@ const Dashboard = ({ onViewLogs }) => {
                   ),
                 }}
               />
+
+              {/* Filter Chips */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                <FilterListIcon sx={{ color: '#666', fontSize: '1.2rem' }} />
+                <Typography variant="caption" sx={{ color: '#666', fontWeight: 600, mr: 1 }}>
+                  FILTERS:
+                </Typography>
+              </Box>
+
+              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
+                {/* Status Filters */}
+                <Chip
+                  label="All Status"
+                  variant={statusFilter === "all" ? "filled" : "outlined"}
+                  color={statusFilter === "all" ? "primary" : "default"}
+                  onClick={() => setStatusFilter("all")}
+                  size="small"
+                  sx={{
+                    borderRadius: 2,
+                    '&.MuiChip-filled': {
+                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                      color: 'white'
+                    }
+                  }}
+                />
+                <Chip
+                  icon={<RunningIcon sx={{ fontSize: '0.9rem' }} />}
+                  label="Running"
+                  variant={statusFilter === "running" ? "filled" : "outlined"}
+                  color={statusFilter === "running" ? "success" : "default"}
+                  onClick={() => setStatusFilter("running")}
+                  size="small"
+                  sx={{
+                    borderRadius: 2,
+                    '&.MuiChip-filled': {
+                      background: 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
+                      color: 'white'
+                    }
+                  }}
+                />
+                <Chip
+                  icon={<StoppedIcon sx={{ fontSize: '0.9rem' }} />}
+                  label="Stopped"
+                  variant={statusFilter === "stopped" ? "filled" : "outlined"}
+                  color={statusFilter === "stopped" ? "error" : "default"}
+                  onClick={() => setStatusFilter("stopped")}
+                  size="small"
+                  sx={{
+                    borderRadius: 2,
+                    '&.MuiChip-filled': {
+                      background: 'linear-gradient(45deg, #f44336 30%, #ff5722 90%)',
+                      color: 'white'
+                    }
+                  }}
+                />
+
+                {/* Type Filters */}
+                <Box sx={{ width: '1px', height: '24px', backgroundColor: '#ddd', mx: 1 }} />
+                
+                <Chip
+                  label="All Types"
+                  variant={typeFilter === "all" ? "filled" : "outlined"}
+                  color={typeFilter === "all" ? "primary" : "default"}
+                  onClick={() => setTypeFilter("all")}
+                  size="small"
+                  sx={{
+                    borderRadius: 2,
+                    '&.MuiChip-filled': {
+                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                      color: 'white'
+                    }
+                  }}
+                />
+                
+                {getServiceTypes().map((type) => (
+                  <Chip
+                    key={type}
+                    icon={<CodeIcon sx={{ fontSize: '0.9rem' }} />}
+                    label={type === 'others' ? 'Others' : type.charAt(0).toUpperCase() + type.slice(1)}
+                    variant={typeFilter === type ? "filled" : "outlined"}
+                    color={typeFilter === type ? "secondary" : "default"}
+                    onClick={() => setTypeFilter(type)}
+                    size="small"
+                    sx={{
+                      borderRadius: 2,
+                      '&.MuiChip-filled': {
+                        background: type === 'others' 
+                          ? 'linear-gradient(45deg, #FF9800 30%, #FFC107 90%)'
+                          : 'linear-gradient(45deg, #9C27B0 30%, #E91E63 90%)',
+                        color: 'white'
+                      }
+                    }}
+                  />
+                ))}
+              </Stack>
+
+              {/* Active Filters Summary */}
+              {(statusFilter !== "all" || typeFilter !== "all" || searchQuery.trim()) && (
+                <Box sx={{ mt: 2, p: 1.5, backgroundColor: 'rgba(33, 150, 243, 0.1)', borderRadius: 2 }}>
+                  <Typography variant="caption" sx={{ color: '#1976d2', fontWeight: 600 }}>
+                    Active Filters: {filteredServices.length} of {services.length} services shown
+                    {searchQuery.trim() && ` • Search: "${searchQuery}"`}
+                    {statusFilter !== "all" && ` • Status: ${statusFilter}`}
+                    {typeFilter !== "all" && ` • Type: ${typeFilter}`}
+                  </Typography>
+                </Box>
+              )}
             </Box>
 
             {/* Scrollable Services Grid */}
