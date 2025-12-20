@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ############################################
-# Struo Service Manager Startup Script
+ # Struo Service Manager Startup Script
 ############################################
 
 # Directory where this script is located
@@ -52,20 +52,20 @@ install_dependencies() {
   DIR=$1
   NAME=$2
   
-  echo -e "${BLUE}📦 Checking $NAME dependencies...${NC}"
+  echo -e "${BLUE}Checking $NAME dependencies...${NC}"
   cd "$DIR" || exit 1
   
   if [ ! -d "node_modules" ] || [ ! -f "package-lock.json" ]; then
     echo -e "${YELLOW}Installing $NAME dependencies...${NC}"
     npm install
     if [ $? -eq 0 ]; then
-      echo -e "${GREEN}✅ $NAME dependencies installed successfully${NC}"
+      echo -e "${GREEN}$NAME dependencies installed successfully${NC}"
     else
-      echo -e "${RED}❌ Failed to install $NAME dependencies${NC}"
+      echo -e "${RED}Failed to install $NAME dependencies${NC}"
       exit 1
     fi
   else
-    echo -e "${GREEN}✅ $NAME dependencies already installed${NC}"
+    echo -e "${GREEN}$NAME dependencies already installed${NC}"
   fi
 }
 
@@ -118,9 +118,9 @@ start_backend() {
   
   # Check if backend is responding
   if curl -s http://localhost:$BACKEND_PORT/services > /dev/null 2>&1; then
-    echo -e "${GREEN}✅ Backend is ready and responding${NC}"
+    echo -e "${GREEN}Backend is ready and responding${NC}"
   else
-    echo -e "${YELLOW}⚠️  Backend may still be starting up${NC}"
+    echo -e "${YELLOW}Backend may still be starting up${NC}"
   fi
 }
 
@@ -156,20 +156,20 @@ echo -e " ALL SERVICES STARTED SUCCESSFULLY "
 echo -e " Logs → $LOG_DIR"
 echo -e "=====================================${NC}"
 echo ""
-echo -e "${BLUE}🌐 Application URLs:${NC}"
+echo -e "${BLUE}Application URLs:${NC}"
 echo -e "   ${GREEN}React Frontend:    http://localhost:$REACT_FRONTEND_PORT${NC}"
 echo -e "   ${GREEN}Backend API:       http://localhost:$BACKEND_PORT${NC}"
 echo ""
-echo -e "${BLUE}📝 Logs are written to:${NC}"
+echo -e "${BLUE}Logs are written to:${NC}"
 echo -e "   Backend:        $LOG_DIR/backend.log"
 echo -e "   React Frontend: $LOG_DIR/react-frontend.log"
 echo ""
-echo -e "${GREEN}🚀 Struo Service Manager is now running!${NC}"
+echo -e "${GREEN}Struo Service Manager is now running${NC}"
 echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
 
 # Function to cleanup on exit
 cleanup() {
-    echo -e "\n${YELLOW}🛑 Shutting down services...${NC}"
+    echo -e "\n${YELLOW}Shutting down services...${NC}"
     if [ ! -z "$BACKEND_PID" ]; then
         kill $BACKEND_PID 2>/dev/null
         echo -e "${BLUE}   Backend stopped${NC}"
@@ -178,7 +178,7 @@ cleanup() {
         kill $REACT_FRONTEND_PID 2>/dev/null
         echo -e "${BLUE}   React Frontend stopped${NC}"
     fi
-    echo -e "${GREEN}✅ All services stopped${NC}"
+    echo -e "${GREEN}All services stopped${NC}"
     exit 0
 }
 

@@ -5,7 +5,7 @@ It provides a React-based web dashboard to start, stop, restart, view logs, and 
 
 ---
 
-## 🚀 Features
+## Features
 
 - Unified React dashboard for all services
 - Start / Stop / Restart with automatic port cleanup
@@ -18,7 +18,7 @@ It provides a React-based web dashboard to start, stop, restart, view logs, and 
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 service-manager/
@@ -33,7 +33,7 @@ service-manager/
 
 ---
 
-## ⚙️ Service Configuration
+## Service Configuration
 
 ### Base Path Configuration
 
@@ -107,7 +107,7 @@ Each service entry defines how it should be built, started, and monitored. Servi
 
 ---
 
-## ▶️ Starting the Application
+## Starting the Application
 
 ### Start Application
 
@@ -132,7 +132,7 @@ The script includes:
 
 ---
 
-## 🌐 Access URLs
+## Access URLs
 
 | Component          | URL                   |
 | ------------------ | --------------------- |
@@ -141,7 +141,7 @@ The script includes:
 
 ---
 
-## ⚛️ React Dashboard Features
+## React Dashboard Features
 
 The React dashboard provides modern service management with:
 
@@ -163,7 +163,7 @@ The React dashboard provides modern service management with:
 
 ---
 
-## 📝 Notes
+## Notes
 
 - Java + Maven required for Java services
 - Python + virtual environments recommended for Python services

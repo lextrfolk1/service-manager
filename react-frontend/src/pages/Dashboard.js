@@ -174,8 +174,8 @@ const Dashboard = ({ onViewLogs }) => {
     setCurrentBulkAction('starting');
     
     let outputLog = withBuild 
-      ? "🚀 Building & Starting all services sequentially (config order)...\n\n"
-      : "🚀 Starting all services sequentially (config order)...\n\n";
+      ? "Building & Starting all services sequentially (config order)...\n\n"
+      : "Starting all services sequentially (config order)...\n\n";
     handleActionOutput(outputLog);
     
     // Get services in config order by creating a map of service names to their config order
@@ -201,21 +201,21 @@ const Dashboard = ({ onViewLogs }) => {
         
         const endpoint = withBuild ? `/service/${service.name}/start?build=true` : `/service/${service.name}/start`;
         await api.post(endpoint);
-        outputLog += `✅ ${service.name} ${withBuild ? 'built & started' : 'started'} successfully\n`;
+        outputLog += `${service.name} ${withBuild ? 'built & started' : 'started'} successfully\n`;
         
         // Wait a bit between services to avoid overwhelming the system
         if (i < stoppedServices.length - 1) {
-          outputLog += `⏳ Waiting 2 seconds before starting next service...\n\n`;
+          outputLog += `Waiting 2 seconds before starting next service...\n\n`;
           handleActionOutput(outputLog);
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       } catch (error) {
-        outputLog += `❌ Failed to ${withBuild ? 'build & start' : 'start'} ${service.name}: ${error.message}\n`;
+        outputLog += `Failed to ${withBuild ? 'build & start' : 'start'} ${service.name}: ${error.message}\n`;
       }
       handleActionOutput(outputLog);
     }
     
-    outputLog += `\n🎉 Bulk ${withBuild ? 'build & start' : 'start'} operation completed! ${withBuild ? 'Built & started' : 'Started'} ${stoppedServices.length} services.`;
+    outputLog += `\nBulk ${withBuild ? 'build & start' : 'start'} operation completed! ${withBuild ? 'Built & started' : 'Started'} ${stoppedServices.length} services.`;
     handleActionOutput(outputLog);
     
     setBulkActionInProgress(false);
@@ -231,7 +231,7 @@ const Dashboard = ({ onViewLogs }) => {
     setBulkActionInProgress(true);
     setCurrentBulkAction('stopping');
     
-    let outputLog = "🛑 Stopping all services...\n\n";
+    let outputLog = "Stopping all services...\n\n";
     handleActionOutput(outputLog);
     
     const runningServices = services.filter(service => serviceStatuses[service.name]);
@@ -243,11 +243,11 @@ const Dashboard = ({ onViewLogs }) => {
         handleActionOutput(outputLog);
         
         await api.post(`/service/${service.name}/stop`);
-        outputLog += `✅ ${service.name} stopped successfully\n`;
+        outputLog += `${service.name} stopped successfully\n`;
         handleActionOutput(outputLog);
         return { service: service.name, success: true };
       } catch (error) {
-        outputLog += `❌ Failed to stop ${service.name}: ${error.message}\n`;
+        outputLog += `Failed to stop ${service.name}: ${error.message}\n`;
         handleActionOutput(outputLog);
         return { service: service.name, success: false, error: error.message };
       }
@@ -255,7 +255,7 @@ const Dashboard = ({ onViewLogs }) => {
     
     await Promise.all(stopPromises);
     
-    outputLog += `\n🏁 Bulk stop operation completed! Stopped ${runningServices.length} services.`;
+    outputLog += `\nBulk stop operation completed! Stopped ${runningServices.length} services.`;
     handleActionOutput(outputLog);
     
     setBulkActionInProgress(false);
