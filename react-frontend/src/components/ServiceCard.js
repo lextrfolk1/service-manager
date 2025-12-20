@@ -311,9 +311,9 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
 
       {/* Actions */}
       <CardActions sx={{ p: 2, pt: 0 }}>
-        {/* Build Toggle - only show for services that have build commands */}
-        {service.type && ['java', 'npm'].includes(service.type.toLowerCase()) && (
-          <Box sx={{ width: "100%", mb: 1 }}>
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+          {/* Build Toggle - only show for services that have build commands */}
+          {service.type && ['java', 'npm'].includes(service.type.toLowerCase()) && (
             <Chip
               icon={<BuildIcon sx={{ fontSize: '0.7rem' }} />}
               label="Build Mode"
@@ -338,96 +338,97 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
                 transition: 'all 0.2s ease'
               }}
             />
+          )}
+          
+          {/* Action Buttons - always on the right */}
+          <Box sx={{ display: "flex", gap: 1, ml: "auto" }}>
+            <Button
+              variant="contained"
+              onClick={() => executeAction("start")}
+              size="small"
+              disabled={status.running || isActionInProgress}
+              sx={{
+                backgroundColor: buildEnabled ? "#FF9800" : "#4CAF50",
+                "&:hover": { 
+                  backgroundColor: buildEnabled ? "#F57C00" : "#45a049" 
+                },
+                "&:disabled": { backgroundColor: "#e0e0e0" },
+                borderRadius: 2,
+                height: '32px',
+                minHeight: '32px',
+                maxHeight: '32px',
+                minWidth: '60px'
+              }}
+            >
+              {actionState?.action === 'starting' 
+                ? (buildEnabled ? 'Building...' : 'Starting...') 
+                : 'Start'
+              }
+            </Button>
+            <Button
+              variant="contained"
+              onClick={() => executeAction("stop")}
+              size="small"
+              disabled={!status.running || isActionInProgress}
+              sx={{
+                backgroundColor: "#f44336",
+                "&:hover": { backgroundColor: "#d32f2f" },
+                "&:disabled": { backgroundColor: "#e0e0e0" },
+                borderRadius: 2,
+                height: '32px',
+                minHeight: '32px',
+                maxHeight: '32px',
+                minWidth: '60px'
+              }}
+            >
+              {actionState?.action === 'stopping' ? 'Stopping...' : 'Stop'}
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() => executeAction("restart")}
+              size="small"
+              disabled={isActionInProgress}
+              sx={{
+                borderColor: "#FF9800",
+                color: "#FF9800",
+                "&:hover": {
+                  borderColor: "#F57C00",
+                  backgroundColor: "rgba(255, 152, 0, 0.04)"
+                },
+                "&:disabled": { 
+                  borderColor: "#e0e0e0",
+                  color: "#e0e0e0"
+                },
+                borderRadius: 2,
+                height: '32px',
+                minHeight: '32px',
+                maxHeight: '32px',
+                minWidth: '70px'
+              }}
+            >
+              {actionState?.action === 'restarting' ? 'Restarting...' : 'Restart'}
+            </Button>
+            <Button
+              variant="outlined"
+              onClick={() => onViewLogs && onViewLogs(service.name)}
+              size="small"
+              sx={{
+                borderColor: "#666",
+                color: "#666",
+                "&:hover": {
+                  borderColor: "#333",
+                  backgroundColor: "rgba(0,0,0,0.04)"
+                },
+                borderRadius: 2,
+                height: '32px',
+                minHeight: '32px',
+                maxHeight: '32px',
+                minWidth: '50px'
+              }}
+            >
+              Logs
+            </Button>
           </Box>
-        )}
-        
-        <Box sx={{ display: "flex", gap: 1, width: "100%" }}>
-          <Button
-            variant="contained"
-            onClick={() => executeAction("start")}
-            size="small"
-            disabled={status.running || isActionInProgress}
-            sx={{
-              flex: 1,
-              backgroundColor: buildEnabled ? "#FF9800" : "#4CAF50",
-              "&:hover": { 
-                backgroundColor: buildEnabled ? "#F57C00" : "#45a049" 
-              },
-              "&:disabled": { backgroundColor: "#e0e0e0" },
-              borderRadius: 2, // Restore curved buttons
-              height: '32px',
-              minHeight: '32px',
-              maxHeight: '32px'
-            }}
-          >
-            {actionState?.action === 'starting' 
-              ? (buildEnabled ? 'Building...' : 'Starting...') 
-              : 'Start' // Keep "Start" text unchanged
-            }
-          </Button>
-          <Button
-            variant="contained"
-            onClick={() => executeAction("stop")}
-            size="small"
-            disabled={!status.running || isActionInProgress}
-            sx={{
-              flex: 1,
-              backgroundColor: "#f44336",
-              "&:hover": { backgroundColor: "#d32f2f" },
-              "&:disabled": { backgroundColor: "#e0e0e0" },
-              borderRadius: 2, // Restore curved buttons
-              height: '32px',
-              minHeight: '32px',
-              maxHeight: '32px'
-            }}
-          >
-            {actionState?.action === 'stopping' ? 'Stopping...' : 'Stop'}
-          </Button>
-          <Button
-            variant="outlined"
-            onClick={() => executeAction("restart")}
-            size="small"
-            disabled={isActionInProgress}
-            sx={{
-              flex: 1,
-              borderColor: "#FF9800",
-              color: "#FF9800",
-              "&:hover": {
-                borderColor: "#F57C00",
-                backgroundColor: "rgba(255, 152, 0, 0.04)"
-              },
-              "&:disabled": { 
-                borderColor: "#e0e0e0",
-                color: "#e0e0e0"
-              },
-              borderRadius: 2, // Restore curved buttons
-              height: '32px',
-              minHeight: '32px',
-              maxHeight: '32px'
-            }}
-          >
-            {actionState?.action === 'restarting' ? 'Restarting...' : 'Restart'}
-          </Button>
-          <Button
-            variant="outlined"
-            onClick={() => onViewLogs && onViewLogs(service.name)}
-            size="small"
-            sx={{
-              flex: 1,
-              borderColor: "#666",
-              color: "#666",
-              "&:hover": {
-                borderColor: "#333",
-                backgroundColor: "rgba(0,0,0,0.04)"
-              },
-              borderRadius: 2, // Restore curved buttons
-              height: '32px',
-              minHeight: '32px',
-              maxHeight: '32px'
-            }}
-          >
-            Logs
-          </Button>
         </Box>
       </CardActions>
     </Card>
