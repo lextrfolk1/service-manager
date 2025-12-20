@@ -255,27 +255,29 @@ const Admin = () => {
   }
 
   return (
-    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography 
-        variant="h4" 
-        component="h1" 
-        gutterBottom 
-        sx={{ 
-          fontWeight: 700,
-          background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-          backgroundClip: 'text',
-          WebkitBackgroundClip: 'text',
-          WebkitTextFillColor: 'transparent',
-          mb: 3
-        }}
-      >
-        Configuration Management
-      </Typography>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <Container maxWidth="xl" sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+        <Typography 
+          variant="h4" 
+          component="h1" 
+          gutterBottom 
+          sx={{ 
+            fontWeight: 700,
+            background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+            backgroundClip: 'text',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            mb: 3,
+            textAlign: 'center'
+          }}
+        >
+          Configuration Management
+        </Typography>
 
       <Paper 
         elevation={3} 
         sx={{ 
-          mb: 3,
+          mb: 2,
           borderRadius: 2,
           overflow: 'hidden',
           background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
@@ -306,9 +308,10 @@ const Admin = () => {
         </Tabs>
       </Paper>
 
-      {/* Base Paths Tab */}
-      {currentTab === 0 && (
-        <Paper elevation={3} sx={{ p: 4, borderRadius: 2 }}>
+      <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
+        {/* Base Paths Tab */}
+        {currentTab === 0 && (
+          <Paper elevation={3} sx={{ p: 4, borderRadius: 2, height: '100%', overflow: 'auto' }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
             <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
               Base Paths Configuration
@@ -405,11 +408,11 @@ const Admin = () => {
             </Button>
           </Box>
         </Paper>
-      )}
+        )}
 
-      {/* Services Tab */}
-      {currentTab === 1 && (
-        <Paper elevation={3} sx={{ p: 4, borderRadius: 2 }}>
+        {/* Services Tab */}
+        {currentTab === 1 && (
+          <Paper elevation={3} sx={{ p: 4, borderRadius: 2, height: '100%', overflow: 'auto' }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
             <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
               Services Configuration
@@ -576,11 +579,11 @@ const Admin = () => {
             </Button>
           </Box>
         </Paper>
-      )}
+        )}
 
-      {/* Raw JSON Tab */}
-      {currentTab === 2 && (
-        <Paper elevation={3} sx={{ p: 4, borderRadius: 2 }}>
+        {/* Raw JSON Tab */}
+        {currentTab === 2 && (
+          <Paper elevation={3} sx={{ p: 4, borderRadius: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
           <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, color: '#333' }}>
             Raw JSON Editor
           </Typography>
@@ -623,11 +626,11 @@ const Admin = () => {
           <TextField
             fullWidth
             multiline
-            rows={25}
             value={rawConfig}
             onChange={(e) => setRawConfig(e.target.value)}
             variant="outlined"
             sx={{
+              flexGrow: 1,
               "& .MuiInputBase-input": {
                 fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
                 fontSize: "0.875rem",
@@ -635,12 +638,18 @@ const Admin = () => {
               },
               "& .MuiOutlinedInput-root": {
                 borderRadius: 2,
+                height: '100%',
+                '& textarea': {
+                  height: '100% !important',
+                  overflow: 'auto !important',
+                }
               }
             }}
             disabled={saving}
           />
         </Paper>
-      )}
+        )}
+      </Box>
 
       {/* Add Path Dialog */}
       <Dialog open={addPathDialog} onClose={() => setAddPathDialog(false)} maxWidth="sm" fullWidth>
@@ -703,7 +712,8 @@ const Admin = () => {
           {snackbarMessage}
         </Alert>
       </Snackbar>
-    </Container>
+      </Container>
+    </Box>
   );
 };
 
