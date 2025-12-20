@@ -583,7 +583,7 @@ const Dashboard = ({ onViewLogs }) => {
               <TextField
                 fullWidth
                 variant="outlined"
-                placeholder="🔍 Search services..."
+                placeholder="Search services..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 size="small"
