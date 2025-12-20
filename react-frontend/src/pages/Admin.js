@@ -314,7 +314,6 @@ const Admin = () => {
 
   const loadConfig = async () => {
     setLoading(true);
-    showSnackbar("Loading configuration...", "info");
 
     try {
       const data = await api.get("/config");
@@ -325,7 +324,6 @@ const Admin = () => {
       setServices(data.services || {});
       setRawConfig(JSON.stringify(data, null, 2));
       
-      showSnackbar("Configuration loaded successfully", "success");
     } catch (error) {
       showSnackbar(`Failed to load config: ${error.message}`, "error");
     } finally {
