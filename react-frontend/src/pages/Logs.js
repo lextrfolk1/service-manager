@@ -305,54 +305,35 @@ const LogViewer = ({ serviceName, onClose, isActive, openServices, activeService
           }}
         >
           <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} sm={6} md={4}>
-              <FormControl fullWidth size="small">
-                <InputLabel>Log File</InputLabel>
-                <Select
-                  value={selectedLogFile}
-                  label="Log File"
-                  onChange={(e) => setSelectedLogFile(e.target.value)}
-                  disabled={logFiles.length === 0}
-                  sx={{
-                    borderRadius: 2,
-                    background: "rgba(255, 255, 255, 0.8)",
-                  }}
-                >
-                  {logFiles.length === 0 ? (
-                    <MenuItem disabled>No log files</MenuItem>
-                  ) : (
-                    logFiles.map((file) => (
-                      <MenuItem key={file} value={file}>
-                        {file}
-                      </MenuItem>
-                    ))
-                  )}
-                </Select>
-              </FormControl>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Button
-                variant="contained"
-                startIcon={<RefreshIcon />}
-                onClick={() => loadLog(false)}
-                disabled={!selectedLogFile || selectedLogFile === "No log files"}
-                fullWidth
-                size="small"
-                sx={{
-                  background: "linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)",
-                  boxShadow: "0 3px 5px 2px rgba(33, 203, 243, .3)",
-                  borderRadius: 2,
-                }}
-              >
-                Refresh
-              </Button>
-            </Grid>
-
-            <Grid item xs={12} sm={6} md={3}>
-              <Chip
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Grid item xs={12} md={6}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <FormControl fullWidth size="small">
+                  <InputLabel>Log File</InputLabel>
+                  <Select
+                    value={selectedLogFile}
+                    label="Log File"
+                    onChange={(e) => setSelectedLogFile(e.target.value)}
+                    disabled={logFiles.length === 0}
+                    sx={{
+                      borderRadius: 2,
+                      background: "rgba(255, 255, 255, 0.8)",
+                    }}
+                  >
+                    {logFiles.length === 0 ? (
+                      <MenuItem disabled>No log files</MenuItem>
+                    ) : (
+                      logFiles.map((file) => (
+                        <MenuItem key={file} value={file}>
+                          {file}
+                        </MenuItem>
+                      ))
+                    )}
+                  </Select>
+                </FormControl>
+                
+                <Button
+                  variant="contained"
+                  startIcon={
                     <Box
                       sx={{
                         width: 8,
@@ -362,43 +343,85 @@ const LogViewer = ({ serviceName, onClose, isActive, openServices, activeService
                         animation: connectionStatus === 'connecting' ? 'pulse 1.5s ease-in-out infinite' : 'none'
                       }}
                     />
-                    {getConnectionStatusText()}
-                  </Box>
-                }
-                color={connectionStatus === 'connected' ? "success" : connectionStatus === 'error' ? "error" : "default"}
-                onClick={toggleStreaming}
-                clickable
-                size="small"
-                sx={{
-                  fontWeight: 600,
-                  minWidth: 100,
-                  ...(connectionStatus === 'connected' && {
-                    background: "linear-gradient(45deg, #4CAF50 30%, #45a049 90%)",
+                  }
+                  onClick={toggleStreaming}
+                  disabled={false}
+                  size="small"
+                  sx={{
+                    background: connectionStatus === 'connected' 
+                      ? "linear-gradient(45deg, #4CAF50 30%, #45a049 90%)"
+                      : connectionStatus === 'error'
+                      ? "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)"
+                      : "linear-gradient(45deg, #9E9E9E 30%, #757575 90%)",
+                    boxShadow: connectionStatus === 'connected'
+                      ? "0 3px 5px 2px rgba(76, 175, 80, .3)"
+                      : connectionStatus === 'error'
+                      ? "0 3px 5px 2px rgba(244, 67, 54, .3)"
+                      : "0 3px 5px 2px rgba(158, 158, 158, .3)",
                     color: "white",
-                  }),
-                  ...(connectionStatus === 'error' && {
-                    background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
-                    color: "white",
-                  }),
-                }}
-              />
+                    borderRadius: 2,
+                    whiteSpace: 'nowrap',
+                    minWidth: 'auto',
+                    px: 2,
+                    height: 32,
+                    flexShrink: 0,
+                    "&:hover": {
+                      background: connectionStatus === 'connected'
+                        ? "linear-gradient(45deg, #45a049 30%, #4CAF50 90%)"
+                        : connectionStatus === 'error'
+                        ? "linear-gradient(45deg, #d32f2f 30%, #f44336 90%)"
+                        : "linear-gradient(45deg, #757575 30%, #9E9E9E 90%)",
+                    }
+                  }}
+                >
+                  {getConnectionStatusText()}
+                </Button>
+              </Box>
             </Grid>
 
-            <Grid item xs={12} sm={6} md={2}>
-              <IconButton
-                onClick={onClose}
-                color="error"
-                size="small"
-                sx={{
-                  background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
-                  color: "white",
-                  "&:hover": {
-                    background: "linear-gradient(45deg, #d32f2f 30%, #f44336 90%)",
-                  },
-                }}
-              >
-                <CloseIcon />
-              </IconButton>
+            <Grid item xs={12} md={6}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
+                <Button
+                  variant="contained"
+                  startIcon={<RefreshIcon />}
+                  onClick={() => loadLog(false)}
+                  disabled={!selectedLogFile || selectedLogFile === "No log files"}
+                  size="small"
+                  sx={{
+                    background: "linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)",
+                    boxShadow: "0 3px 5px 2px rgba(33, 203, 243, .3)",
+                    borderRadius: 2,
+                    whiteSpace: 'nowrap',
+                    minWidth: 'auto',
+                    px: 2,
+                    height: 32
+                  }}
+                >
+                  Refresh
+                </Button>
+                
+                <Button
+                  variant="contained"
+                  startIcon={<CloseIcon />}
+                  onClick={onClose}
+                  size="small"
+                  sx={{
+                    background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
+                    boxShadow: "0 3px 5px 2px rgba(244, 67, 54, .3)",
+                    color: "white",
+                    borderRadius: 2,
+                    whiteSpace: 'nowrap',
+                    minWidth: 'auto',
+                    px: 2,
+                    height: 32,
+                    "&:hover": {
+                      background: "linear-gradient(45deg, #d32f2f 30%, #f44336 90%)",
+                    },
+                  }}
+                >
+                  Close
+                </Button>
+              </Box>
             </Grid>
           </Grid>
         </Paper>

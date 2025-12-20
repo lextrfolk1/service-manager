@@ -103,16 +103,45 @@ function App() {
       >
         <Toolbar sx={{ justifyContent: 'space-between', py: 1 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Typography 
-              variant="h5" 
-              sx={{ 
-                fontWeight: 700,
-                color: 'white',
-                textShadow: '0 2px 4px rgba(0,0,0,0.3)'
-              }}
-            >
-              Service Manager
-            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+              <Typography 
+                variant="h4" 
+                sx={{ 
+                  fontWeight: 800,
+                  color: 'white',
+                  textShadow: '0 2px 4px rgba(0,0,0,0.3)',
+                  lineHeight: 1,
+                  fontSize: '1.8rem',
+                  letterSpacing: '1px'
+                }}
+              >
+                Struo
+              </Typography>
+              {/* Decorative line */}
+              <Box 
+                sx={{ 
+                  width: '100%', 
+                  height: '2px', 
+                  background: 'linear-gradient(90deg, #FE6B8B 0%, #FF8E53 100%)',
+                  borderRadius: '1px',
+                  my: 0.25
+                }} 
+              />
+              <Typography 
+                variant="caption" 
+                sx={{ 
+                  fontWeight: 500,
+                  color: 'rgba(255,255,255,0.9)',
+                  textShadow: '0 1px 2px rgba(0,0,0,0.2)',
+                  fontSize: '0.75rem',
+                  letterSpacing: '0.5px',
+                  textTransform: 'uppercase'
+                }}
+              >
+                Service Manager
+              </Typography>
+            </Box>
+            
             <Box
               sx={{
                 display: 'flex',
@@ -122,7 +151,8 @@ function App() {
                 px: 2,
                 py: 0.5,
                 backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255,255,255,0.2)'
+                border: '1px solid rgba(255,255,255,0.2)',
+                ml: 2
               }}
             >
               <Typography 
