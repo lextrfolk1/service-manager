@@ -10,11 +10,6 @@ import {
   CircularProgress,
 } from "@mui/material";
 import {
-  PlayArrow as StartIcon,
-  Stop as StopIcon,
-  Refresh as RestartIcon,
-  Article as LogsIcon,
-  Circle as StatusIcon,
   Build as BuildIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
@@ -348,12 +343,15 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
                 backgroundColor: buildEnabled ? "#F57C00" : "#45a049" 
               },
               "&:disabled": { backgroundColor: "#e0e0e0" },
-              fontSize: '0.75rem'
+              borderRadius: 2, // Restore curved buttons
+              height: '32px',
+              minHeight: '32px',
+              maxHeight: '32px'
             }}
           >
             {actionState?.action === 'starting' 
               ? (buildEnabled ? 'Building...' : 'Starting...') 
-              : (buildEnabled ? 'Build & Start' : 'Start')
+              : 'Start' // Keep "Start" text unchanged
             }
           </Button>
           <Button
@@ -366,7 +364,10 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
               backgroundColor: "#f44336",
               "&:hover": { backgroundColor: "#d32f2f" },
               "&:disabled": { backgroundColor: "#e0e0e0" },
-              fontSize: '0.75rem'
+              borderRadius: 2, // Restore curved buttons
+              height: '32px',
+              minHeight: '32px',
+              maxHeight: '32px'
             }}
           >
             {actionState?.action === 'stopping' ? 'Stopping...' : 'Stop'}
@@ -388,7 +389,10 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
                 borderColor: "#e0e0e0",
                 color: "#e0e0e0"
               },
-              fontSize: '0.75rem'
+              borderRadius: 2, // Restore curved buttons
+              height: '32px',
+              minHeight: '32px',
+              maxHeight: '32px'
             }}
           >
             {actionState?.action === 'restarting' ? 'Restarting...' : 'Restart'}
@@ -405,7 +409,10 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
                 borderColor: "#333",
                 backgroundColor: "rgba(0,0,0,0.04)"
               },
-              fontSize: '0.75rem'
+              borderRadius: 2, // Restore curved buttons
+              height: '32px',
+              minHeight: '32px',
+              maxHeight: '32px'
             }}
           >
             Logs
