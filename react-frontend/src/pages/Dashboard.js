@@ -226,56 +226,41 @@ const Dashboard = ({ onViewLogs }) => {
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Full Width Services Grid */}
-      <Grid container spacing={2} sx={{ flexGrow: 1, p: 2, minHeight: 0 }}>
-        <Grid item xs={12} sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <Paper
-            elevation={6}
-            sx={{
-              borderRadius: 3,
-              background: "rgba(255, 255, 255, 0.95)",
-              backdropFilter: "blur(10px)",
-              flexGrow: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0,
-              overflow: 'hidden'
-            }}
-          >
-            {/* Enhanced Search and Filter Header */}
-            <Box sx={{ p: 3, flexShrink: 0 }}>
-              {/* Search Bar */}
-              <TextField
-                fullWidth
-                variant="outlined"
-                placeholder="Search services..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                sx={{
-                  mb: 2,
-                  "& .MuiOutlinedInput-root": {
-                    borderRadius: 3,
-                    background: "rgba(255, 255, 255, 0.8)",
-                  },
-                }}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon />
-                    </InputAdornment>
-                  ),
-                }}
-              />
-
-              {/* Filter Chips */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                <FilterListIcon sx={{ color: '#666', fontSize: '1.2rem' }} />
-                <Typography variant="caption" sx={{ color: '#666', fontWeight: 600, mr: 1 }}>
-                  FILTERS:
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 2 }}>
+      {/* Fixed Search and Filter Header */}
+      <Paper
+        elevation={6}
+        sx={{
+          borderRadius: 3,
+          background: "rgba(255, 255, 255, 0.95)",
+          backdropFilter: "blur(10px)",
+          mb: 2,
+          flexShrink: 0 // Prevent shrinking
+        }}
+      >
+        {/* Horizontal Search and Filter Layout */}
+        <Box sx={{ p: 3 }}>
+          {/* Search and Filters Row */}
+          <Box sx={{ 
+            display: 'flex', 
+            gap: 3, 
+            alignItems: 'flex-start',
+            flexWrap: { xs: 'wrap', lg: 'nowrap' }
+          }}>
+            {/* Filters Section */}
+            <Box sx={{ 
+              flex: 1,
+              minWidth: { xs: '100%', lg: 'auto' }
+            }}>
+              {/* Filter Header */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                <FilterListIcon sx={{ color: '#666', fontSize: '1.1rem' }} />
+                <Typography variant="caption" sx={{ color: '#666', fontWeight: 600, fontSize: '0.75rem' }}>
+                  QUICK FILTERS:
                 </Typography>
               </Box>
 
+              {/* Filter Chips */}
               <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
                 {/* Status Filters */}
                 <Chip
@@ -286,6 +271,7 @@ const Dashboard = ({ onViewLogs }) => {
                   size="small"
                   sx={{
                     borderRadius: 2,
+                    fontSize: '0.75rem',
                     '&.MuiChip-filled': {
                       background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
                       color: 'white'
@@ -293,7 +279,7 @@ const Dashboard = ({ onViewLogs }) => {
                   }}
                 />
                 <Chip
-                  icon={<RunningIcon sx={{ fontSize: '0.9rem' }} />}
+                  icon={<RunningIcon sx={{ fontSize: '0.8rem' }} />}
                   label="Running"
                   variant={statusFilter === "running" ? "filled" : "outlined"}
                   color={statusFilter === "running" ? "success" : "default"}
@@ -301,6 +287,7 @@ const Dashboard = ({ onViewLogs }) => {
                   size="small"
                   sx={{
                     borderRadius: 2,
+                    fontSize: '0.75rem',
                     '&.MuiChip-filled': {
                       background: 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
                       color: 'white'
@@ -308,7 +295,7 @@ const Dashboard = ({ onViewLogs }) => {
                   }}
                 />
                 <Chip
-                  icon={<StoppedIcon sx={{ fontSize: '0.9rem' }} />}
+                  icon={<StoppedIcon sx={{ fontSize: '0.8rem' }} />}
                   label="Stopped"
                   variant={statusFilter === "stopped" ? "filled" : "outlined"}
                   color={statusFilter === "stopped" ? "error" : "default"}
@@ -316,6 +303,7 @@ const Dashboard = ({ onViewLogs }) => {
                   size="small"
                   sx={{
                     borderRadius: 2,
+                    fontSize: '0.75rem',
                     '&.MuiChip-filled': {
                       background: 'linear-gradient(45deg, #f44336 30%, #ff5722 90%)',
                       color: 'white'
@@ -324,7 +312,7 @@ const Dashboard = ({ onViewLogs }) => {
                 />
 
                 {/* Type Filters */}
-                <Box sx={{ width: '1px', height: '24px', backgroundColor: '#ddd', mx: 1 }} />
+                <Box sx={{ width: '1px', height: '20px', backgroundColor: '#ddd', mx: 0.5 }} />
                 
                 <Chip
                   label="All Types"
@@ -334,6 +322,7 @@ const Dashboard = ({ onViewLogs }) => {
                   size="small"
                   sx={{
                     borderRadius: 2,
+                    fontSize: '0.75rem',
                     '&.MuiChip-filled': {
                       background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
                       color: 'white'
@@ -344,7 +333,7 @@ const Dashboard = ({ onViewLogs }) => {
                 {getServiceTypes().map((type) => (
                   <Chip
                     key={type}
-                    icon={<CodeIcon sx={{ fontSize: '0.9rem' }} />}
+                    icon={<CodeIcon sx={{ fontSize: '0.8rem' }} />}
                     label={type === 'others' ? 'Others' : type.charAt(0).toUpperCase() + type.slice(1)}
                     variant={typeFilter === type ? "filled" : "outlined"}
                     color={typeFilter === type ? "secondary" : "default"}
@@ -352,6 +341,7 @@ const Dashboard = ({ onViewLogs }) => {
                     size="small"
                     sx={{
                       borderRadius: 2,
+                      fontSize: '0.75rem',
                       '&.MuiChip-filled': {
                         background: type === 'others' 
                           ? 'linear-gradient(45deg, #FF9800 30%, #FFC107 90%)'
@@ -362,54 +352,165 @@ const Dashboard = ({ onViewLogs }) => {
                   />
                 ))}
               </Stack>
+            </Box>
 
-              {/* Active Filters Summary */}
-              {(statusFilter !== "all" || typeFilter !== "all" || searchQuery.trim()) && (
-                <Box sx={{ mt: 2, p: 1.5, backgroundColor: 'rgba(33, 150, 243, 0.1)', borderRadius: 2 }}>
-                  <Typography variant="caption" sx={{ color: '#1976d2', fontWeight: 600 }}>
-                    Active Filters: {filteredServices.length} of {services.length} services shown
-                    {searchQuery.trim() && ` • Search: "${searchQuery}"`}
-                    {statusFilter !== "all" && ` • Status: ${statusFilter}`}
-                    {typeFilter !== "all" && ` • Type: ${typeFilter}`}
+            {/* Search Section */}
+            <Box sx={{ 
+              minWidth: { xs: '100%', lg: '350px' },
+              maxWidth: { xs: '100%', lg: '400px' },
+              flex: { xs: 'none', lg: '0 0 auto' },
+              mt: { xs: 2, lg: 0 }
+            }}>
+              <TextField
+                fullWidth
+                variant="outlined"
+                placeholder="🔍 Search services..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                size="small"
+                sx={{
+                  "& .MuiOutlinedInput-root": {
+                    borderRadius: 3,
+                    background: "rgba(255, 255, 255, 0.9)",
+                    border: "2px solid transparent",
+                    transition: "all 0.3s ease",
+                    "&:hover": {
+                      background: "rgba(255, 255, 255, 1)",
+                      borderColor: "rgba(33, 150, 243, 0.3)",
+                      boxShadow: "0 2px 8px rgba(33, 150, 243, 0.15)"
+                    },
+                    "&.Mui-focused": {
+                      background: "rgba(255, 255, 255, 1)",
+                      borderColor: "#2196F3",
+                      boxShadow: "0 0 0 3px rgba(33, 150, 243, 0.1)"
+                    }
+                  }
+                }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon sx={{ color: '#2196F3', fontSize: '1.1rem' }} />
+                    </InputAdornment>
+                  ),
+                  endAdornment: searchQuery && (
+                    <InputAdornment position="end">
+                      <IconButton
+                        size="small"
+                        onClick={() => setSearchQuery("")}
+                        sx={{
+                          color: '#666',
+                          p: 0.5,
+                          '&:hover': {
+                            color: '#f44336',
+                            backgroundColor: 'rgba(244, 67, 54, 0.1)'
+                          }
+                        }}
+                      >
+                        <CloseIcon fontSize="small" />
+                      </IconButton>
+                    </InputAdornment>
+                  )
+                }}
+              />
+              
+              {/* Search Results Counter */}
+              {searchQuery.trim() && (
+                <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Chip
+                    label={`${filteredServices.length} Result${filteredServices.length !== 1 ? 's' : ''}`}
+                    size="small"
+                    sx={{
+                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
+                      color: 'white',
+                      fontWeight: 600,
+                      fontSize: '0.7rem'
+                    }}
+                  />
+                  <Typography variant="caption" sx={{ color: '#666', fontSize: '0.75rem' }}>
+                    for "{searchQuery}"
                   </Typography>
                 </Box>
               )}
             </Box>
+          </Box>
 
-            {/* Scrollable Services Grid */}
-            <Box sx={{ flexGrow: 1, overflow: 'auto', px: 3, pb: 3 }}>
-              <Grid container spacing={2}>
-                {filteredServices.length === 0 ? (
-                  <Grid item xs={12}>
-                    <Paper
-                      sx={{
-                        p: 3,
-                        textAlign: "center",
-                        borderRadius: 2,
-                        background: "rgba(255, 255, 255, 0.7)",
-                      }}
-                    >
-                      <Typography variant="body1" color="text.secondary">
-                        No matching services found.
-                      </Typography>
-                    </Paper>
-                  </Grid>
-                ) : (
-                  filteredServices.map((service) => (
-                    <Grid item xs={12} sm={6} lg={4} key={service.name}>
-                      <ServiceCard
-                        service={service}
-                        onActionOutput={handleActionOutput}
-                        onViewLogs={onViewLogs}
-                      />
-                    </Grid>
-                  ))
-                )}
-              </Grid>
+          {/* Active Filters Summary */}
+          {(statusFilter !== "all" || typeFilter !== "all" || searchQuery.trim()) && (
+            <Box sx={{ mt: 2, p: 1.5, backgroundColor: 'rgba(33, 150, 243, 0.08)', borderRadius: 2 }}>
+              <Typography variant="caption" sx={{ color: '#1976d2', fontWeight: 600, fontSize: '0.75rem' }}>
+                Showing {filteredServices.length} of {services.length} services
+                {searchQuery.trim() && ` • Search: "${searchQuery}"`}
+                {statusFilter !== "all" && ` • Status: ${statusFilter}`}
+                {typeFilter !== "all" && ` • Type: ${typeFilter}`}
+              </Typography>
             </Box>
-          </Paper>
-        </Grid>
-      </Grid>
+          )}
+        </Box>
+      </Paper>
+
+      {/* Scrollable Services Grid */}
+      <Paper
+        elevation={6}
+        sx={{
+          borderRadius: 3,
+          background: "rgba(255, 255, 255, 0.95)",
+          backdropFilter: "blur(10px)",
+          flexGrow: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          minHeight: 0,
+          overflow: 'hidden'
+        }}
+      >
+        <Box sx={{ 
+          flexGrow: 1, 
+          overflow: 'auto', 
+          p: 3,
+          '&::-webkit-scrollbar': {
+            width: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0,0,0,0.05)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0,0,0,0.2)',
+            borderRadius: '4px',
+            '&:hover': {
+              background: 'rgba(0,0,0,0.3)',
+            }
+          }
+        }}>
+          <Grid container spacing={2}>
+            {filteredServices.length === 0 ? (
+              <Grid item xs={12}>
+                <Paper
+                  sx={{
+                    p: 3,
+                    textAlign: "center",
+                    borderRadius: 2,
+                    background: "rgba(255, 255, 255, 0.7)",
+                  }}
+                >
+                  <Typography variant="body1" color="text.secondary">
+                    No matching services found.
+                  </Typography>
+                </Paper>
+              </Grid>
+            ) : (
+              filteredServices.map((service) => (
+                <Grid item xs={12} sm={6} lg={4} key={service.name}>
+                  <ServiceCard
+                    service={service}
+                    onActionOutput={handleActionOutput}
+                    onViewLogs={onViewLogs}
+                  />
+                </Grid>
+              ))
+            )}
+          </Grid>
+        </Box>
+      </Paper>
 
       {/* Dynamic Toast Message for Action Output */}
       <Snackbar
