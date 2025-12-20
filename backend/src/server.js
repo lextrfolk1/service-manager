@@ -160,6 +160,107 @@ app.get("/logs/:name/:file", (req, res) => {
   }
 });
 
+// Logs: stream content via Server-Sent Events
+app.get("/logs/:name/:file/stream", (req, res) => {
+  try {
+    const serviceName = req.params.name;
+    const fileName = req.params.file;
+    
+    // Set SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+
+    // Send initial log content
+    try {
+      const initialData = logger.getLog(serviceName, fileName);
+      res.write(`data: ${JSON.stringify({ type: 'initial', content: initialData.content })}\n\n`);
+    } catch (error) {
+      res.write(`data: ${JSON.stringify({ type: 'initial', content: `Error loading log: ${error.message}` })}\n\n`);
+    }
+
+    // Set up file watching
+    const logPath = logger.getLogPath(serviceName, fileName);
+    let lastSize = 0;
+    
+    if (fs.existsSync(logPath)) {
+      lastSize = fs.statSync(logPath).size;
+    }
+
+    const watchInterval = setInterval(() => {
+      try {
+        if (fs.existsSync(logPath)) {
+          const stats = fs.statSync(logPath);
+          if (stats.size > lastSize) {
+            // Read only the new content
+            const stream = fs.createReadStream(logPath, { start: lastSize });
+            let newContent = '';
+            
+            stream.on('data', (chunk) => {
+              newContent += chunk.toString();
+            });
+            
+            stream.on('end', () => {
+              if (newContent) {
+                res.write(`data: ${JSON.stringify({ type: 'append', content: newContent })}\n\n`);
+              }
+              lastSize = stats.size;
+            });
+
+            stream.on('error', (error) => {
+              console.error('Error reading log stream:', error);
+            });
+          } else if (stats.size < lastSize) {
+            // File was truncated (cleared)
+            try {
+              const fullContent = fs.readFileSync(logPath, 'utf8');
+              res.write(`data: ${JSON.stringify({ type: 'replace', content: fullContent })}\n\n`);
+              lastSize = stats.size;
+            } catch (readError) {
+              console.error('Error reading cleared log file:', readError);
+              res.write(`data: ${JSON.stringify({ type: 'replace', content: '' })}\n\n`);
+              lastSize = 0;
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error watching log file:', error);
+      }
+    }, 1000); // Check every second
+
+    // Send heartbeat every 30 seconds to keep connection alive
+    const heartbeatInterval = setInterval(() => {
+      res.write(`data: ${JSON.stringify({ type: 'heartbeat' })}\n\n`);
+    }, 30000);
+
+    // Clean up on client disconnect
+    const cleanup = () => {
+      clearInterval(watchInterval);
+      clearInterval(heartbeatInterval);
+    };
+
+    req.on('close', cleanup);
+    req.on('aborted', cleanup);
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Logs: clear log file
+app.post("/logs/:name/:file/clear", (req, res) => {
+  try {
+    logger.clearLog(req.params.name, req.params.file);
+    res.json({ message: "Log cleared successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Service Manager backend running on http://localhost:${PORT}`);

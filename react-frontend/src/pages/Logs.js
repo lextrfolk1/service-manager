@@ -34,9 +34,10 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
   const [selectedLogFile, setSelectedLogFile] = useState("");
   const [logContent, setLogContent] = useState("(no log loaded)");
   const [isWrapped, setIsWrapped] = useState(false);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState('disconnected'); // disconnected, connecting, connected, error
   const logContentRef = useRef(null);
-  const refreshIntervalRef = useRef(null);
+  const eventSourceRef = useRef(null);
 
   useEffect(() => {
     if (serviceName && isActive) {
@@ -46,15 +47,12 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
 
   useEffect(() => {
     if (selectedLogFile && selectedLogFile !== "No log files" && isActive) {
-      loadLog(false);
-      if (autoRefresh) {
-        startAutoRefresh();
-      }
+      startLogStreaming();
     } else {
-      stopAutoRefresh();
+      stopLogStreaming();
     }
-    return () => stopAutoRefresh();
-  }, [selectedLogFile, autoRefresh, isActive]);
+    return () => stopLogStreaming();
+  }, [selectedLogFile, isActive]);
 
   const loadLogFiles = async () => {
     if (!serviceName) return;
@@ -78,7 +76,89 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
     }
   };
 
+  const startLogStreaming = () => {
+    stopLogStreaming(); // Clean up any existing connection
+    
+    if (!serviceName || !selectedLogFile || selectedLogFile === "No log files") {
+      return;
+    }
+
+    setConnectionStatus('connecting');
+    setIsStreaming(true);
+
+    // Use the same base URL as the API service
+    const API_BASE = process.env.NODE_ENV === "production" ? "http://localhost:4000" : "http://localhost:4000";
+    const streamUrl = `${API_BASE}/logs/${serviceName}/${encodeURIComponent(selectedLogFile)}/stream`;
+
+    const eventSource = new EventSource(streamUrl);
+
+    eventSource.onopen = () => {
+      setConnectionStatus('connected');
+    };
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        const logElement = logContentRef.current;
+        
+        if (data.type === 'initial' || data.type === 'replace') {
+          // Replace entire content
+          setLogContent(data.content || "(empty)");
+          
+          // Scroll to bottom after content is set
+          if (logElement) {
+            setTimeout(() => {
+              logElement.scrollTop = logElement.scrollHeight;
+            }, 0);
+          }
+        } else if (data.type === 'append') {
+          // Append new content
+          const wasAtBottom = logElement &&
+            logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight < 40;
+          
+          setLogContent(prev => prev + data.content);
+          
+          // Auto-scroll if user was at bottom
+          if (logElement && wasAtBottom) {
+            setTimeout(() => {
+              logElement.scrollTop = logElement.scrollHeight;
+            }, 0);
+          }
+        } else if (data.type === 'heartbeat') {
+          // Just keep the connection alive, no action needed
+          console.log('Received heartbeat from log stream');
+        }
+      } catch (error) {
+        console.error('Error parsing SSE data:', error);
+      }
+    };
+
+    eventSource.onerror = (error) => {
+      console.error('SSE connection error:', error);
+      setConnectionStatus('error');
+      
+      // Attempt to reconnect after a delay
+      setTimeout(() => {
+        if (isActive && selectedLogFile && selectedLogFile !== "No log files") {
+          startLogStreaming();
+        }
+      }, 3000);
+    };
+
+    eventSourceRef.current = eventSource;
+  };
+
+  const stopLogStreaming = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+    setIsStreaming(false);
+    setConnectionStatus('disconnected');
+  };
+
   const loadLog = async (isRefresh = false) => {
+    // Fallback method for manual refresh when streaming fails
     if (!serviceName || !selectedLogFile || selectedLogFile === "No log files") {
       return;
     }
@@ -105,32 +185,51 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
     }
   };
 
-  const startAutoRefresh = () => {
-    stopAutoRefresh();
-    if (isActive) {
-      refreshIntervalRef.current = setInterval(() => {
-        loadLog(true);
-      }, 2000);
-    }
-  };
-
-  const stopAutoRefresh = () => {
-    if (refreshIntervalRef.current) {
-      clearInterval(refreshIntervalRef.current);
-      refreshIntervalRef.current = null;
-    }
-  };
-
   const toggleWrap = () => {
     setIsWrapped(!isWrapped);
   };
 
-  const clearLog = () => {
-    setLogContent("");
+  const clearLog = async () => {
+    if (!serviceName || !selectedLogFile || selectedLogFile === "No log files") {
+      return;
+    }
+
+    try {
+      await api.post(`/logs/${serviceName}/${encodeURIComponent(selectedLogFile)}/clear`);
+      if (!isStreaming) {
+        setLogContent("");
+      }
+    } catch (error) {
+      console.error('Error clearing log:', error);
+      // Fallback: clear display locally
+      setLogContent("");
+    }
   };
 
-  const toggleAutoRefresh = () => {
-    setAutoRefresh(!autoRefresh);
+  const toggleStreaming = () => {
+    if (isStreaming) {
+      stopLogStreaming();
+    } else {
+      startLogStreaming();
+    }
+  };
+
+  const getConnectionStatusColor = () => {
+    switch (connectionStatus) {
+      case 'connected': return '#4CAF50';
+      case 'connecting': return '#FF9800';
+      case 'error': return '#f44336';
+      default: return '#666';
+    }
+  };
+
+  const getConnectionStatusText = () => {
+    switch (connectionStatus) {
+      case 'connected': return 'Live';
+      case 'connecting': return 'Connecting...';
+      case 'error': return 'Error';
+      default: return 'Disconnected';
+    }
   };
 
   return (
@@ -200,15 +299,33 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
 
           <Grid item xs={12} sm={6} md={3}>
             <Chip
-              label={autoRefresh ? "Auto ON" : "Auto OFF"}
-              color={autoRefresh ? "success" : "default"}
-              onClick={toggleAutoRefresh}
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      backgroundColor: getConnectionStatusColor(),
+                      animation: connectionStatus === 'connecting' ? 'pulse 1.5s ease-in-out infinite' : 'none'
+                    }}
+                  />
+                  {getConnectionStatusText()}
+                </Box>
+              }
+              color={connectionStatus === 'connected' ? "success" : connectionStatus === 'error' ? "error" : "default"}
+              onClick={toggleStreaming}
               clickable
               size="small"
               sx={{
                 fontWeight: 600,
-                ...(autoRefresh && {
+                minWidth: 100,
+                ...(connectionStatus === 'connected' && {
                   background: "linear-gradient(45deg, #4CAF50 30%, #45a049 90%)",
+                  color: "white",
+                }),
+                ...(connectionStatus === 'error' && {
+                  background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
                   color: "white",
                 }),
               }}
@@ -305,6 +422,16 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
           {logContent}
         </Box>
       </Paper>
+
+      {/* Add pulse animation for connection indicator */}
+      <style>
+        {`
+          @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+          }
+        `}
+      </style>
     </Box>
   );
 };

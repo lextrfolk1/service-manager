@@ -23,6 +23,41 @@ REACT_FRONTEND_CMD="npm start"
 LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
 
+############################################
+# Function: cleanup old log files
+############################################
+cleanup_old_logs() {
+  echo -e "${BLUE}Cleaning up log files older than 2 days...${NC}"
+  
+  # Cleanup main logs directory
+  if [ -d "$LOG_DIR" ]; then
+    DELETED_COUNT=$(find "$LOG_DIR" -name "*.log" -type f -mtime +2 -print | wc -l)
+    
+    if [ "$DELETED_COUNT" -gt 0 ]; then
+      find "$LOG_DIR" -name "*.log" -type f -mtime +2 -delete
+      echo -e "${GREEN}Cleaned up $DELETED_COUNT old log files from main logs${NC}"
+    else
+      echo -e "${BLUE}No old log files to clean up in main logs${NC}"
+    fi
+  fi
+  
+  # Cleanup backend service logs directory
+  BACKEND_LOGS_DIR="$BACKEND_DIR/logs"
+  if [ -d "$BACKEND_LOGS_DIR" ]; then
+    BACKEND_DELETED_COUNT=$(find "$BACKEND_LOGS_DIR" -name "*.log" -type f -mtime +2 -print | wc -l)
+    
+    if [ "$BACKEND_DELETED_COUNT" -gt 0 ]; then
+      find "$BACKEND_LOGS_DIR" -name "*.log" -type f -mtime +2 -delete
+      echo -e "${GREEN}Cleaned up $BACKEND_DELETED_COUNT old service log files${NC}"
+    else
+      echo -e "${BLUE}No old service log files to clean up${NC}"
+    fi
+    
+    # Also remove empty service log directories
+    find "$BACKEND_LOGS_DIR" -type d -empty -delete 2>/dev/null
+  fi
+}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -80,6 +115,12 @@ echo -e "=====================================${NC}"
 # Stop backend and React frontend
 stop_by_port $BACKEND_PORT
 stop_by_port $REACT_FRONTEND_PORT
+
+############################################
+# CLEANUP OLD LOG FILES
+############################################
+
+cleanup_old_logs
 
 ############################################
 # INSTALL DEPENDENCIES
@@ -165,25 +206,4 @@ echo -e "   Backend:        $LOG_DIR/backend.log"
 echo -e "   React Frontend: $LOG_DIR/react-frontend.log"
 echo ""
 echo -e "${GREEN}Struo Service Manager is now running${NC}"
-echo -e "${YELLOW}Press Ctrl+C to stop all services${NC}"
-
-# Function to cleanup on exit
-cleanup() {
-    echo -e "\n${YELLOW}Shutting down services...${NC}"
-    if [ ! -z "$BACKEND_PID" ]; then
-        kill $BACKEND_PID 2>/dev/null
-        echo -e "${BLUE}   Backend stopped${NC}"
-    fi
-    if [ ! -z "$REACT_FRONTEND_PID" ]; then
-        kill $REACT_FRONTEND_PID 2>/dev/null
-        echo -e "${BLUE}   React Frontend stopped${NC}"
-    fi
-    echo -e "${GREEN}All services stopped${NC}"
-    exit 0
-}
-
-# Set up cleanup on script exit
-trap cleanup SIGINT SIGTERM
-
-# Wait for processes to finish
-wait
+echo -e "${YELLOW}Services are running independently. Use 'kill' commands or the dashboard to stop them.${NC}"
