@@ -1,0 +1,139 @@
+{
+  "config": {
+    "configServerUrl": "http://localhost:8888",
+    "profiles": {
+      "active": "dev"
+    },
+    "basePaths": {
+      "java": "C:/codebase/lextr",
+      "python": "C:/codebase/lextr",
+      "npm": "C:/codebase/lextr",
+      "listener": "C:/codebase/lextr",
+      "default": "C:/codebase/lextr"
+    }
+  },
+  "services": {
+    "frontend-service": {
+      "type": "npm",
+      "port": 3000,
+      "path": "${basePaths.npm}/frontend-service",
+      "command": "npm run dev",
+      "description": "React Frontend Service"
+    },
+    "config-service": {
+      "type": "java",
+      "port": 8888,
+      "path": "${basePaths.java}/config-service",
+      "command": "mvn spring-boot:run",
+      "build": "mvn clean install -DskipTests",
+      "description": "Spring Cloud Config Server"
+    },
+    "generic-service": {
+      "type": "java",
+      "port": 8053,
+      "path": "${basePaths.java}/generic-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "A generic service for common functionalities"
+    },
+    "workflow-service": {
+      "type": "java",
+      "port": 8051,
+      "path": "${basePaths.java}/workflow-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to manage workflows"
+    },
+    "supplemental-service": {
+      "type": "java",
+      "port": 8082,
+      "path": "${basePaths.java}/su-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Supplemental service for data uploads"
+    },
+    "workbench-service": {
+      "type": "java",
+      "port": 9090,
+      "path": "${basePaths.java}/workbench-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to manage workbench operations"
+    },
+    "rules-service": {
+      "type": "java",
+      "port": 8054,
+      "path": "${basePaths.java}/rules-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to manage business rules"
+    },
+    "reportgeneration-service": {
+      "type": "java",
+      "port": 8056,
+      "path": "${basePaths.java}/reportgeneration-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Service to handle report generation"
+    },
+    "gateway-service": {
+      "type": "java",
+      "port": 8080,
+      "path": "${basePaths.java}/gateway-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "API Gateway Service"
+    },
+    "auth-service": {
+      "type": "java",
+      "port": 8057,
+      "path": "${basePaths.java}/auth-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Authentication and Authorization Service"
+    },
+    "execution-service": {
+      "type": "python",
+      "port": 5002,
+      "path": "${basePaths.python}/execution-service",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "description": "Service to handle code execution tasks"
+    },
+    "data-service": {
+      "type": "python",
+      "port": 5005,
+      "path": "${basePaths.python}/data-service",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5005",
+      "description": "Service to manage data operations"
+    },
+    "lexie-ai": {
+      "type": "python",
+      "port": 8004,
+      "path": "${basePaths.python}/lexie-ai",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 8004",
+      "description": "AI-powered assistant service"
+    },
+    "redis": {
+      "type": "redis",
+      "port": 6379,
+      "command": "redis-server",
+      "stopCommand": "redis-cli shutdown",
+      "description": "Redis in-memory data store"
+    },
+    "neo4j": {
+      "type": "neo4j",
+      "port": 7687,
+      "command": "neo4j start",
+      "stopCommand": "neo4j stop",
+      "description": "Neo4j graph database"
+    },
+    "execution-service-listener": {
+      "type": "listener",
+      "path": "${basePaths.listener}/execution-service",
+      "command": "set PYTHONPATH=${basePaths.python}\\execution-service && .venv\\Scripts\\python.exe ${basePaths.python}\\execution-service\\utils\\pg_sync_worker.py",
+      "stopCommand": "taskkill /f /im python.exe /fi \"WINDOWTITLE eq pg_sync_worker.py*\"",
+      "healthCommand": "tasklist /fi \"IMAGENAME eq python.exe\" | findstr python.exe",
+      "description": "Execution Service listener"
+    }
+  }
+}

@@ -8,9 +8,24 @@ const path = require("path");
 
 function resolveHome(p) {
   if (!p) return p;
-  if (p.startsWith("~/")) {
-    return path.join(os.homedir(), p.slice(2));
+  
+  const isWindows = process.platform === 'win32';
+  
+  if (isWindows) {
+    // Windows: Handle both ~ and %USERPROFILE% patterns
+    if (p.startsWith("~/")) {
+      return path.join(os.homedir(), p.slice(2));
+    }
+    if (p.includes("%USERPROFILE%")) {
+      return p.replace(/%USERPROFILE%/g, os.homedir());
+    }
+  } else {
+    // Unix/Linux/macOS
+    if (p.startsWith("~/")) {
+      return path.join(os.homedir(), p.slice(2));
+    }
   }
+  
   return p;
 }
 

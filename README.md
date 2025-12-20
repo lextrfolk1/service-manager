@@ -3,6 +3,8 @@
 Struo is a lightweight tool for managing local microservices during development.  
 It provides a React-based web dashboard to start, stop, restart, view logs, and configure multiple Java/Python/Node/DB services from one place.
 
+**Cross-Platform Support:** Works on macOS, Linux, and Windows with platform-specific configurations.
+
 ---
 
 ## Features
@@ -15,6 +17,23 @@ It provides a React-based web dashboard to start, stop, restart, view logs, and 
 - Configurable service definitions via `services.json`
 - Support for listener services (background processes)
 - One-command startup script
+- **Cross-platform compatibility** (macOS, Linux, Windows)
+
+---
+
+## Quick Start
+
+### macOS / Linux
+```bash
+bash start-application.sh
+```
+
+### Windows
+```cmd
+start-application.bat
+```
+
+For detailed Windows setup instructions, see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
 
 ---
 
@@ -109,11 +128,19 @@ Each service entry defines how it should be built, started, and monitored. Servi
 
 ## Starting the Application
 
-### Start Application
+### macOS / Linux
 
 ```bash
 bash start-application.sh
 ```
+
+### Windows
+
+```cmd
+start-application.bat
+```
+
+**For Windows users:** See [WINDOWS_SETUP.md](WINDOWS_SETUP.md) for detailed setup instructions and configuration examples.
 
 This script will:
 - **Auto-install dependencies** for both backend and React frontend (if not present)
@@ -121,7 +148,7 @@ This script will:
 - **Start backend API** on port 4000
 - **Start React frontend** on port 4005
 - **Provide colored output** with clear status messages
-- **Handle graceful shutdown** with Ctrl+C
+- **Handle graceful shutdown** with Ctrl+C (Unix) or process management (Windows)
 
 The script includes:
 - Automatic dependency detection and installation
@@ -129,6 +156,7 @@ The script includes:
 - Colored terminal output for better visibility
 - Proper cleanup on exit
 - Comprehensive logging
+- **Platform-specific process management**
 
 ---
 
