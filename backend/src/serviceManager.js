@@ -18,7 +18,7 @@ function resolveHome(p) {
 function resolvePlaceholders(str, basePaths) {
   if (!str) return str;
   
-  return str.replace(/\$\{basePaths\.(\w+)\}/g, (match, type) => {
+  return str.replace(/\$\{basePaths\.(\w+)\}/g, (_, type) => {
     const basePath = basePaths[type];
     return basePath ? resolveHome(basePath) : '';
   });
@@ -158,18 +158,65 @@ class ServiceManager {
   async status(name) {
     const svc = this._getService(name);
     let running = false;
+    let checkable = true;
 
+    // For services with ports, check if port is open
     if (svc.port) {
       running = await isPortOpen(svc.port);
+    } 
+    // For services with explicit health commands, use health check
+    else if (svc.healthCommand) {
+      running = await this._checkHealthCommand(name, svc);
+    }
+    // For listener services without health commands, mark as not checkable
+    else if (svc.type === 'listener') {
+      checkable = false;
+      running = false;
+    }
+    // For other services without ports, check if process is in our tracking
+    else {
+      running = !!this.processes[name];
     }
 
     return {
       service: name,
       running,
+      checkable,
       port: svc.port || null,
       type: svc.type || null,
       path: svc.path || null
     };
+  }
+
+  // Helper method to check service health using health command
+  async _checkHealthCommand(name, svc) {
+    try {
+      // Only use explicit healthCommand - no auto-derivation
+      const healthCommand = svc.healthCommand;
+
+      // If no health command available, return false (service not checkable)
+      if (!healthCommand) {
+        console.warn(`No health check available for service: ${name}. Add a healthCommand to enable status checking.`);
+        return false;
+      }
+
+      const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
+      const resolvedHealthCommand = resolvePlaceholders(healthCommand, this.basePaths);
+      
+      return new Promise((resolve) => {
+        exec(
+          resolvedHealthCommand,
+          { cwd: resolvedDir, shell: true },
+          (err) => {
+            // If command exits with code 0, service is running
+            resolve(!err);
+          }
+        );
+      });
+    } catch (error) {
+      console.error(`Health check failed for ${name}:`, error.message);
+      return false;
+    }
   }
 }
 

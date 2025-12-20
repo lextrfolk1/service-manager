@@ -134,6 +134,7 @@
       "path": "${basePaths.listener}/execution-service",
       "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/.venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
       "stopCommand": "pkill -f pg_sync_worker.py",
+      "healthCommand": "pgrep -f pg_sync_worker.py > /dev/null",
       "description": "Execution Service listener"
     }
   }

@@ -74,6 +74,8 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
     try {
       const statusData = await api.get(`/service/${service.name}/status`);
       const newRunningState = statusData.running;
+      const isCheckable = statusData.checkable !== false; // Default to true if not specified
+      
       const actionState = getActionState();
       
       // If we have a stored action, check if it should be cleared
@@ -105,9 +107,13 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
         }
       }
       
-      setStatus({ running: newRunningState, loading: false });
+      setStatus({ 
+        running: newRunningState, 
+        loading: false, 
+        checkable: isCheckable 
+      });
     } catch (error) {
-      setStatus({ running: false, loading: false });
+      setStatus({ running: false, loading: false, checkable: true });
       // Don't clear action state on network errors - might be temporary
     }
   };
@@ -148,6 +154,11 @@ const ServiceCard = ({ service, onActionOutput, onViewLogs }) => {
   const getStatusInfo = () => {
     if (status.loading) {
       return { text: "Checking...", color: "#666", dot: "#666" };
+    }
+    
+    // Check if service status is unavailable
+    if (status.checkable === false) {
+      return { text: "Unavailable", color: "#FF9800", dot: "#FF9800" };
     }
     
     // Check for persistent action state
