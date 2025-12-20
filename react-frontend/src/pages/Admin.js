@@ -34,6 +34,7 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
+  Close as CloseIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 
@@ -277,7 +278,7 @@ const ServiceEditor = ({ serviceName, service, onServiceChange }) => {
   );
 };
 
-const Admin = () => {
+const Admin = ({ onConfigReload }) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [config, setConfig] = useState(null);
   const [rawConfig, setRawConfig] = useState("");
@@ -297,9 +298,13 @@ const Admin = () => {
   // Dialog states
   const [addPathDialog, setAddPathDialog] = useState(false);
   const [addServiceDialog, setAddServiceDialog] = useState(false);
+  const [editJsonDialog, setEditJsonDialog] = useState(false);
   const [newPathKey, setNewPathKey] = useState("");
   const [newPathValue, setNewPathValue] = useState("");
   const [newServiceName, setNewServiceName] = useState("");
+
+  // Raw JSON editing state
+  const [isJsonReadOnly, setIsJsonReadOnly] = useState(true);
 
   useEffect(() => {
     loadConfig();
@@ -316,7 +321,9 @@ const Admin = () => {
     setLoading(true);
 
     try {
+      console.log('Loading config from backend...');
       const data = await api.get("/config");
+      console.log('Config loaded:', data);
       setConfig(data);
       
       // Populate form states
@@ -324,7 +331,14 @@ const Admin = () => {
       setServices(data.services || {});
       setRawConfig(JSON.stringify(data, null, 2));
       
+      // Notify parent to refresh dashboard
+      if (onConfigReload) {
+        onConfigReload();
+      }
+      
+      showSnackbar("Configuration reloaded successfully", "success");
     } catch (error) {
+      console.error('Failed to load config:', error);
       showSnackbar(`Failed to load config: ${error.message}`, "error");
     } finally {
       setLoading(false);
@@ -484,6 +498,29 @@ const Admin = () => {
     } catch (error) {
       showSnackbar(`Invalid JSON: ${error.message}`, "error");
     }
+  };
+
+  const enableJsonEditing = () => {
+    setEditJsonDialog(true);
+  };
+
+  const confirmJsonEditing = () => {
+    setIsJsonReadOnly(false);
+    setEditJsonDialog(false);
+    showSnackbar("JSON editing enabled. Be careful with your changes!", "warning");
+  };
+
+  const cancelJsonEditing = () => {
+    setIsJsonReadOnly(true);
+    // Reload the original config to discard any changes
+    setRawConfig(JSON.stringify(config, null, 2));
+    showSnackbar("JSON editing disabled. Changes discarded.", "info");
+  };
+
+  const saveRawConfigAndLock = async () => {
+    await saveRawConfig();
+    setIsJsonReadOnly(true);
+    showSnackbar("Configuration saved and JSON editor locked", "success");
   };
 
   if (loading) {
@@ -813,25 +850,67 @@ const Admin = () => {
             {/* Fixed Header */}
             <Box sx={{ p: 4, pb: 2, flexShrink: 0 }}>
               <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, color: '#333' }}>
-                Raw JSON Editor
+                Raw JSON Configuration
               </Typography>
-              <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
-                Edit the complete configuration as JSON. Be careful: invalid JSON will break the backend.
-              </Alert>
+              
+              {isJsonReadOnly ? (
+                <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Box>
+                      <strong>Read-Only Mode:</strong> JSON configuration is protected from accidental changes.
+                      <br />
+                      Use the structured editors above for safe configuration changes.
+                    </Box>
+                    <Button
+                      variant="contained"
+                      startIcon={<EditIcon />}
+                      onClick={enableJsonEditing}
+                      size="small"
+                      sx={{
+                        ml: 2,
+                        background: 'linear-gradient(45deg, #FF9800 30%, #F57C00 90%)',
+                        boxShadow: '0 3px 5px 2px rgba(255, 152, 0, .3)',
+                        whiteSpace: 'nowrap'
+                      }}
+                    >
+                      Enable Editing
+                    </Button>
+                  </Box>
+                </Alert>
+              ) : (
+                <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
+                  <strong>Editing Mode Active:</strong> Be careful! Invalid JSON will break the backend.
+                  Changes will be lost if you cancel or reload without saving.
+                </Alert>
+              )}
 
               <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-                <Button
-                  variant="contained"
-                  startIcon={<SaveIcon />}
-                  onClick={saveRawConfig}
-                  disabled={saving}
-                  sx={{
-                    background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                    boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
-                  }}
-                >
-                  {saving ? "Saving..." : "Save Configuration"}
-                </Button>
+                {!isJsonReadOnly && (
+                  <>
+                    <Button
+                      variant="contained"
+                      startIcon={<SaveIcon />}
+                      onClick={saveRawConfigAndLock}
+                      disabled={saving}
+                      sx={{
+                        background: 'linear-gradient(45deg, #4CAF50 30%, #45a049 90%)',
+                        boxShadow: '0 3px 5px 2px rgba(76, 175, 80, .3)',
+                      }}
+                    >
+                      {saving ? "Saving..." : "Save & Lock"}
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      startIcon={<CloseIcon />}
+                      onClick={cancelJsonEditing}
+                      disabled={saving}
+                      color="error"
+                      sx={{ borderRadius: 2 }}
+                    >
+                      Cancel & Lock
+                    </Button>
+                  </>
+                )}
                 <Button
                   variant="outlined"
                   startIcon={<RefreshIcon />}
@@ -844,7 +923,7 @@ const Admin = () => {
                 <Button 
                   variant="outlined" 
                   onClick={formatJson} 
-                  disabled={saving}
+                  disabled={saving || isJsonReadOnly}
                   sx={{ borderRadius: 2 }}
                 >
                   Format JSON
@@ -866,6 +945,7 @@ const Admin = () => {
                     fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
                     fontSize: "0.875rem",
                     lineHeight: 1.5,
+                    backgroundColor: isJsonReadOnly ? 'rgba(0, 0, 0, 0.02)' : 'transparent',
                   },
                   "& .MuiOutlinedInput-root": {
                     borderRadius: 2,
@@ -873,10 +953,18 @@ const Admin = () => {
                     '& textarea': {
                       height: '100% !important',
                       overflow: 'auto !important',
-                    }
+                    },
+                    ...(isJsonReadOnly && {
+                      '& fieldset': {
+                        borderColor: 'rgba(0, 0, 0, 0.12)',
+                      }
+                    })
                   }
                 }}
-                disabled={saving}
+                disabled={saving || isJsonReadOnly}
+                InputProps={{
+                  readOnly: isJsonReadOnly,
+                }}
               />
             </Box>
           </Paper>
@@ -1021,6 +1109,125 @@ const Admin = () => {
         <DialogActions>
           <Button onClick={() => setAddServiceDialog(false)}>Cancel</Button>
           <Button onClick={addNewService} variant="contained">Add</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit JSON Confirmation Dialog */}
+      <Dialog 
+        open={editJsonDialog} 
+        onClose={() => setEditJsonDialog(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{
+          sx: {
+            borderRadius: 3,
+            background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.9) 100%)",
+            backdropFilter: "blur(10px)",
+          }
+        }}
+      >
+        <DialogTitle
+          sx={{
+            background: "linear-gradient(135deg, #FF9800 0%, #F57C00 100%)",
+            color: "white",
+            fontWeight: 700,
+            fontSize: "1.3rem",
+            textAlign: "center",
+            py: 3,
+            borderRadius: "12px 12px 0 0"
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
+            <EditIcon sx={{ fontSize: 28 }} />
+            Enable JSON Editing
+          </Box>
+        </DialogTitle>
+        
+        <DialogContent sx={{ p: 4 }}>
+          <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
+            <Typography variant="body1" sx={{ fontWeight: 600, mb: 1 }}>
+              ⚠️ Advanced Feature - Proceed with Caution
+            </Typography>
+            <Typography variant="body2">
+              You are about to enable direct JSON editing. This is powerful but dangerous.
+            </Typography>
+          </Alert>
+          
+          <Typography variant="body1" sx={{ mb: 2, lineHeight: 1.6 }}>
+            <strong>Risks of JSON editing:</strong>
+          </Typography>
+          <Box component="ul" sx={{ pl: 2, mb: 3, '& li': { mb: 1 } }}>
+            <li>Invalid JSON syntax will break the backend</li>
+            <li>Incorrect service configurations may prevent startup</li>
+            <li>Changes bypass validation and safety checks</li>
+            <li>Typos can cause service failures</li>
+          </Box>
+          
+          <Typography variant="body1" sx={{ mb: 2, lineHeight: 1.6 }}>
+            <strong>Recommended approach:</strong>
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3, lineHeight: 1.6 }}>
+            Use the "Base Paths" and "Services" tabs above for safe, guided configuration. 
+            Only use JSON editing for advanced scenarios or bulk operations.
+          </Typography>
+          
+          <Paper
+            elevation={1}
+            sx={{
+              p: 2,
+              background: "rgba(76, 175, 80, 0.05)",
+              border: "1px solid rgba(76, 175, 80, 0.2)",
+              borderRadius: 2
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 600, color: "#4CAF50", mb: 0.5 }}>
+              💡 Pro Tip:
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Make a backup of your current configuration before making changes. 
+              Use "Format JSON" to validate syntax before saving.
+            </Typography>
+          </Paper>
+        </DialogContent>
+        
+        <DialogActions sx={{ p: 4, pt: 2, gap: 2 }}>
+          <Button 
+            onClick={() => setEditJsonDialog(false)}
+            variant="outlined"
+            sx={{
+              borderColor: "#ccc",
+              color: "#666",
+              borderRadius: 2,
+              px: 3,
+              py: 1,
+              fontWeight: 600,
+              "&:hover": {
+                borderColor: "#999",
+                backgroundColor: "rgba(0,0,0,0.04)"
+              }
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={confirmJsonEditing}
+            startIcon={<EditIcon />}
+            sx={{
+              background: "linear-gradient(45deg, #FF9800 30%, #F57C00 90%)",
+              borderRadius: 2,
+              px: 4,
+              py: 1,
+              fontWeight: 600,
+              boxShadow: "0 4px 12px rgba(255, 152, 0, 0.3)",
+              "&:hover": {
+                background: "linear-gradient(45deg, #F57C00 30%, #FF9800 90%)",
+                boxShadow: "0 6px 16px rgba(255, 152, 0, 0.4)",
+              }
+            }}
+          >
+            I Understand - Enable Editing
+          </Button>
         </DialogActions>
       </Dialog>
 

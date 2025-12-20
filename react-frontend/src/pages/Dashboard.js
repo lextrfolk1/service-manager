@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
 import {
   Grid,
   Typography,
@@ -28,7 +28,7 @@ import {
 import ServiceCard from "../components/ServiceCard";
 import api from "../services/api";
 
-const Dashboard = ({ onViewLogs }) => {
+const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [services, setServices] = useState([]);
   const [filteredServices, setFilteredServices] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -63,15 +63,23 @@ const Dashboard = ({ onViewLogs }) => {
   const loadServices = async () => {
     try {
       setLoading(true);
+      console.log('Dashboard: Loading services from /services endpoint...');
       const data = await api.get("/services");
+      console.log('Dashboard: Received services data:', data);
       setServices(data.services || []);
       setError(null);
     } catch (err) {
+      console.error('Dashboard: Failed to load services:', err);
       setError(`Failed to load services: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
+
+  // Expose refresh method to parent component
+  useImperativeHandle(ref, () => ({
+    refreshServices: loadServices
+  }), []);
 
   const loadServiceStatuses = async () => {
     try {
@@ -882,6 +890,6 @@ const Dashboard = ({ onViewLogs }) => {
       </style>
     </Box>
   );
-};
+});
 
 export default Dashboard;

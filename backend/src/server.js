@@ -9,8 +9,11 @@ const logger = require("./logger");
 const servicesConfigPath = path.join(__dirname, "..", "config", "services.json");
 
 function loadConfig() {
+  console.log('Loading config from:', servicesConfigPath);
   const raw = fs.readFileSync(servicesConfigPath, "utf8");
-  return JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  console.log('Config loaded, services found:', Object.keys(parsed.services || {}));
+  return parsed;
 }
 
 let config = loadConfig();
@@ -30,26 +33,49 @@ function reloadConfig() {
 
 // List all services
 app.get("/services", (req, res) => {
-  const list = Object.entries(services).map(([name, meta]) => ({
-    name,
-    type: meta.type,
-    port: meta.port,
-    path: meta.path,
-    description: meta.description || ""
-  }));
-  res.json({ services: list });
+  try {
+    // Always use fresh config to catch manual edits
+    const freshConfig = loadConfig();
+    const freshServices = freshConfig.services;
+    
+    console.log('Services endpoint called, found services:', Object.keys(freshServices));
+    
+    const list = Object.entries(freshServices).map(([name, meta]) => ({
+      name,
+      type: meta.type,
+      port: meta.port,
+      path: meta.path,
+      description: meta.description || ""
+    }));
+    
+    console.log('Returning services list:', list.map(s => s.name));
+    res.json({ services: list });
+  } catch (error) {
+    console.error('Error in /services endpoint:', error);
+    res.status(500).json({ error: `Failed to load services: ${error.message}` });
+  }
 });
 
 // Get single service metadata
 app.get("/services/:name", (req, res) => {
-  const svc = services[req.params.name];
+  // Always use fresh config to catch manual edits
+  const freshConfig = loadConfig();
+  const svc = freshConfig.services[req.params.name];
   if (!svc) return res.status(404).json({ error: "Unknown service" });
   res.json({ name: req.params.name, ...svc });
 });
 
 // Get full configuration (config + services)
 app.get("/config", (req, res) => {
-  res.json(config);
+  try {
+    // Always read fresh from file to catch manual edits
+    const freshConfig = loadConfig();
+    console.log('Config loaded successfully, keys:', Object.keys(freshConfig));
+    res.json(freshConfig);
+  } catch (error) {
+    console.error('Error loading config:', error);
+    res.status(500).json({ error: `Failed to load configuration: ${error.message}` });
+  }
 });
 
 // Update full configuration
@@ -99,11 +125,18 @@ app.put("/config/services", (req, res) => {
   res.json({ message: "Services configuration updated" });
 });
 
+// Helper function to get fresh manager
+function getFreshManager() {
+  const freshConfig = loadConfig();
+  return new ServiceManager(freshConfig);
+}
+
 // Start service
 app.post("/service/:name/start", async (req, res) => {
   try {
     const buildFlag = req.query.build === 'true';
-    const result = await manager.start(req.params.name, buildFlag);
+    const freshManager = getFreshManager();
+    const result = await freshManager.start(req.params.name, buildFlag);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -113,7 +146,8 @@ app.post("/service/:name/start", async (req, res) => {
 // Stop service
 app.post("/service/:name/stop", async (req, res) => {
   try {
-    const result = await manager.stop(req.params.name);
+    const freshManager = getFreshManager();
+    const result = await freshManager.stop(req.params.name);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -123,7 +157,8 @@ app.post("/service/:name/stop", async (req, res) => {
 // Restart service
 app.post("/service/:name/restart", async (req, res) => {
   try {
-    const result = await manager.restart(req.params.name);
+    const freshManager = getFreshManager();
+    const result = await freshManager.restart(req.params.name);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -133,7 +168,8 @@ app.post("/service/:name/restart", async (req, res) => {
 // Status
 app.get("/service/:name/status", async (req, res) => {
   try {
-    const result = await manager.status(req.params.name);
+    const freshManager = getFreshManager();
+    const result = await freshManager.status(req.params.name);
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err.message });

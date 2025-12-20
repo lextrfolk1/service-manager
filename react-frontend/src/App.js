@@ -29,6 +29,7 @@ function App() {
   const [openLogServices, setOpenLogServices] = useState([]);
   const [activeLogServiceTab, setActiveLogServiceTab] = useState(0);
   const logsRef = useRef();
+  const dashboardRef = useRef();
 
   const handleTabChange = (event, newValue) => {
     setCurrentTab(newValue);
@@ -71,6 +72,13 @@ function App() {
       const newOpenServices = [...openLogServices, serviceName];
       setOpenLogServices(newOpenServices);
       setActiveLogServiceTab(newOpenServices.length - 1);
+    }
+  };
+
+  const handleConfigReload = () => {
+    // Refresh dashboard data when config is reloaded
+    if (dashboardRef.current) {
+      dashboardRef.current.refreshServices();
     }
   };
 
@@ -211,7 +219,7 @@ function App() {
         }}
       >
         <TabPanel value={currentTab} index={0}>
-          <Dashboard onViewLogs={handleViewLogs} />
+          <Dashboard ref={dashboardRef} onViewLogs={handleViewLogs} />
         </TabPanel>
         <TabPanel value={currentTab} index={1}>
           <Logs 
@@ -224,7 +232,7 @@ function App() {
           />
         </TabPanel>
         <TabPanel value={currentTab} index={2}>
-          <Admin />
+          <Admin onConfigReload={handleConfigReload} />
         </TabPanel>
       </Box>
     </Box>
