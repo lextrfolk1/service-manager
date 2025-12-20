@@ -26,16 +26,19 @@ import {
   Clear as ClearIcon,
   Close as CloseIcon,
   Add as AddIcon,
+  Fullscreen as MaximizeIcon,
+  FullscreenExit as MinimizeIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 
-const LogViewer = ({ serviceName, onClose, isActive }) => {
+const LogViewer = ({ serviceName, onClose, isActive, openServices, activeServiceTab, onServiceTabChange, onCloseService }) => {
   const [logFiles, setLogFiles] = useState([]);
   const [selectedLogFile, setSelectedLogFile] = useState("");
   const [logContent, setLogContent] = useState("(no log loaded)");
   const [isWrapped, setIsWrapped] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('disconnected'); // disconnected, connecting, connected, error
+  const [isMaximized, setIsMaximized] = useState(false);
   const logContentRef = useRef(null);
   const eventSourceRef = useRef(null);
 
@@ -53,6 +56,40 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
     }
     return () => stopLogStreaming();
   }, [selectedLogFile, isActive]);
+
+  // Handle keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      if (event.key === 'Escape' && isMaximized) {
+        setIsMaximized(false);
+      }
+      if (event.key === 'F11' && isActive) {
+        event.preventDefault();
+        toggleMaximize();
+      }
+      
+      // Tab switching in maximized mode
+      if (isMaximized && openServices && openServices.length > 1) {
+        if (event.ctrlKey || event.metaKey) {
+          if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            const newIndex = activeServiceTab > 0 ? activeServiceTab - 1 : openServices.length - 1;
+            onServiceTabChange(null, newIndex);
+          }
+          if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            const newIndex = activeServiceTab < openServices.length - 1 ? activeServiceTab + 1 : 0;
+            onServiceTabChange(null, newIndex);
+          }
+        }
+      }
+    };
+
+    if (isActive) {
+      document.addEventListener('keydown', handleKeyPress);
+      return () => document.removeEventListener('keydown', handleKeyPress);
+    }
+  }, [isMaximized, isActive, openServices, activeServiceTab, onServiceTabChange]);
 
   const loadLogFiles = async () => {
     if (!serviceName) return;
@@ -189,6 +226,10 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
     setIsWrapped(!isWrapped);
   };
 
+  const toggleMaximize = () => {
+    setIsMaximized(!isMaximized);
+  };
+
   const clearLog = async () => {
     if (!serviceName || !selectedLogFile || selectedLogFile === "No log files") {
       return;
@@ -237,131 +278,147 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
       height: '100%', 
       display: 'flex', 
       flexDirection: 'column',
-      minHeight: 0 
+      minHeight: 0,
+      ...(isMaximized && {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 9999,
+        backgroundColor: 'rgba(0, 0, 0, 0.95)',
+        backdropFilter: 'blur(10px)'
+      })
     }}>
-      {/* Fixed Controls */}
-      <Paper
-        elevation={3}
-        sx={{
-          p: 2,
-          borderRadius: 2,
-          background: "rgba(255, 255, 255, 0.95)",
-          backdropFilter: "blur(10px)",
-          mb: 2,
-          flexShrink: 0,
-          minHeight: 'auto'
-        }}
-      >
-        <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} sm={6} md={4}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Log File</InputLabel>
-              <Select
-                value={selectedLogFile}
-                label="Log File"
-                onChange={(e) => setSelectedLogFile(e.target.value)}
-                disabled={logFiles.length === 0}
+      {/* Fixed Controls - Hide when maximized */}
+      {!isMaximized && (
+        <Paper
+          elevation={3}
+          sx={{
+            p: 2,
+            borderRadius: 2,
+            background: "rgba(255, 255, 255, 0.95)",
+            backdropFilter: "blur(10px)",
+            mb: 2,
+            flexShrink: 0,
+            minHeight: 'auto'
+          }}
+        >
+          <Grid container spacing={2} alignItems="center">
+            <Grid item xs={12} sm={6} md={4}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Log File</InputLabel>
+                <Select
+                  value={selectedLogFile}
+                  label="Log File"
+                  onChange={(e) => setSelectedLogFile(e.target.value)}
+                  disabled={logFiles.length === 0}
+                  sx={{
+                    borderRadius: 2,
+                    background: "rgba(255, 255, 255, 0.8)",
+                  }}
+                >
+                  {logFiles.length === 0 ? (
+                    <MenuItem disabled>No log files</MenuItem>
+                  ) : (
+                    logFiles.map((file) => (
+                      <MenuItem key={file} value={file}>
+                        {file}
+                      </MenuItem>
+                    ))
+                  )}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12} sm={6} md={3}>
+              <Button
+                variant="contained"
+                startIcon={<RefreshIcon />}
+                onClick={() => loadLog(false)}
+                disabled={!selectedLogFile || selectedLogFile === "No log files"}
+                fullWidth
+                size="small"
                 sx={{
+                  background: "linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)",
+                  boxShadow: "0 3px 5px 2px rgba(33, 203, 243, .3)",
                   borderRadius: 2,
-                  background: "rgba(255, 255, 255, 0.8)",
                 }}
               >
-                {logFiles.length === 0 ? (
-                  <MenuItem disabled>No log files</MenuItem>
-                ) : (
-                  logFiles.map((file) => (
-                    <MenuItem key={file} value={file}>
-                      {file}
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-            </FormControl>
-          </Grid>
+                Refresh
+              </Button>
+            </Grid>
 
-          <Grid item xs={12} sm={6} md={3}>
-            <Button
-              variant="contained"
-              startIcon={<RefreshIcon />}
-              onClick={() => loadLog(false)}
-              disabled={!selectedLogFile || selectedLogFile === "No log files"}
-              fullWidth
-              size="small"
-              sx={{
-                background: "linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)",
-                boxShadow: "0 3px 5px 2px rgba(33, 203, 243, .3)",
-                borderRadius: 2,
-              }}
-            >
-              Refresh
-            </Button>
-          </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Chip
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        backgroundColor: getConnectionStatusColor(),
+                        animation: connectionStatus === 'connecting' ? 'pulse 1.5s ease-in-out infinite' : 'none'
+                      }}
+                    />
+                    {getConnectionStatusText()}
+                  </Box>
+                }
+                color={connectionStatus === 'connected' ? "success" : connectionStatus === 'error' ? "error" : "default"}
+                onClick={toggleStreaming}
+                clickable
+                size="small"
+                sx={{
+                  fontWeight: 600,
+                  minWidth: 100,
+                  ...(connectionStatus === 'connected' && {
+                    background: "linear-gradient(45deg, #4CAF50 30%, #45a049 90%)",
+                    color: "white",
+                  }),
+                  ...(connectionStatus === 'error' && {
+                    background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
+                    color: "white",
+                  }),
+                }}
+              />
+            </Grid>
 
-          <Grid item xs={12} sm={6} md={3}>
-            <Chip
-              label={
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Box
-                    sx={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      backgroundColor: getConnectionStatusColor(),
-                      animation: connectionStatus === 'connecting' ? 'pulse 1.5s ease-in-out infinite' : 'none'
-                    }}
-                  />
-                  {getConnectionStatusText()}
-                </Box>
-              }
-              color={connectionStatus === 'connected' ? "success" : connectionStatus === 'error' ? "error" : "default"}
-              onClick={toggleStreaming}
-              clickable
-              size="small"
-              sx={{
-                fontWeight: 600,
-                minWidth: 100,
-                ...(connectionStatus === 'connected' && {
-                  background: "linear-gradient(45deg, #4CAF50 30%, #45a049 90%)",
-                  color: "white",
-                }),
-                ...(connectionStatus === 'error' && {
+            <Grid item xs={12} sm={6} md={2}>
+              <IconButton
+                onClick={onClose}
+                color="error"
+                size="small"
+                sx={{
                   background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
                   color: "white",
-                }),
-              }}
-            />
+                  "&:hover": {
+                    background: "linear-gradient(45deg, #d32f2f 30%, #f44336 90%)",
+                  },
+                }}
+              >
+                <CloseIcon />
+              </IconButton>
+            </Grid>
           </Grid>
-
-          <Grid item xs={12} sm={6} md={2}>
-            <IconButton
-              onClick={onClose}
-              color="error"
-              size="small"
-              sx={{
-                background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
-                color: "white",
-                "&:hover": {
-                  background: "linear-gradient(45deg, #d32f2f 30%, #f44336 90%)",
-                },
-              }}
-            >
-              <CloseIcon />
-            </IconButton>
-          </Grid>
-        </Grid>
-      </Paper>
+        </Paper>
+      )}
 
       {/* Log Content Panel - Only this scrolls */}
       <Paper
         elevation={6}
         sx={{
-          borderRadius: 3,
+          borderRadius: isMaximized ? 0 : 3,
           background: "linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)",
           flexGrow: 1,
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
-          overflow: 'hidden' // Prevent this container from scrolling
+          overflow: 'hidden', // Prevent this container from scrolling
+          ...(isMaximized && {
+            margin: 0,
+            height: '100vh'
+          })
         }}
       >
         <Toolbar
@@ -373,9 +430,146 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
             flexShrink: 0 // Prevent toolbar from shrinking
           }}
         >
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-            {serviceName} - Log Output
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexGrow: 1 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              {serviceName} - Log Output
+            </Typography>
+            
+            {/* Show tab navigation in maximized mode */}
+            {isMaximized && openServices && openServices.length > 1 && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 2 }}>
+                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.7rem' }}>
+                  Switch Service:
+                </Typography>
+                <Tabs
+                  value={activeServiceTab}
+                  onChange={onServiceTabChange}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  sx={{
+                    minHeight: 32,
+                    '& .MuiTab-root': {
+                      color: 'rgba(255,255,255,0.8)',
+                      fontWeight: 500,
+                      textTransform: 'none',
+                      minHeight: 32,
+                      minWidth: 80,
+                      fontSize: '0.75rem',
+                      py: 0.5,
+                      px: 1,
+                      '&.Mui-selected': {
+                        color: '#fff',
+                        backgroundColor: 'rgba(255,255,255,0.2)',
+                        borderRadius: 1
+                      },
+                      '&:hover': {
+                        backgroundColor: 'rgba(255,255,255,0.1)',
+                        borderRadius: 1
+                      }
+                    },
+                    '& .MuiTabs-indicator': {
+                      display: 'none' // Hide indicator in compact mode
+                    },
+                    '& .MuiTabs-scrollButtons': {
+                      color: 'white',
+                      '&.Mui-disabled': {
+                        opacity: 0.3
+                      }
+                    }
+                  }}
+                >
+                  {openServices.map((svcName, index) => (
+                    <Tab
+                      key={svcName}
+                      label={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          {svcName}
+                          <IconButton
+                            size="small"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onCloseService(svcName);
+                            }}
+                            sx={{ 
+                              color: 'inherit', 
+                              p: 0.25,
+                              '&:hover': { backgroundColor: 'rgba(255,255,255,0.2)' }
+                            }}
+                          >
+                            <CloseIcon sx={{ fontSize: '0.8rem' }} />
+                          </IconButton>
+                        </Box>
+                      }
+                      value={index}
+                    />
+                  ))}
+                </Tabs>
+              </Box>
+            )}
+            
+            {/* Show controls in maximized mode */}
+            {isMaximized && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', mr: 2 }}>
+                <Chip
+                  label={
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Box
+                        sx={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: '50%',
+                          backgroundColor: getConnectionStatusColor(),
+                          animation: connectionStatus === 'connecting' ? 'pulse 1.5s ease-in-out infinite' : 'none'
+                        }}
+                      />
+                      {getConnectionStatusText()}
+                    </Box>
+                  }
+                  size="small"
+                  sx={{
+                    backgroundColor: 'rgba(255,255,255,0.2)',
+                    color: 'white',
+                    fontSize: '0.7rem'
+                  }}
+                />
+                
+                <FormControl size="small" sx={{ minWidth: 180 }}>
+                  <Select
+                    value={selectedLogFile}
+                    onChange={(e) => setSelectedLogFile(e.target.value)}
+                    disabled={logFiles.length === 0}
+                    sx={{
+                      color: 'white',
+                      fontSize: '0.8rem',
+                      '& .MuiOutlinedInput-notchedOutline': {
+                        borderColor: 'rgba(255,255,255,0.3)',
+                      },
+                      '&:hover .MuiOutlinedInput-notchedOutline': {
+                        borderColor: 'rgba(255,255,255,0.5)',
+                      },
+                      '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
+                        borderColor: 'white',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        color: 'white',
+                      }
+                    }}
+                  >
+                    {logFiles.length === 0 ? (
+                      <MenuItem disabled>No log files</MenuItem>
+                    ) : (
+                      logFiles.map((file) => (
+                        <MenuItem key={file} value={file}>
+                          {file}
+                        </MenuItem>
+                      ))
+                    )}
+                  </Select>
+                </FormControl>
+              </Box>
+            )}
+          </Box>
+          
           <Box sx={{ display: "flex", gap: 1 }}>
             <IconButton
               size="small"
@@ -398,6 +592,17 @@ const LogViewer = ({ serviceName, onClose, isActive }) => {
               title="Clear log"
             >
               <ClearIcon />
+            </IconButton>
+            <IconButton
+              size="small"
+              onClick={toggleMaximize}
+              sx={{ 
+                color: "#fff",
+                "&:hover": { backgroundColor: "rgba(255,255,255,0.1)" }
+              }}
+              title={isMaximized ? "Minimize window (Esc)" : "Maximize window (F11)"}
+            >
+              {isMaximized ? <MinimizeIcon /> : <MaximizeIcon />}
             </IconButton>
           </Box>
         </Toolbar>
@@ -617,6 +822,10 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                 serviceName={serviceName}
                 onClose={() => closeServiceTab(serviceName)}
                 isActive={activeServiceTab === openServices.indexOf(serviceName)}
+                openServices={openServices}
+                activeServiceTab={activeServiceTab}
+                onServiceTabChange={handleServiceTabChange}
+                onCloseService={closeServiceTab}
               />
             </Box>
           ))
