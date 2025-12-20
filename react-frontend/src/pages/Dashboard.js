@@ -8,8 +8,14 @@ import {
   CircularProgress,
   Alert,
   InputAdornment,
+  Snackbar,
+  IconButton,
 } from "@mui/material";
-import { Search as SearchIcon } from "@mui/icons-material";
+import { 
+  Search as SearchIcon,
+  Close as CloseIcon,
+  Terminal as TerminalIcon
+} from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
 import api from "../services/api";
 
@@ -20,6 +26,7 @@ const Dashboard = ({ onViewLogs }) => {
   const [output, setOutput] = useState("(no actions yet)");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showToast, setShowToast] = useState(false);
 
   useEffect(() => {
     loadServices();
@@ -61,7 +68,49 @@ const Dashboard = ({ onViewLogs }) => {
 
   const handleActionOutput = (newOutput) => {
     setOutput(newOutput);
+    setShowToast(true);
   };
+
+  const handleCloseToast = (event, reason) => {
+    if (reason === 'clickaway') {
+      return;
+    }
+    setShowToast(false);
+  };
+
+  // Calculate dynamic toast dimensions based on content
+  const getToastDimensions = () => {
+    const messageLength = output.length;
+    const lineCount = output.split('\n').length;
+    
+    // Calculate width based on message length
+    let width;
+    if (messageLength < 50) {
+      width = '300px';
+    } else if (messageLength < 150) {
+      width = '400px';
+    } else if (messageLength < 300) {
+      width = '500px';
+    } else {
+      width = '600px';
+    }
+    
+    // Calculate height based on line count and content length
+    let maxHeight;
+    if (lineCount <= 2 && messageLength < 100) {
+      maxHeight = '120px'; // Small messages
+    } else if (lineCount <= 5 && messageLength < 300) {
+      maxHeight = '200px'; // Medium messages
+    } else if (lineCount <= 10 && messageLength < 800) {
+      maxHeight = '300px'; // Large messages
+    } else {
+      maxHeight = '400px'; // Very large messages
+    }
+    
+    return { width, maxHeight };
+  };
+
+  const toastDimensions = getToastDimensions();
 
   if (loading) {
     return (
@@ -81,9 +130,9 @@ const Dashboard = ({ onViewLogs }) => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      {/* Full Width Services Grid */}
       <Grid container spacing={2} sx={{ flexGrow: 1, p: 2, minHeight: 0 }}>
-        {/* Services Column */}
-        <Grid item xs={12} lg={8} sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <Grid item xs={12} sx={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <Paper
             elevation={6}
             sx={{
@@ -141,7 +190,7 @@ const Dashboard = ({ onViewLogs }) => {
                   </Grid>
                 ) : (
                   filteredServices.map((service) => (
-                    <Grid item xs={12} sm={6} xl={4} key={service.name}>
+                    <Grid item xs={12} sm={6} lg={4} key={service.name}>
                       <ServiceCard
                         service={service}
                         onActionOutput={handleActionOutput}
@@ -154,26 +203,54 @@ const Dashboard = ({ onViewLogs }) => {
             </Box>
           </Paper>
         </Grid>
+      </Grid>
 
-        {/* Action Output Column */}
-        <Grid item xs={12} lg={4} sx={{ display: 'flex', minHeight: 0 }}>
-          <Paper
-            elevation={6}
-            sx={{
-              borderRadius: 3,
-              background: "linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)",
-              color: "#e5e7eb",
-              width: '100%',
-              display: 'flex',
-              flexDirection: 'column',
-              minHeight: 0,
-              overflow: 'hidden'
-            }}
-          >
-            {/* Fixed Header */}
-            <Box sx={{ p: 3, pb: 2, flexShrink: 0 }}>
+      {/* Dynamic Toast Message for Action Output */}
+      <Snackbar
+        open={showToast}
+        autoHideDuration={10000} // 10 seconds
+        onClose={handleCloseToast}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        sx={{ 
+          '& .MuiSnackbarContent-root': {
+            width: toastDimensions.width,
+            maxWidth: 'calc(100vw - 48px)',
+            minWidth: '280px',
+            padding: 0,
+            backgroundColor: 'transparent',
+            boxShadow: 'none'
+          }
+        }}
+      >
+        <Paper
+          elevation={12}
+          sx={{
+            borderRadius: 3,
+            background: "linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)",
+            color: "#e5e7eb",
+            border: '1px solid rgba(254, 107, 139, 0.3)',
+            boxShadow: '0 12px 40px rgba(0,0,0,0.4), 0 0 20px rgba(254, 107, 139, 0.2)',
+            overflow: 'hidden',
+            maxHeight: toastDimensions.maxHeight,
+            display: 'flex',
+            flexDirection: 'column',
+            transition: 'all 0.3s ease-in-out'
+          }}
+        >
+          {/* Toast Header */}
+          <Box sx={{ 
+            px: 2, 
+            py: 1.5, 
+            borderBottom: '1px solid #333',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'rgba(254, 107, 139, 0.1)'
+          }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <TerminalIcon sx={{ fontSize: '1.1rem', color: '#FE6B8B' }} />
               <Typography
-                variant="h6"
+                variant="subtitle2"
                 sx={{
                   color: "#fff",
                   fontWeight: 600,
@@ -181,37 +258,102 @@ const Dashboard = ({ onViewLogs }) => {
                   backgroundClip: "text",
                   WebkitBackgroundClip: "text",
                   WebkitTextFillColor: "transparent",
+                  fontSize: "0.85rem",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px"
                 }}
               >
                 Action Output
               </Typography>
             </Box>
-
-            {/* Scrollable Output Area */}
-            <Box
-              component="pre"
-              sx={{
-                backgroundColor: "#0d1117",
-                border: "1px solid #333",
-                borderRadius: 2,
-                p: 2,
-                fontSize: "0.8rem",
-                lineHeight: 1.4,
-                whiteSpace: "pre-wrap",
-                wordBreak: "break-word",
-                overflow: "auto",
-                fontFamily: "monospace",
-                flexGrow: 1,
-                mx: 3,
-                mb: 3,
-                minHeight: 0
+            
+            <IconButton
+              size="small"
+              onClick={handleCloseToast}
+              sx={{ 
+                color: "#fff", 
+                p: 0.5,
+                borderRadius: 1,
+                '&:hover': { 
+                  backgroundColor: 'rgba(255, 100, 100, 0.2)',
+                  transform: 'scale(1.1)'
+                },
+                transition: 'all 0.2s ease'
               }}
             >
-              {output}
-            </Box>
-          </Paper>
-        </Grid>
-      </Grid>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Box>
+
+          {/* Dynamic Toast Content */}
+          <Box
+            component="pre"
+            sx={{
+              backgroundColor: "#0a0e13",
+              background: "linear-gradient(135deg, #0a0e13 0%, #1a1f2e 100%)",
+              p: output.length < 100 ? 1 : 1.5, // Less padding for short messages
+              fontSize: output.length < 50 ? "0.8rem" : "0.75rem", // Larger font for short messages
+              lineHeight: output.length < 100 ? 1.5 : 1.4,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              overflow: "auto",
+              fontFamily: "'Fira Code', 'Consolas', monospace",
+              color: "#e1e7ef",
+              margin: 0,
+              flexGrow: 1,
+              minHeight: output.length < 50 ? '40px' : '60px', // Minimum height based on content
+              '&::-webkit-scrollbar': {
+                width: '6px',
+              },
+              '&::-webkit-scrollbar-track': {
+                background: 'rgba(255,255,255,0.1)',
+                borderRadius: '3px',
+              },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(254, 107, 139, 0.3)',
+                borderRadius: '3px',
+                '&:hover': {
+                  background: 'rgba(254, 107, 139, 0.5)',
+                }
+              }
+            }}
+          >
+            {output}
+          </Box>
+
+          {/* Auto-dismiss indicator */}
+          <Box sx={{
+            px: 2,
+            py: 1,
+            borderTop: '1px solid #333',
+            background: 'rgba(254, 107, 139, 0.05)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1
+          }}>
+            <Box sx={{
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              backgroundColor: '#FE6B8B',
+              animation: 'pulse 2s ease-in-out infinite'
+            }} />
+            <Typography variant="caption" sx={{ color: '#aaa', fontSize: '0.7rem' }}>
+              Auto-dismiss in 10 seconds
+            </Typography>
+          </Box>
+        </Paper>
+      </Snackbar>
+
+      {/* Add pulse animation */}
+      <style>
+        {`
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+          }
+        `}
+      </style>
     </Box>
   );
 };
