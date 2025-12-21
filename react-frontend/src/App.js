@@ -4,10 +4,12 @@ import {
   Dashboard as DashboardIcon,
   Article as LogsIcon,
   Settings as AdminIcon,
+  Help as HelpIcon,
 } from "@mui/icons-material";
 import Dashboard from "./pages/Dashboard";
 import Logs from "./pages/Logs";
 import Admin from "./pages/Admin";
+import Help from "./pages/Help";
 
 function TabPanel({ children, value, index, ...other }) {
   return (
@@ -87,6 +89,7 @@ function App() {
       case 0: return "Dashboard";
       case 1: return "Logs";
       case 2: return "Configuration";
+      case 3: return "Help";
       default: return "";
     }
   };
@@ -205,6 +208,7 @@ function App() {
             <Tab icon={<DashboardIcon />} label="Dashboard" />
             <Tab icon={<LogsIcon />} label="Logs" />
             <Tab icon={<AdminIcon />} label="Admin" />
+            <Tab icon={<HelpIcon />} label="Help" />
           </Tabs>
         </Toolbar>
       </AppBar>
@@ -233,6 +237,9 @@ function App() {
         </TabPanel>
         <TabPanel value={currentTab} index={2}>
           <Admin onConfigReload={handleConfigReload} />
+        </TabPanel>
+        <TabPanel value={currentTab} index={3}>
+          <Help />
         </TabPanel>
       </Box>
     </Box>
