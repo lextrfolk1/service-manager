@@ -8,15 +8,42 @@ const path = require("path");
 
 function resolveHome(p) {
   if (!p) return p;
-  if (p.startsWith("~/")) {
-    return path.join(os.homedir(), p.slice(2));
+  
+  const isWindows = process.platform === 'win32';
+  
+  if (isWindows) {
+    // Windows: Handle both ~ and %USERPROFILE% patterns
+    if (p.startsWith("~/")) {
+      return path.join(os.homedir(), p.slice(2));
+    }
+    if (p.includes("%USERPROFILE%")) {
+      return p.replace(/%USERPROFILE%/g, os.homedir());
+    }
+  } else {
+    // Unix/Linux/macOS
+    if (p.startsWith("~/")) {
+      return path.join(os.homedir(), p.slice(2));
+    }
   }
+  
   return p;
 }
 
+// Function to resolve template variables like ${basePaths.java}
+function resolvePlaceholders(str, basePaths) {
+  if (!str) return str;
+  
+  return str.replace(/\$\{basePaths\.(\w+)\}/g, (_, type) => {
+    const basePath = basePaths[type];
+    return basePath ? resolveHome(basePath) : '';
+  });
+}
+
 class ServiceManager {
-  constructor(services) {
-    this.services = services;
+  constructor(config) {
+    this.config = config;
+    this.services = config.services;
+    this.basePaths = config.config.basePaths;
     this.processes = {}; // name -> pid
   }
 
@@ -28,43 +55,47 @@ class ServiceManager {
     return svc;
   }
 
-  async start(name) {
+  async start(name, forceBuild = false) {
     const svc = this._getService(name);
 
     if (!svc.command) {
       throw new Error(`Service ${name} has no command configured`);
     }
 
-    const resolvedDir = resolveHome(svc.dir);
+    // Resolve placeholders in path and command using basePaths
+    const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
+    const resolvedCommand = resolvePlaceholders(svc.command, this.basePaths);
+    
     const logFile = logger.createLogFile(name);
     const out = fs.openSync(logFile, "a");
     let gitAutoPull = svc.gitAutoPull || true;
 
-    if (gitAutoPull) {
-    await new Promise((resolve, reject) => {
-      exec(
-        `git -C "${resolvedDir}" pull`,
-        { shell: true },
-        (err, stdout, stderr) => {
-          fs.appendFileSync(logFile, `\n[GIT PULL STDOUT]\n${stdout || ""}`);
-          fs.appendFileSync(logFile, `\n[GIT PULL STDERR]\n${stderr || ""}`);
-
-          if (err) {
-            return reject(
-              new Error(`Git pull failed for ${name}: ${err.message}`)
-            );
-          }
-          resolve();
-        }
-      );
-    });
-  }
-
-    // Optional build step for Java
-    if (svc.build) {
+    if (gitAutoPull && resolvedDir) {
       await new Promise((resolve, reject) => {
         exec(
-          svc.build,
+          `git -C "${resolvedDir}" pull`,
+          { shell: true },
+          (err, stdout, stderr) => {
+            fs.appendFileSync(logFile, `\n[GIT PULL STDOUT]\n${stdout || ""}`);
+            fs.appendFileSync(logFile, `\n[GIT PULL STDERR]\n${stderr || ""}`);
+
+            if (err) {
+              return reject(
+                new Error(`Git pull failed for ${name}: ${err.message}`)
+              );
+            }
+            resolve();
+          }
+        );
+      });
+    }
+
+    // Optional build step - only run if forceBuild is true
+    if (forceBuild && svc.build) {
+      const resolvedBuild = resolvePlaceholders(svc.build, this.basePaths);
+      await new Promise((resolve, reject) => {
+        exec(
+          resolvedBuild,
           { cwd: resolvedDir, shell: true },
           (err, stdout, stderr) => {
             fs.appendFileSync(logFile, `\n[BUILD STDOUT]\n${stdout || ""}`);
@@ -90,11 +121,11 @@ class ServiceManager {
       stdio: ["ignore", out, out]
     };
 
-    if (svc.dir) {
+    if (resolvedDir) {
       spawnOptions.cwd = resolvedDir;
     }
 
-    const child = spawn(svc.command, spawnOptions);
+    const child = spawn(resolvedCommand, spawnOptions);
     this.processes[name] = child.pid;
 
     if (svc.port) {
@@ -106,14 +137,15 @@ class ServiceManager {
 
   async stop(name) {
     const svc = this._getService(name);
-    const resolvedDir = resolveHome(svc.dir);
+    const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
 
     if (svc.stopCommand) {
+      const resolvedStopCommand = resolvePlaceholders(svc.stopCommand, this.basePaths);
       await new Promise((resolve, reject) => {
         exec(
-          svc.stopCommand,
+          resolvedStopCommand,
           { cwd: resolvedDir, shell: true },
-          (err, stdout, stderr) => {
+          (err) => {
             if (err) {
               return reject(
                 new Error(`stopCommand failed for ${name}: ${err.message}`)
@@ -141,17 +173,65 @@ class ServiceManager {
   async status(name) {
     const svc = this._getService(name);
     let running = false;
+    let checkable = true;
 
+    // For services with ports, check if port is open
     if (svc.port) {
       running = await isPortOpen(svc.port);
+    } 
+    // For services with explicit health commands, use health check
+    else if (svc.healthCommand) {
+      running = await this._checkHealthCommand(name, svc);
+    }
+    // For listener services without health commands, mark as not checkable
+    else if (svc.type === 'listener') {
+      checkable = false;
+      running = false;
+    }
+    // For other services without ports, check if process is in our tracking
+    else {
+      running = !!this.processes[name];
     }
 
     return {
       service: name,
       running,
+      checkable,
       port: svc.port || null,
-      type: svc.type || null
+      type: svc.type || null,
+      path: svc.path || null
     };
+  }
+
+  // Helper method to check service health using health command
+  async _checkHealthCommand(name, svc) {
+    try {
+      // Only use explicit healthCommand - no auto-derivation
+      const healthCommand = svc.healthCommand;
+
+      // If no health command available, return false (service not checkable)
+      if (!healthCommand) {
+        console.warn(`No health check available for service: ${name}. Add a healthCommand to enable status checking.`);
+        return false;
+      }
+
+      const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
+      const resolvedHealthCommand = resolvePlaceholders(healthCommand, this.basePaths);
+      
+      return new Promise((resolve) => {
+        exec(
+          resolvedHealthCommand,
+          { cwd: resolvedDir, shell: true },
+          (err) => {
+            // If command exits with code 0, service is running
+            resolve(!err);
+          }
+        );
+      });
+    } catch (error) {
+      console.error(`Health check failed for ${name}:`, error.message);
+      return false;
+    }
   }
 }
 

@@ -5,11 +5,11 @@
       "active": "dev"
     },
     "basePaths": {
-      "java": "~/codebase/lextr",
-      "python": "~/codebase/lextr",
-      "npm": "~/codebase/lextr",
-      "listener": "~/codebase/lextr",
-      "default": "~/codebase/lextr"
+      "java": "C:/codebase/lextr",
+      "python": "C:/codebase/lextr",
+      "npm": "C:/codebase/lextr",
+      "listener": "C:/codebase/lextr",
+      "default": "C:/codebase/lextr"
     }
   },
   "services": {
@@ -27,14 +27,6 @@
       "command": "mvn spring-boot:run",
       "build": "mvn clean install -DskipTests",
       "description": "Spring Cloud Config Server"
-    },
-    "auth-service": {
-      "type": "java",
-      "port": 8057,
-      "path": "${basePaths.java}/auth-service",
-      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests",
-      "description": "Authentication and Authorization Service"
     },
     "generic-service": {
       "type": "java",
@@ -92,49 +84,34 @@
       "build": "mvn clean install -DskipTests",
       "description": "API Gateway Service"
     },
+    "auth-service": {
+      "type": "java",
+      "port": 8057,
+      "path": "${basePaths.java}/auth-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Authentication and Authorization Service"
+    },
     "execution-service": {
       "type": "python",
       "port": 5002,
       "path": "${basePaths.python}/execution-service",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5002",
       "description": "Service to handle code execution tasks"
-    },
-    "execution-service-listener": {
-      "type": "listener",
-      "path": "${basePaths.listener}/execution-service",
-      "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/.venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
-      "stopCommand": "pkill -f pg_sync_worker.py",
-      "healthCommand": "pgrep -f pg_sync_worker.py > /dev/null",
-      "description": "Execution Service listener"
     },
     "data-service": {
       "type": "python",
       "port": 5005,
       "path": "${basePaths.python}/data-service",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5005",
       "description": "Service to manage data operations"
     },
     "lexie-ai": {
       "type": "python",
       "port": 8004,
       "path": "${basePaths.python}/lexie-ai",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 8004",
       "description": "AI-powered assistant service"
-    },
-    "semantic-service": {
-      "type": "python",
-      "port": 5004,
-      "path": "${basePaths.python}/semantic-service",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5004",
-      "description": "Semantic service"
-    },
-    "analytics-service": {
-      "type": "java",
-      "port": 8055,
-      "path": "${basePaths.java}/analytics-service",
-      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests",
-      "description": "analytical operation Service"
     },
     "redis": {
       "type": "redis",
@@ -149,6 +126,14 @@
       "command": "neo4j start",
       "stopCommand": "neo4j stop",
       "description": "Neo4j graph database"
+    },
+    "execution-service-listener": {
+      "type": "listener",
+      "path": "${basePaths.listener}/execution-service",
+      "command": "set PYTHONPATH=${basePaths.python}\\execution-service && .venv\\Scripts\\python.exe ${basePaths.python}\\execution-service\\utils\\pg_sync_worker.py",
+      "stopCommand": "taskkill /f /im python.exe /fi \"WINDOWTITLE eq pg_sync_worker.py*\"",
+      "healthCommand": "tasklist /fi \"IMAGENAME eq python.exe\" | findstr python.exe",
+      "description": "Execution Service listener"
     }
   }
 }

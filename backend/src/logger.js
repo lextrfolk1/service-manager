@@ -35,5 +35,16 @@ module.exports = {
     }
     const content = fs.readFileSync(filePath, "utf8");
     return { content };
+  },
+
+  getLogPath(service, file) {
+    return path.join(LOG_ROOT, service, file);
+  },
+
+  clearLog(service, file) {
+    const filePath = path.join(LOG_ROOT, service, file);
+    if (fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, "");
+    }
   }
 };
