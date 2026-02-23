@@ -38,17 +38,23 @@ function waitForPort(port, timeoutMs = 60000) {
 function killByPort(port) {
   return new Promise(resolve => {
     if (!port) return resolve();
-    
+
     const isWindows = process.platform === 'win32';
-    
+
     if (isWindows) {
-      // Windows: Use netstat and taskkill
-      const cmd = `for /f "tokens=5" %a in ('netstat -aon ^| findstr :${port}') do taskkill /f /pid %a`;
+      const cmd = `for /f "tokens=5" %a in ('netstat -aon ^| findstr :${port} ^| findstr LISTENING') do taskkill /pid %a`;
       exec(cmd, { shell: true }, () => resolve());
     } else {
-      // Unix/Linux/macOS: Use lsof and kill
-      const cmd = `lsof -ti :${port} | xargs -r kill -9`;
-      exec(cmd, () => resolve());
+      const cmd = `lsof -nP -iTCP:${port} -sTCP:LISTEN -t`;
+      exec(cmd, (err, stdout) => {
+        if (stdout) {
+          const pids = stdout.trim().split('\n');
+          pids.forEach(pid => {
+            process.kill(pid, 'SIGTERM');
+          });
+        }
+        resolve();
+      });
     }
   });
 }
