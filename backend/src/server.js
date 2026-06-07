@@ -290,6 +290,18 @@ app.get("/logs/:name/:file", (req, res) => {
   }
 });
 
+// Logs: search within file
+app.get("/logs/:name/:file/search", (req, res) => {
+  try {
+    const query = req.query.q || "";
+    const limit = Number(req.query.limit || 100);
+    const data = logger.searchLog(req.params.name, req.params.file, query, limit);
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Logs: stream content via Server-Sent Events
 app.get("/logs/:name/:file/stream", (req, res) => {
   try {
