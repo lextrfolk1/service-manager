@@ -18,11 +18,11 @@ export function validateConfiguration(config) {
 
   serviceEntries.forEach(([name, service]) => {
     if (!service.command) {
-      issues.push({ severity: "error", scope: name, message: "Missing start command" });
+      issues.push({ severity: "error", scope: name, fieldName: "command", message: "Start command is required" });
     }
 
     if (!service.path && !["redis", "neo4j"].includes((service.type || "").toLowerCase())) {
-      issues.push({ severity: "warning", scope: name, message: "Path is empty" });
+      issues.push({ severity: "warning", scope: name, fieldName: "path", message: "Path is empty or missing" });
     }
 
     if (service.port) {
@@ -30,7 +30,8 @@ export function validateConfiguration(config) {
         issues.push({
           severity: "error",
           scope: name,
-          message: `Duplicate port ${service.port} also used by ${ports.get(service.port)}`
+          fieldName: "port",
+          message: `Port ${service.port} is already used by ${ports.get(service.port)}`
         });
       } else {
         ports.set(service.port, name);
@@ -42,6 +43,7 @@ export function validateConfiguration(config) {
         issues.push({
           severity: "error",
           scope: name,
+          fieldName: "dependsOn",
           message: `Depends on unknown service "${dependency}"`
         });
       }
@@ -57,7 +59,8 @@ export function validateConfiguration(config) {
       issues.push({
         severity: "error",
         scope: name,
-        message: `Dependency cycle detected: ${[...trail, name].join(" -> ")}`
+        fieldName: "dependsOn",
+        message: `Dependency cycle detected: ${[...trail, name].join(" → ")}`
       });
       return;
     }
