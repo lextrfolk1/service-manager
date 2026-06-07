@@ -2,11 +2,82 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
+const { execFile } = require("child_process");
 
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
 
 const servicesConfigPath = path.join(__dirname, "..", "config", "services.json");
+
+function resolveHomeDir(inputPath) {
+  if (!inputPath) return inputPath;
+  if (inputPath.startsWith("~/")) {
+    return path.join(os.homedir(), inputPath.slice(2));
+  }
+  return inputPath;
+}
+
+function runFileCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    execFile(command, args, { timeout: 120000 }, (error, stdout, stderr) => {
+      if (error) {
+        error.stderr = stderr;
+        return reject(error);
+      }
+      resolve((stdout || "").trim());
+    });
+  });
+}
+
+async function openNativeDirectoryPicker(initialPath) {
+  const resolvedInitialPath = resolveHomeDir(initialPath);
+
+  if (process.platform === "darwin") {
+    const scriptLines = [
+      'set chooserPrompt to "Select a folder for Struo"',
+      resolvedInitialPath
+        ? `set chosenFolder to POSIX path of (choose folder with prompt chooserPrompt default location POSIX file "${resolvedInitialPath.replace(/"/g, '\\"')}")`
+        : 'set chosenFolder to POSIX path of (choose folder with prompt chooserPrompt)',
+      'return chosenFolder'
+    ];
+
+    try {
+      return await runFileCommand("osascript", scriptLines.flatMap((line) => ["-e", line]));
+    } catch (error) {
+      if (String(error.stderr || error.message).toLowerCase().includes("user canceled")) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  if (process.platform === "win32") {
+    const script = [
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
+      '$dialog.Description = "Select a folder for Struo"',
+      resolvedInitialPath ? `$dialog.SelectedPath = '${resolvedInitialPath.replace(/'/g, "''")}'` : "",
+      "if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath }"
+    ].filter(Boolean).join("; ");
+
+    return (await runFileCommand("powershell.exe", ["-NoProfile", "-Command", script])) || null;
+  }
+
+  try {
+    return (await runFileCommand("zenity", [
+      "--file-selection",
+      "--directory",
+      "--title=Select a folder for Struo",
+      ...(resolvedInitialPath ? [`--filename=${resolvedInitialPath}`] : [])
+    ])) || null;
+  } catch (error) {
+    if ((error.code || 0) === 1) {
+      return null;
+    }
+    throw error;
+  }
+}
 
 function loadConfig() {
   console.log('Loading config from:', servicesConfigPath);
@@ -14,6 +85,16 @@ function loadConfig() {
   const parsed = JSON.parse(raw);
   console.log('Config loaded, services found:', Object.keys(parsed.services || {}));
   return parsed;
+}
+
+function sendOperationError(res, err) {
+  res.status(500).json({
+    error: err.message,
+    code: err.code || "operation_failed",
+    phase: err.phase || "runtime",
+    service: err.service || null,
+    details: err.details || null
+  });
 }
 
 let config = loadConfig();
@@ -45,7 +126,11 @@ app.get("/services", (req, res) => {
       type: meta.type,
       port: meta.port,
       path: meta.path,
-      description: meta.description || ""
+      description: meta.description || "",
+      dependsOn: meta.dependsOn || [],
+      group: meta.group || null,
+      hasBuild: Boolean(meta.build),
+      hasHealthCheck: Boolean(meta.healthCommand)
     }));
     
     console.log('Returning services list:', list.map(s => s.name));
@@ -125,6 +210,15 @@ app.put("/config/services", (req, res) => {
   res.json({ message: "Services configuration updated" });
 });
 
+app.post("/system/pick-directory", async (req, res) => {
+  try {
+    const selectedPath = await openNativeDirectoryPicker(req.body?.initialPath);
+    res.json({ path: selectedPath, cancelled: !selectedPath });
+  } catch (error) {
+    res.status(500).json({ error: `Directory picker failed: ${error.message}` });
+  }
+});
+
 // Helper function to get fresh manager
 function getFreshManager() {
   const freshConfig = loadConfig();
@@ -139,7 +233,7 @@ app.post("/service/:name/start", async (req, res) => {
     const result = await freshManager.start(req.params.name, buildFlag);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendOperationError(res, err);
   }
 });
 
@@ -150,7 +244,7 @@ app.post("/service/:name/stop", async (req, res) => {
     const result = await freshManager.stop(req.params.name);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendOperationError(res, err);
   }
 });
 
@@ -161,7 +255,7 @@ app.post("/service/:name/restart", async (req, res) => {
     const result = await freshManager.restart(req.params.name);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendOperationError(res, err);
   }
 });
 
@@ -172,7 +266,7 @@ app.get("/service/:name/status", async (req, res) => {
     const result = await freshManager.status(req.params.name);
     res.json(result);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    sendOperationError(res, err);
   }
 });
 

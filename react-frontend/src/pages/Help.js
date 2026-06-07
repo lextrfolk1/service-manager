@@ -32,7 +32,6 @@ import {
   Refresh as RestartIcon,
   Visibility as LogsViewIcon,
   Build as BuildIcon,
-  Code as CodeIcon,
   Storage as StorageIcon,
   CheckCircle as CheckIcon,
   Warning as WarningIcon,
@@ -454,8 +453,8 @@ const Help = () => {
 
                   <Alert severity="info" sx={{ mt: 2 }}>
                     <Typography variant="body2">
-                      <strong>Template Usage:</strong> Use <code>{'${basePaths.java}'}</code> in service paths 
-                      to reference base paths. Example: <code>{'${basePaths.java}'}/my-service</code>
+                      <strong>Template Usage:</strong> Use <code>{String.raw`\${basePaths.java}`}</code> in service paths 
+                      to reference base paths. Example: <code>{String.raw`\${basePaths.java}/my-service`}</code>
                     </Typography>
                   </Alert>
                 </CardContent>
