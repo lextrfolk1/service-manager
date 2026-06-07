@@ -7,8 +7,8 @@ const { execFile } = require("child_process");
 
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
-
-const servicesConfigPath = path.join(__dirname, "..", "config", "services.json");
+const { resolveConfigPath, getConfigMetadata } = require("./configResolver");
+let servicesConfigPath = resolveConfigPath();
 
 function resolveHomeDir(inputPath) {
   if (!inputPath) return inputPath;
@@ -80,6 +80,7 @@ async function openNativeDirectoryPicker(initialPath) {
 }
 
 function loadConfig() {
+  servicesConfigPath = resolveConfigPath();
   console.log('Loading config from:', servicesConfigPath);
   const raw = fs.readFileSync(servicesConfigPath, "utf8");
   const parsed = JSON.parse(raw);
@@ -156,7 +157,10 @@ app.get("/config", (req, res) => {
     // Always read fresh from file to catch manual edits
     const freshConfig = loadConfig();
     console.log('Config loaded successfully, keys:', Object.keys(freshConfig));
-    res.json(freshConfig);
+    res.json({
+      ...freshConfig,
+      runtime: getConfigMetadata(),
+    });
   } catch (error) {
     console.error('Error loading config:', error);
     res.status(500).json({ error: `Failed to load configuration: ${error.message}` });

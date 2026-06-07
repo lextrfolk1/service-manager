@@ -57,6 +57,14 @@ const sectionSx = {
 const serviceTypeOptions = ["java", "python", "npm", "redis", "neo4j", "listener"];
 const commonBasePathKeys = ["java", "python", "npm", "listener", "frontend", "backend", "microservices"];
 
+function toConfigPayload(data) {
+  if (!data) {
+    return { config: {}, services: {} };
+  }
+  const { runtime, ...rest } = data;
+  return rest;
+}
+
 function prettifyLabel(value = "") {
   return value
     .replace(/[-_]/g, " ")
@@ -65,6 +73,24 @@ function prettifyLabel(value = "") {
 
 function tokenForBasePath(key) {
   return `\${basePaths.${key}}`;
+}
+
+function getPlatformPathSeparator(runtimePlatform) {
+  return runtimePlatform === "win32" ? "\\" : "/";
+}
+
+function normalizePathSuffix(suffixValue = "", runtimePlatform = "unknown") {
+  const separator = getPlatformPathSeparator(runtimePlatform);
+  return String(suffixValue || "")
+    .replace(/^[\\/]+/, "")
+    .replace(/[\\/]+/g, separator);
+}
+
+function buildTemplatePathValue(baseKey, suffixValue, runtimePlatform = "unknown") {
+  if (!baseKey) return "";
+  const separator = getPlatformPathSeparator(runtimePlatform);
+  const suffix = normalizePathSuffix(suffixValue, runtimePlatform);
+  return suffix ? `\${basePaths.${baseKey}}${separator}${suffix}` : `\${basePaths.${baseKey}}`;
 }
 
 function getPathUsageCount(key, services) {
@@ -200,6 +226,7 @@ function ServiceEditor({
   service,
   services,
   basePaths,
+  runtimePlatform,
   onServiceChange,
   onPickDirectory,
   validationIssues = [],
@@ -218,7 +245,7 @@ function ServiceEditor({
 
   useEffect(() => {
     const pathValue = service.path || "";
-    const match = pathValue.match(/\$\{basePaths\.(\w+)\}(?:\/(.*))?$/);
+    const match = pathValue.match(/\$\{basePaths\.(\w+)\}(?:[\\/](.*))?$/);
     if (match) {
       setPathMode("template");
       setPathTemplateKey(match[1] || "");
@@ -236,9 +263,7 @@ function ServiceEditor({
   );
 
   const buildTemplatePath = (baseKey, suffixValue) => {
-    if (!baseKey) return "";
-    const suffix = String(suffixValue || "").replace(/^\/+/, "");
-    return suffix ? `\${basePaths.${baseKey}}/${suffix}` : `\${basePaths.${baseKey}}`;
+    return buildTemplatePathValue(baseKey, suffixValue, runtimePlatform);
   };
 
   const handlePathModeChange = (mode) => {
@@ -413,7 +438,7 @@ function ServiceEditor({
                           label="Service Path"
                           value={service.path || ""}
                           onChange={(event) => onServiceChange(serviceName, "path", event.target.value)}
-                          placeholder="~/Workspace/codebase/lextr/service-name"
+                          placeholder={runtimePlatform === "win32" ? "C:\\Workspace\\codebase\\lextr\\service-name" : "~/Workspace/codebase/lextr/service-name"}
                           error={hasFieldError("path")}
                           helperText={getFieldError("path") || "Use a direct folder path for this service."}
                           sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
@@ -459,7 +484,7 @@ function ServiceEditor({
                             label="Sub Path"
                             value={pathSuffix}
                             onChange={(event) => handleTemplateSuffixChange(event.target.value)}
-                            placeholder="services/config-service"
+                            placeholder={runtimePlatform === "win32" ? "services\\config-service" : "services/config-service"}
                             helperText="Updates the service path automatically."
                             sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
                           />
@@ -633,6 +658,7 @@ const Admin = ({ onConfigReload }) => {
   const [rawConfig, setRawConfig] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [runtimeInfo, setRuntimeInfo] = useState(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [snackbarSeverity, setSnackbarSeverity] = useState("info");
@@ -656,6 +682,7 @@ const Admin = ({ onConfigReload }) => {
     () => validateConfiguration({ config: { basePaths }, services }),
     [basePaths, services]
   );
+  const runtimePlatform = runtimeInfo?.platform || "unknown";
 
   const groupedServices = useMemo(() => getServiceGroups(services), [services]);
 
@@ -687,10 +714,12 @@ const Admin = ({ onConfigReload }) => {
     setLoading(true);
     try {
       const data = await api.get("/config");
-      setConfig(data);
-      setBasePaths(data.config?.basePaths || {});
-      setServices(data.services || {});
-      setRawConfig(JSON.stringify(data, null, 2));
+      const payload = toConfigPayload(data);
+      setConfig(payload);
+      setBasePaths(payload.config?.basePaths || {});
+      setServices(payload.services || {});
+      setRuntimeInfo(data.runtime || null);
+      setRawConfig(JSON.stringify(payload, null, 2));
       if (onConfigReload) {
         onConfigReload();
       }
@@ -731,6 +760,7 @@ const Admin = ({ onConfigReload }) => {
       };
       await api.put("/config", updatedConfig);
       setConfig(updatedConfig);
+      setRuntimeInfo((prev) => prev || null);
       setRawConfig(JSON.stringify(updatedConfig, null, 2));
       showSnackbar("Base paths saved successfully", "success");
     } catch (error) {
@@ -753,6 +783,7 @@ const Admin = ({ onConfigReload }) => {
       };
       await api.put("/config", updatedConfig);
       setConfig(updatedConfig);
+      setRuntimeInfo((prev) => prev || null);
       setRawConfig(JSON.stringify(updatedConfig, null, 2));
       showSnackbar("Services saved successfully", "success");
     } catch (error) {
@@ -766,7 +797,7 @@ const Admin = ({ onConfigReload }) => {
     setSaving(true);
     let parsedConfig;
     try {
-      parsedConfig = JSON.parse(rawConfig);
+      parsedConfig = toConfigPayload(JSON.parse(rawConfig));
     } catch (error) {
       showSnackbar(`Invalid JSON: ${error.message}`, "error");
       setSaving(false);
@@ -785,6 +816,7 @@ const Admin = ({ onConfigReload }) => {
       setConfig(parsedConfig);
       setBasePaths(parsedConfig.config?.basePaths || {});
       setServices(parsedConfig.services || {});
+      setRuntimeInfo((prev) => prev || null);
       showSnackbar("Configuration saved successfully", "success");
     } catch (error) {
       showSnackbar(`Failed to save raw config: ${error.message}`, "error");
@@ -854,7 +886,7 @@ const Admin = ({ onConfigReload }) => {
   const addNewPath = () => {
     const finalPath =
       newPathMode === "template" && newPathTemplateBase
-        ? `${basePaths[newPathTemplateBase] || ""}${newPathSuffix ? `/${newPathSuffix.replace(/^\/+/, "")}` : ""}`
+        ? `${basePaths[newPathTemplateBase] || ""}${newPathSuffix ? `${getPlatformPathSeparator(runtimePlatform)}${normalizePathSuffix(newPathSuffix, runtimePlatform)}` : ""}`
         : newPathValue;
 
     if (!newPathKey || !finalPath) {
@@ -970,6 +1002,15 @@ const Admin = ({ onConfigReload }) => {
             <Typography variant="h6" sx={{ fontWeight: 800, m: 0 }}>
               Configuration
             </Typography>
+            {runtimeInfo ? (
+              <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
+                <Chip size="small" variant="outlined" label={`Platform: ${runtimeInfo.platform}`} />
+                <Chip size="small" variant="outlined" label={`Config: ${runtimeInfo.configFile}`} />
+                {runtimeInfo.overrideActive ? (
+                  <Chip size="small" color="warning" variant="outlined" label="Override active" />
+                ) : null}
+              </Stack>
+            ) : null}
           </Box>
           
           {/* Inline Tabs */}
@@ -1241,6 +1282,7 @@ const Admin = ({ onConfigReload }) => {
                       service={services[selectedService]}
                       services={services}
                       basePaths={basePaths}
+                      runtimePlatform={runtimePlatform}
                       onServiceChange={handleServiceChange}
                       onPickDirectory={pickDirectory}
                       validationIssues={validationResult.issues}
@@ -1426,7 +1468,7 @@ const Admin = ({ onConfigReload }) => {
                     label="Directory Path"
                     value={newPathValue}
                     onChange={(event) => setNewPathValue(event.target.value)}
-                    placeholder="~/Workspace/codebase/lextr"
+                    placeholder={runtimePlatform === "win32" ? "C:\\Workspace\\codebase\\lextr" : "~/Workspace/codebase/lextr"}
                     helperText="Absolute path or home-relative path."
                     sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
                   />
@@ -1457,7 +1499,7 @@ const Admin = ({ onConfigReload }) => {
                         label="Sub Path"
                         value={newPathSuffix}
                         onChange={(event) => setNewPathSuffix(event.target.value)}
-                        placeholder="services/shared"
+                        placeholder={runtimePlatform === "win32" ? "services\\shared" : "services/shared"}
                         helperText="Optional folder appended to the selected base path."
                         sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
                       />
@@ -1490,7 +1532,7 @@ const Admin = ({ onConfigReload }) => {
                   >
                     <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
                       {newPathMode === "template" && newPathTemplateBase
-                        ? `${basePaths[newPathTemplateBase] || ""}${newPathSuffix ? `/${newPathSuffix.replace(/^\/+/, "")}` : ""}`
+                        ? `${basePaths[newPathTemplateBase] || ""}${newPathSuffix ? `${getPlatformPathSeparator(runtimePlatform)}${normalizePathSuffix(newPathSuffix, runtimePlatform)}` : ""}`
                         : newPathValue || "Choose a path source to preview the value"}
                     </Typography>
                   </Paper>
