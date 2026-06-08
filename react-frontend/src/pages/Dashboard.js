@@ -5,7 +5,6 @@ import {
   Button,
   Checkbox,
   Chip,
-  Collapse,
   CircularProgress,
   Divider,
   FormControl,
@@ -20,15 +19,11 @@ import {
   Typography,
 } from "@mui/material";
 import {
-  AutoAwesome as AutoAwesomeIcon,
   FilterList as FilterListIcon,
-  GridView as GridViewIcon,
-  HealthAndSafety as HealthAndSafetyIcon,
   PlayArrow as PlayArrowIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
   Stop as StopIcon,
-  WarningAmber as WarningAmberIcon,
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
 import ProgressPanel from "../components/ProgressPanel";
@@ -99,7 +94,7 @@ function deriveBaseState(status) {
           : healthState === "port-open"
             ? "Port open"
           : lifecycleState === "stopped"
-            ? "Not running"
+            ? ""
             : checkable
               ? "Health unknown"
               : "No health check",
@@ -157,7 +152,6 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [groupFilter, setGroupFilter] = useState("all");
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
-  const [showInsights, setShowInsights] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
@@ -231,18 +225,6 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
       }))
       .filter((entry) => entry.services.length > 0);
   }, [filteredServices]);
-
-  const summary = useMemo(() => {
-    const states = Object.values(displayStates);
-    return {
-      total: normalizedServices.length,
-      running: states.filter((state) => state.running).length,
-      healthy: states.filter((state) => state.healthState === "healthy").length,
-      waiting: states.filter((state) => state.lifecycleState === "waiting").length,
-      failed: states.filter((state) => state.lifecycleState === "failed").length,
-      selected: selectedServices.length,
-    };
-  }, [displayStates, normalizedServices.length, selectedServices.length]);
 
   const operationSummary = useMemo(() => {
     if (!operationState?.order?.length) return null;
@@ -703,42 +685,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
               </Typography>
               <Typography variant="h6">Manage your local stack without losing screen space</Typography>
             </Box>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Chip label={`${summary.total} total`} />
-              <Chip label={`${summary.running} running`} color="success" variant="outlined" />
-              <Chip label={`${summary.healthy} healthy`} color="success" />
-              <Chip label={`${summary.failed} failed`} color="error" variant="outlined" />
-              <Chip label={`${summary.waiting} waiting`} color="warning" variant="outlined" />
-              <Chip label={`${summary.selected} selected`} color="primary" variant="outlined" />
-              <Button
-                size="small"
-                variant={showInsights ? "contained" : "outlined"}
-                startIcon={<AutoAwesomeIcon />}
-                onClick={() => setShowInsights((previous) => !previous)}
-              >
-                {showInsights ? "Hide insights" : "Show insights"}
-              </Button>
-            </Stack>
           </Box>
-
-          <Collapse in={showInsights}>
-            <Stack
-              direction="row"
-              spacing={1}
-              flexWrap="wrap"
-              sx={{
-                p: 1.25,
-                borderRadius: 2.5,
-                backgroundColor: "rgba(15,23,42,0.03)",
-                border: "1px solid rgba(148,163,184,0.16)",
-              }}
-            >
-              <Chip icon={<GridViewIcon fontSize="small" />} label={`${summary.total} services`} />
-              <Chip icon={<HealthAndSafetyIcon fontSize="small" />} label={`${summary.healthy} healthy`} color="success" variant="outlined" />
-              <Chip icon={<WarningAmberIcon fontSize="small" />} label={`${summary.failed + summary.waiting} attention`} color="warning" variant="outlined" />
-              <Chip icon={<AutoAwesomeIcon fontSize="small" />} label={`${summary.selected} selected`} color="secondary" variant="outlined" />
-            </Stack>
-          </Collapse>
 
           <Divider />
 

@@ -82,7 +82,9 @@ function ServiceCard({
 
           <Stack direction="row" spacing={0.75} flexWrap="wrap">
             <StatusChip state={status.lifecycleState} label={status.lifecycleLabel} />
-            <StatusChip state={status.healthState} label={status.healthLabel} />
+            {status.lifecycleState !== "stopped" && status.healthLabel ? (
+              <StatusChip state={status.healthState} label={status.healthLabel} />
+            ) : null}
           </Stack>
 
           <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent={{ xs: "flex-start", lg: "flex-end" }}>
