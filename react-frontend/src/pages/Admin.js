@@ -21,6 +21,8 @@ import {
   Select,
   Snackbar,
   Stack,
+  Tab,
+  Tabs,
   TextField,
   Tooltip,
   Typography,
@@ -69,6 +71,13 @@ function prettifyLabel(value = "") {
   return value
     .replace(/[-_]/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function prettifyPlatform(value = "") {
+  if (value === "darwin") return "macOS";
+  if (value === "win32") return "Windows";
+  if (value === "linux") return "Linux";
+  return value || "Unknown";
 }
 
 function tokenForBasePath(key) {
@@ -657,6 +666,7 @@ const Admin = ({ onConfigReload }) => {
   const [config, setConfig] = useState(null);
   const [rawConfig, setRawConfig] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [runtimeInfo, setRuntimeInfo] = useState(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
@@ -710,8 +720,12 @@ const Admin = ({ onConfigReload }) => {
     setSnackbarOpen(true);
   }, []);
 
-  const loadConfig = useCallback(async () => {
-    setLoading(true);
+  const loadConfig = useCallback(async ({ initial = false } = {}) => {
+    if (initial) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
+    }
     try {
       const data = await api.get("/config");
       const payload = toConfigPayload(data);
@@ -728,12 +742,16 @@ const Admin = ({ onConfigReload }) => {
       setSnackbarSeverity("error");
       setSnackbarOpen(true);
     } finally {
-      setLoading(false);
+      if (initial) {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
   }, [onConfigReload]);
 
   useEffect(() => {
-    loadConfig();
+    loadConfig({ initial: true });
   }, [loadConfig]);
 
   useEffect(() => {
@@ -995,76 +1013,59 @@ const Admin = ({ onConfigReload }) => {
 
   return (
     <Box sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 }}>
-      {/* Compact Header */}
-      <Box sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid rgba(148,163,184,0.12)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+      <Box sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid rgba(148,163,184,0.12)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
-          <Box>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, minWidth: 0, flexWrap: "wrap" }}>
             <Typography variant="h6" sx={{ fontWeight: 800, m: 0 }}>
               Configuration
             </Typography>
             {runtimeInfo ? (
-              <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 0.5 }}>
-                <Chip size="small" variant="outlined" label={`Platform: ${runtimeInfo.platform}`} />
-                <Chip size="small" variant="outlined" label={`Config: ${runtimeInfo.configFile}`} />
-                {runtimeInfo.overrideActive ? (
-                  <Chip size="small" color="warning" variant="outlined" label="Override active" />
-                ) : null}
-              </Stack>
-            ) : null}
-          </Box>
-          
-          {/* Inline Tabs */}
-          <Box sx={{ display: "flex", gap: 1, ml: 2, borderLeft: "1px solid rgba(148,163,184,0.16)", pl: 2 }}>
-            <Button
-              size="small"
-              variant={currentTab === 0 ? "contained" : "outlined"}
-              onClick={() => setCurrentTab(0)}
-              startIcon={<StorageIcon />}
-              sx={{ textTransform: "none", fontWeight: 600 }}
-            >
-              Paths
-            </Button>
-            <Button
-              size="small"
-              variant={currentTab === 1 ? "contained" : "outlined"}
-              onClick={() => setCurrentTab(1)}
-              startIcon={<SettingsIcon />}
-              sx={{ textTransform: "none", fontWeight: 600 }}
-            >
-              Services
-            </Button>
-            <Button
-              size="small"
-              variant={currentTab === 2 ? "contained" : "outlined"}
-              onClick={() => setCurrentTab(2)}
-              startIcon={<CodeIcon />}
-              sx={{ textTransform: "none", fontWeight: 600 }}
-            >
-              JSON
-            </Button>
+              <Typography variant="caption" color="text.secondary">
+                Platform: {prettifyPlatform(runtimeInfo.platform)}
+                {runtimeInfo?.overrideActive ? " • Override active" : ""}
+              </Typography>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                Manage base paths, services, and advanced JSON
+              </Typography>
+            )}
           </Box>
         </Box>
 
         {/* Action Buttons */}
         <Box sx={{ display: "flex", gap: 1, flexShrink: 0 }}>
           <Tooltip title="Reload configuration">
-            <IconButton size="small" onClick={loadConfig} disabled={loading || saving}>
+            <IconButton size="small" onClick={() => loadConfig()} disabled={refreshing || saving}>
               <RefreshIcon fontSize="small" />
             </IconButton>
           </Tooltip>
-          <Tooltip title={pickerBusy ? "Folder picker active" : "Ready to pick folders"}>
-            <Box sx={{ display: "flex", alignItems: "center", px: 1 }}>
-              <Box
-                sx={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: "50%",
-                  background: pickerBusy ? "#f59e0b" : "#10b981",
-                }}
-              />
-            </Box>
-          </Tooltip>
+          {refreshing ? (
+            <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+              Refreshing…
+            </Typography>
+          ) : null}
         </Box>
+      </Box>
+
+      <Box sx={{ flexShrink: 0, px: 2.5, borderBottom: "1px solid rgba(148,163,184,0.12)", backgroundColor: "background.paper" }}>
+        <Tabs
+          value={currentTab}
+          onChange={(_, value) => setCurrentTab(value)}
+          sx={{
+            minHeight: 46,
+            "& .MuiTab-root": {
+              minHeight: 46,
+              textTransform: "none",
+              fontWeight: 700,
+              alignItems: "flex-start",
+              px: 2,
+            },
+          }}
+        >
+          <Tab icon={<StorageIcon fontSize="small" />} iconPosition="start" label="Paths" />
+          <Tab icon={<SettingsIcon fontSize="small" />} iconPosition="start" label="Services" />
+          <Tab icon={<CodeIcon fontSize="small" />} iconPosition="start" label="JSON" />
+        </Tabs>
       </Box>
 
       {/* Content Area */}
