@@ -1,893 +1,888 @@
-import { useState, useEffect, forwardRef, useImperativeHandle } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
 import {
-  Grid,
-  Typography,
-  TextField,
-  Paper,
-  Box,
-  CircularProgress,
   Alert,
-  InputAdornment,
-  Snackbar,
-  IconButton,
+  Box,
+  Button,
+  Checkbox,
   Chip,
+  CircularProgress,
+  Divider,
+  FormControl,
+  InputAdornment,
+  InputLabel,
+  MenuItem,
+  Paper,
+  Select,
+  Snackbar,
   Stack,
+  TextField,
+  Typography,
 } from "@mui/material";
-import { 
-  Search as SearchIcon,
-  Close as CloseIcon,
-  Terminal as TerminalIcon,
+import {
   FilterList as FilterListIcon,
-  PlayArrow as RunningIcon,
-  Stop as StoppedIcon,
-  Code as CodeIcon,
-  PlaylistPlay as StartAllIcon,
-  StopCircle as StopAllIcon,
-  Build as BuildIcon
+  PlayArrow as PlayArrowIcon,
+  Refresh as RefreshIcon,
+  Search as SearchIcon,
+  Stop as StopIcon,
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
+import ProgressPanel from "../components/ProgressPanel";
 import api from "../services/api";
+import {
+  DEFAULT_GROUPS,
+  buildDependencyMap,
+  buildReverseDependencyMap,
+  categorizeFailure,
+  getPresetServices,
+  normalizeService,
+  topoSortServices,
+} from "../utils/serviceUtils";
+
+const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeFilterValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function formatLifecycleLabel(state) {
+  const labels = {
+    idle: "Idle",
+    queued: "Queued",
+    waiting: "Waiting",
+    starting: "Starting",
+    running: "Running",
+    healthy: "Healthy",
+    unhealthy: "Unhealthy",
+    stopping: "Stopping",
+    stopped: "Stopped",
+    failed: "Failed",
+  };
+  return labels[state] || "Unknown";
+}
+
+function deriveBaseState(status) {
+  if (!status) {
+    return {
+      running: false,
+      lifecycleState: "idle",
+      lifecycleLabel: "Idle",
+      healthState: "unknown",
+      healthLabel: "Health unknown",
+      message: "Waiting for first status poll",
+      error: "",
+    };
+  }
+
+  const lifecycleState = status.running ? "running" : "stopped";
+  const healthState = status.healthState || "unknown";
+  const checkable = status.checkable !== false;
+
+  return {
+    running: Boolean(status.running),
+    lifecycleState,
+    lifecycleLabel: formatLifecycleLabel(lifecycleState),
+    healthState,
+    healthLabel:
+      healthState === "healthy"
+        ? "Healthy"
+        : healthState === "unhealthy"
+          ? "Unhealthy"
+          : healthState === "port-open"
+            ? "Port open"
+          : lifecycleState === "stopped"
+            ? ""
+            : checkable
+              ? "Health unknown"
+              : "No health check",
+    message: status.running
+      ? healthState === "healthy"
+        ? "Service is healthy"
+        : healthState === "port-open"
+          ? "Service port is open"
+        : "Service is running but health is unavailable"
+      : "Service is stopped",
+    error: "",
+  };
+}
+
+function mergeDisplayState(baseState, uiState) {
+  if (!uiState) return baseState;
+
+  const stickyStates = ["queued", "waiting", "starting", "stopping", "failed"];
+  if (stickyStates.includes(uiState.lifecycleState)) {
+    return {
+      ...baseState,
+      ...uiState,
+      lifecycleLabel: formatLifecycleLabel(uiState.lifecycleState),
+      healthLabel:
+        uiState.healthState === "healthy"
+          ? "Healthy"
+          : uiState.healthState === "unhealthy"
+            ? "Unhealthy"
+            : "Health unknown",
+    };
+  }
+
+  if (Date.now() - uiState.updatedAt < 15000) {
+    return {
+      ...baseState,
+      ...uiState,
+      lifecycleState: baseState.lifecycleState,
+      lifecycleLabel: baseState.lifecycleLabel,
+      healthState: baseState.healthState,
+      healthLabel: baseState.healthLabel,
+    };
+  }
+
+  return baseState;
+}
 
 const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [services, setServices] = useState([]);
-  const [filteredServices, setFilteredServices] = useState([]);
+  const [statuses, setStatuses] = useState({});
+  const [uiStates, setUiStates] = useState({});
+  const [selectedServices, setSelectedServices] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [output, setOutput] = useState("(no actions yet)");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [preset, setPreset] = useState("Core");
+  const [buildEnabled, setBuildEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [showToast, setShowToast] = useState(false);
-  const [statusFilter, setStatusFilter] = useState("all"); // all, running, stopped
-  const [typeFilter, setTypeFilter] = useState("all"); // all, java, npm, redis, etc.
-  const [serviceStatuses, setServiceStatuses] = useState({}); // Store service statuses
-  const [bulkActionInProgress, setBulkActionInProgress] = useState(false);
-  const [currentBulkAction, setCurrentBulkAction] = useState(null);
-  const [buildEnabled, setBuildEnabled] = useState(false); // Build flag state
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
+  const [operationState, setOperationState] = useState(null);
+
+  const normalizedServices = useMemo(
+    () => services.map((service) => normalizeService(service)),
+    [services]
+  );
+
+  const reverseDependencies = useMemo(
+    () => buildReverseDependencyMap(normalizedServices),
+    [normalizedServices]
+  );
+
+  const displayStates = useMemo(() => {
+    const next = {};
+    normalizedServices.forEach((service) => {
+      next[service.name] = mergeDisplayState(
+        deriveBaseState(statuses[service.name]),
+        uiStates[service.name]
+      );
+    });
+    return next;
+  }, [normalizedServices, statuses, uiStates]);
+
+  const groups = useMemo(() => {
+    const dynamic = new Set(normalizedServices.map((service) => service.group));
+    return [...DEFAULT_GROUPS.filter((group) => dynamic.has(group)), ...[...dynamic].filter((group) => !DEFAULT_GROUPS.includes(group))];
+  }, [normalizedServices]);
+
+  const filteredServices = useMemo(() => {
+    return normalizedServices.filter((service) => {
+      const state = displayStates[service.name];
+      const normalizedSearch = normalizeFilterValue(searchQuery);
+      const normalizedTypeFilter = normalizeFilterValue(typeFilter);
+      const normalizedGroupFilter = normalizeFilterValue(groupFilter);
+      const normalizedServiceType = normalizeFilterValue(service.type);
+      const normalizedServiceGroup = normalizeFilterValue(service.group);
+
+      const matchesSearch =
+        !normalizedSearch ||
+        normalizeFilterValue(service.name).includes(normalizedSearch) ||
+        normalizeFilterValue(service.description).includes(normalizedSearch) ||
+        normalizedServiceType.includes(normalizedSearch) ||
+        normalizedServiceGroup.includes(normalizedSearch);
+
+      const matchesType = normalizedTypeFilter === "all" || normalizedServiceType === normalizedTypeFilter;
+      const matchesGroup = normalizedGroupFilter === "all" || normalizedServiceGroup === normalizedGroupFilter;
+
+      const matchesStatus =
+        statusFilter === "all" ||
+        (statusFilter === "running" && state.running) ||
+        (statusFilter === "healthy" && state.healthState === "healthy") ||
+        (statusFilter === "failed" && state.lifecycleState === "failed") ||
+        (statusFilter === "waiting" && state.lifecycleState === "waiting") ||
+        (statusFilter === "stopped" && !state.running) ||
+        (statusFilter === "needs-attention" &&
+          (state.lifecycleState === "failed" || state.healthState === "unhealthy"));
+
+      return matchesSearch && matchesType && matchesGroup && matchesStatus;
+    });
+  }, [normalizedServices, displayStates, searchQuery, statusFilter, typeFilter, groupFilter]);
+
+  const groupedServices = useMemo(() => {
+    const availableGroups = [...new Set(filteredServices.map((service) => service.group))];
+    return availableGroups
+      .map((group) => ({
+        group,
+        services: filteredServices.filter((service) => service.group === group),
+      }))
+      .filter((entry) => entry.services.length > 0);
+  }, [filteredServices]);
+
+  const operationSummary = useMemo(() => {
+    if (!operationState?.order?.length) return null;
+    const steps = operationState.order.map((name) => ({
+      name,
+      ...(operationState.items[name] || { state: "queued", message: "Queued" }),
+    }));
+    const completed = steps.filter((step) => ["healthy", "running", "failed", "stopped"].includes(step.state)).length;
+    return {
+      label: operationState.label,
+      total: steps.length,
+      completed,
+      waiting: steps.filter((step) => step.state === "waiting").length,
+      succeeded: steps.filter((step) => ["healthy", "running", "stopped"].includes(step.state)).length,
+      failed: steps.filter((step) => step.state === "failed").length,
+      steps,
+    };
+  }, [operationState]);
 
   useEffect(() => {
     loadServices();
   }, []);
 
   useEffect(() => {
-    if (services.length > 0) {
-      loadServiceStatuses();
-      // Set up periodic status checking every 5 seconds
-      const interval = setInterval(loadServiceStatuses, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [services]);
+    if (!normalizedServices.length) return undefined;
+    loadServiceStatuses(normalizedServices);
+    const interval = setInterval(() => loadServiceStatuses(normalizedServices), 5000);
+    return () => clearInterval(interval);
+  }, [normalizedServices]);
 
-  useEffect(() => {
-    filterServices();
-  }, [services, searchQuery, statusFilter, typeFilter, serviceStatuses]);
+  useImperativeHandle(ref, () => ({
+    refreshServices: loadServices,
+  }));
 
-  const loadServices = async () => {
+  async function loadServices() {
     try {
       setLoading(true);
-      console.log('Dashboard: Loading services from /services endpoint...');
       const data = await api.get("/services");
-      console.log('Dashboard: Received services data:', data);
       setServices(data.services || []);
-      setError(null);
+      setError("");
     } catch (err) {
-      console.error('Dashboard: Failed to load services:', err);
       setError(`Failed to load services: ${err.message}`);
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  // Expose refresh method to parent component
-  useImperativeHandle(ref, () => ({
-    refreshServices: loadServices
-  }), []);
-
-  const loadServiceStatuses = async () => {
+  async function refreshSingleStatus(serviceName) {
     try {
-      const statusPromises = services.map(async (service) => {
-        try {
-          const statusData = await api.get(`/service/${service.name}/status`);
-          return { name: service.name, running: statusData.running };
-        } catch (error) {
-          return { name: service.name, running: false };
-        }
-      });
-
-      const statuses = await Promise.all(statusPromises);
-      const statusMap = {};
-      statuses.forEach(status => {
-        statusMap[status.name] = status.running;
-      });
-      setServiceStatuses(statusMap);
-    } catch (error) {
-      console.error('Failed to load service statuses:', error);
+      const data = await api.get(`/service/${serviceName}/status`);
+      setStatuses((previous) => ({ ...previous, [serviceName]: data }));
+      return data;
+    } catch (err) {
+      return null;
     }
-  };
+  }
 
-  const filterServices = () => {
-    let filtered = [...services];
+  async function loadServiceStatuses(serviceList) {
+    const results = await Promise.all(
+      serviceList.map(async (service) => {
+        try {
+          const status = await api.get(`/service/${service.name}/status`);
+          return [service.name, status];
+        } catch (err) {
+          return [service.name, null];
+        }
+      })
+    );
 
-    // Apply text search filter
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (service) =>
-          service.name.toLowerCase().includes(query) ||
-          (service.description || "").toLowerCase().includes(query) ||
-          (service.type || "").toLowerCase().includes(query)
+    setStatuses((previous) => {
+      const next = { ...previous };
+      results.forEach(([name, status]) => {
+        next[name] = status;
+      });
+      return next;
+    });
+  }
+
+  function showToast(message, severity = "info") {
+    setToast({ open: true, message, severity });
+  }
+
+  function setUiState(name, patch) {
+    setUiStates((previous) => ({
+      ...previous,
+      [name]: {
+        ...(previous[name] || {}),
+        ...patch,
+        updatedAt: Date.now(),
+      },
+    }));
+  }
+
+  function updateOperationItem(name, patch) {
+    setOperationState((previous) => {
+      if (!previous) return previous;
+      return {
+        ...previous,
+        items: {
+          ...previous.items,
+          [name]: {
+            ...(previous.items[name] || {}),
+            ...patch,
+          },
+        },
+      };
+    });
+  }
+
+  function startOperation(label, order) {
+    setOperationState({
+      label,
+      order,
+      items: order.reduce((accumulator, name) => {
+        accumulator[name] = { state: "queued", message: "Queued for action", error: "" };
+        return accumulator;
+      }, {}),
+    });
+  }
+
+  function clearOperationIfFinished() {
+    setOperationState((previous) => {
+      if (!previous) return previous;
+      const items = Object.values(previous.items);
+      const allFinished = items.every((item) => ["healthy", "running", "failed", "stopped"].includes(item.state));
+      return allFinished ? previous : previous;
+    });
+  }
+
+  async function executeSingleAction(serviceName, action) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service) return;
+
+    const actionLabel = action === "restart" ? "Restarting" : action === "stop" ? "Stopping" : "Starting";
+    setUiState(serviceName, {
+      lifecycleState: action === "stop" ? "stopping" : "starting",
+      message: `${actionLabel} ${serviceName}...`,
+      error: "",
+    });
+
+    try {
+      await api.post(
+        action === "start"
+          ? `/service/${serviceName}/start${buildEnabled && service.hasBuild ? "?build=true" : ""}`
+          : `/service/${serviceName}/${action}`
+      );
+
+      await sleep(500);
+      const latestStatus = await refreshSingleStatus(serviceName);
+      const nextState =
+        action === "stop"
+          ? "stopped"
+          : latestStatus?.healthState === "healthy"
+            ? "healthy"
+            : latestStatus?.running
+              ? "running"
+              : "starting";
+
+      setUiState(serviceName, {
+        lifecycleState: nextState,
+        message:
+          action === "stop"
+            ? "Service stopped successfully"
+            : nextState === "healthy"
+              ? "Service is healthy"
+              : "Service started successfully",
+        error: "",
+      });
+      showToast(`${serviceName} ${action} completed`, "success");
+    } catch (err) {
+      const reason = categorizeFailure(err);
+      setUiState(serviceName, {
+        lifecycleState: "failed",
+        healthState: "unhealthy",
+        message: reason,
+        error: err.error || err.message,
+      });
+      showToast(`${serviceName}: ${reason}`, "error");
+    }
+  }
+
+  function getExpandedStartTargets(initialTargets) {
+    const byName = Object.fromEntries(normalizedServices.map((service) => [service.name, service]));
+    const expanded = new Set();
+
+    function include(name) {
+      if (expanded.has(name) || !byName[name]) return;
+      expanded.add(name);
+      (byName[name].dependsOn || []).forEach(include);
+    }
+
+    initialTargets.forEach(include);
+    return [...expanded];
+  }
+
+  async function executeStartFlow(initialTargets, label) {
+    const targetNames = getExpandedStartTargets(initialTargets);
+    const orderedServices = topoSortServices(
+      normalizedServices.filter((service) => targetNames.includes(service.name))
+    );
+    const pending = new Set(orderedServices.map((service) => service.name));
+    const completed = new Set();
+    const failed = new Set();
+    const serviceMap = Object.fromEntries(normalizedServices.map((service) => [service.name, service]));
+    const dependencyMap = buildDependencyMap(normalizedServices);
+
+    startOperation(label, orderedServices.map((service) => service.name));
+
+    while (pending.size > 0) {
+      const ready = [...pending].filter((name) => {
+        const dependencies = dependencyMap[name] || [];
+        return dependencies.every((dependency) => {
+          if (!pending.has(dependency)) return !failed.has(dependency);
+          return completed.has(dependency);
+        });
+      });
+
+      if (!ready.length) {
+        [...pending].forEach((name) => {
+          updateOperationItem(name, {
+            state: "failed",
+            message: "Blocked by dependency failure",
+            error: "A required dependency failed to start",
+          });
+          setUiState(name, {
+            lifecycleState: "failed",
+            healthState: "unhealthy",
+            message: "Blocked by dependency failure",
+            error: "A required dependency failed to start",
+          });
+          failed.add(name);
+          pending.delete(name);
+        });
+        break;
+      }
+
+      ready.forEach((name) => {
+        updateOperationItem(name, {
+          state: "waiting",
+          message:
+            (serviceMap[name].dependsOn || []).length > 0
+              ? `Waiting for ${serviceMap[name].dependsOn.join(", ")}`
+              : "Ready to start",
+        });
+        setUiState(name, {
+          lifecycleState: serviceMap[name].dependsOn?.length ? "waiting" : "queued",
+          message:
+            serviceMap[name].dependsOn?.length
+              ? `Waiting for ${serviceMap[name].dependsOn.join(", ")}`
+              : "Queued for startup",
+          error: "",
+        });
+      });
+
+      await Promise.all(
+        ready.map(async (name) => {
+          const currentDisplayState = displayStates[name];
+          if (currentDisplayState?.running) {
+            updateOperationItem(name, { state: "healthy", message: "Already running" });
+            setUiState(name, {
+              lifecycleState: "running",
+              message: "Already running",
+              error: "",
+            });
+            completed.add(name);
+            pending.delete(name);
+            return;
+          }
+
+          updateOperationItem(name, { state: "starting", message: "Starting now" });
+          setUiState(name, {
+            lifecycleState: "starting",
+            message: "Starting now",
+            error: "",
+          });
+
+          try {
+            await api.post(
+              `/service/${name}/start${buildEnabled && serviceMap[name].hasBuild ? "?build=true" : ""}`
+            );
+            await sleep(500);
+            const latestStatus = await refreshSingleStatus(name);
+            const nextState = latestStatus?.healthState === "healthy" ? "healthy" : latestStatus?.running ? "running" : "starting";
+            updateOperationItem(name, {
+              state: nextState,
+              message: nextState === "healthy" ? "Healthy" : "Running",
+            });
+            setUiState(name, {
+              lifecycleState: nextState,
+              message: nextState === "healthy" ? "Healthy" : "Running",
+              error: "",
+            });
+            completed.add(name);
+          } catch (err) {
+            const reason = categorizeFailure(err);
+            updateOperationItem(name, {
+              state: "failed",
+              message: reason,
+              error: err.error || err.message,
+            });
+            setUiState(name, {
+              lifecycleState: "failed",
+              healthState: "unhealthy",
+              message: reason,
+              error: err.error || err.message,
+            });
+            failed.add(name);
+          } finally {
+            pending.delete(name);
+          }
+        })
       );
     }
 
-    // Apply status filter
-    if (statusFilter !== "all") {
-      filtered = filtered.filter((service) => {
-        const isRunning = serviceStatuses[service.name] || false;
-        return statusFilter === "running" ? isRunning : !isRunning;
+    clearOperationIfFinished();
+  }
+
+  async function executeStopFlow(targetNames, label) {
+    const order = topoSortServices(normalizedServices.filter((service) => targetNames.includes(service.name)))
+      .map((service) => service.name)
+      .reverse();
+
+    startOperation(label, order);
+
+    for (const name of order) {
+      updateOperationItem(name, { state: "stopping", message: "Stopping service" });
+      setUiState(name, {
+        lifecycleState: "stopping",
+        message: "Stopping service",
+        error: "",
       });
+
+      try {
+        await api.post(`/service/${name}/stop`);
+        await sleep(300);
+        await refreshSingleStatus(name);
+        updateOperationItem(name, { state: "stopped", message: "Stopped" });
+        setUiState(name, {
+          lifecycleState: "stopped",
+          message: "Stopped",
+          error: "",
+        });
+      } catch (err) {
+        const reason = categorizeFailure(err);
+        updateOperationItem(name, { state: "failed", message: reason, error: err.error || err.message });
+        setUiState(name, {
+          lifecycleState: "failed",
+          healthState: "unhealthy",
+          message: reason,
+          error: err.error || err.message,
+        });
+      }
     }
+  }
 
-    // Apply type filter
-    if (typeFilter !== "all") {
-      filtered = filtered.filter((service) => {
-        const categorizedType = categorizeServiceType(service.type);
-        return categorizedType === typeFilter.toLowerCase();
-      });
+  async function handleBulkStartAll() {
+    try {
+      await executeStartFlow(normalizedServices.map((service) => service.name), "Start all services");
+    } catch (error) {
+      showToast(error.message, "error");
     }
+  }
 
-    setFilteredServices(filtered);
-  };
+  async function handleBulkStopAll() {
+    try {
+      await executeStopFlow(normalizedServices.map((service) => service.name), "Stop all services");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
 
-  // Get categorized service types for filter options
-  const getServiceTypes = () => {
-    const mainTypes = ['java', 'python', 'npm']; // Main types in desired order
-    const allTypes = [...new Set(services.map(service => service.type).filter(Boolean))];
-    
-    // Check if there are any services with types other than java/python/npm
-    const hasOtherTypes = allTypes.some(type => 
-      !mainTypes.includes(type.toLowerCase())
+  async function handleStartSelected() {
+    if (!selectedServices.length) return;
+    try {
+      await executeStartFlow(selectedServices, "Start selected services");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  async function handleStopSelected() {
+    if (!selectedServices.length) return;
+    try {
+      await executeStopFlow(selectedServices, "Stop selected services");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  async function handleRestartSelected() {
+    if (!selectedServices.length) return;
+    try {
+      await executeStopFlow(selectedServices, "Restart selected services");
+      await executeStartFlow(selectedServices, "Restart selected services");
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  async function handleStartPreset() {
+    const presetServices = getPresetServices(normalizedServices, preset);
+    try {
+      await executeStartFlow(presetServices, `Start preset: ${preset}`);
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  function toggleSelection(name, checked) {
+    setSelectedServices((previous) =>
+      checked ? [...new Set([...previous, name])] : previous.filter((serviceName) => serviceName !== name)
     );
-    
-    // Return main types in order + "others" at the end if there are other types
-    const result = [];
-    
-    // Add main types in specific order if they exist
-    mainTypes.forEach(type => {
-      if (allTypes.some(serviceType => serviceType.toLowerCase() === type)) {
-        result.push(type);
-      }
+  }
+
+  function toggleSelectFiltered(checked) {
+    const names = filteredServices.map((service) => service.name);
+    setSelectedServices((previous) => {
+      if (checked) return [...new Set([...previous, ...names])];
+      return previous.filter((name) => !names.includes(name));
     });
-    
-    // Add "others" at the end if there are other types
-    if (hasOtherTypes) {
-      result.push('others');
-    }
-    
-    return result; // Don't sort, maintain the order
-  };
+  }
 
-  // Helper function to categorize service type
-  const categorizeServiceType = (serviceType) => {
-    if (!serviceType) return 'others';
-    const type = serviceType.toLowerCase();
-    return ['java', 'python', 'npm'].includes(type) ? type : 'others';
-  };
-
-  const handleActionOutput = (newOutput) => {
-    setOutput(newOutput);
-    setShowToast(true);
-  };
-
-  // Sequential service management functions with config-based ordering
-  const startAllServices = async (withBuild = false) => {
-    setBulkActionInProgress(true);
-    setCurrentBulkAction('starting');
-    
-    let outputLog = withBuild 
-      ? "Building & Starting all services sequentially (config order)...\n\n"
-      : "Starting all services sequentially (config order)...\n\n";
-    handleActionOutput(outputLog);
-    
-    // Get services in config order by creating a map of service names to their config order
-    const serviceOrderMap = {};
-    Object.keys(services).forEach((serviceName, index) => {
-      serviceOrderMap[serviceName] = index;
-    });
-    
-    // Filter stopped services and sort them by config order
-    const stoppedServices = services
-      .filter(service => !serviceStatuses[service.name])
-      .sort((a, b) => {
-        const orderA = serviceOrderMap[a.name] ?? 999;
-        const orderB = serviceOrderMap[b.name] ?? 999;
-        return orderA - orderB;
-      });
-    
-    for (let i = 0; i < stoppedServices.length; i++) {
-      const service = stoppedServices[i];
-      try {
-        outputLog += `[${i + 1}/${stoppedServices.length}] ${withBuild ? 'Building & Starting' : 'Starting'} ${service.name}...\n`;
-        handleActionOutput(outputLog);
-        
-        const endpoint = withBuild ? `/service/${service.name}/start?build=true` : `/service/${service.name}/start`;
-        await api.post(endpoint);
-        outputLog += `${service.name} ${withBuild ? 'built & started' : 'started'} successfully\n`;
-        
-        // Wait a bit between services to avoid overwhelming the system
-        if (i < stoppedServices.length - 1) {
-          outputLog += `Waiting 2 seconds before starting next service...\n\n`;
-          handleActionOutput(outputLog);
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      } catch (error) {
-        outputLog += `Failed to ${withBuild ? 'build & start' : 'start'} ${service.name}: ${error.message}\n`;
-      }
-      handleActionOutput(outputLog);
-    }
-    
-    outputLog += `\nBulk ${withBuild ? 'build & start' : 'start'} operation completed! ${withBuild ? 'Built & started' : 'Started'} ${stoppedServices.length} services.`;
-    handleActionOutput(outputLog);
-    
-    setBulkActionInProgress(false);
-    setCurrentBulkAction(null);
-    
-    // Refresh service statuses after bulk operation
-    setTimeout(() => {
-      loadServiceStatuses();
-    }, 1000);
-  };
-
-  const stopAllServices = async () => {
-    setBulkActionInProgress(true);
-    setCurrentBulkAction('stopping');
-    
-    let outputLog = "Stopping all services...\n\n";
-    handleActionOutput(outputLog);
-    
-    const runningServices = services.filter(service => serviceStatuses[service.name]);
-    
-    // Stop services in parallel for faster shutdown
-    const stopPromises = runningServices.map(async (service, index) => {
-      try {
-        outputLog += `[${index + 1}/${runningServices.length}] Stopping ${service.name}...\n`;
-        handleActionOutput(outputLog);
-        
-        await api.post(`/service/${service.name}/stop`);
-        outputLog += `${service.name} stopped successfully\n`;
-        handleActionOutput(outputLog);
-        return { service: service.name, success: true };
-      } catch (error) {
-        outputLog += `Failed to stop ${service.name}: ${error.message}\n`;
-        handleActionOutput(outputLog);
-        return { service: service.name, success: false, error: error.message };
-      }
-    });
-    
-    await Promise.all(stopPromises);
-    
-    outputLog += `\nBulk stop operation completed! Stopped ${runningServices.length} services.`;
-    handleActionOutput(outputLog);
-    
-    setBulkActionInProgress(false);
-    setCurrentBulkAction(null);
-    
-    // Refresh service statuses after bulk operation
-    setTimeout(() => {
-      loadServiceStatuses();
-    }, 1000);
-  };
-
-  // Get counts for button labels
-  const getServiceCounts = () => {
-    const running = services.filter(service => serviceStatuses[service.name]).length;
-    const stopped = services.filter(service => !serviceStatuses[service.name]).length;
-    return { running, stopped, total: services.length };
-  };
-
-  const serviceCounts = getServiceCounts();
-
-  const handleCloseToast = (_, reason) => {
-    if (reason === 'clickaway') {
-      return;
-    }
-    setShowToast(false);
-  };
-
-  // Calculate dynamic toast dimensions based on content
-  const getToastDimensions = () => {
-    const messageLength = output.length;
-    const lineCount = output.split('\n').length;
-    
-    // Calculate width based on message length
-    let width;
-    if (messageLength < 50) {
-      width = '300px';
-    } else if (messageLength < 150) {
-      width = '400px';
-    } else if (messageLength < 300) {
-      width = '500px';
-    } else {
-      width = '600px';
-    }
-    
-    // Calculate height based on line count and content length
-    let maxHeight;
-    if (lineCount <= 2 && messageLength < 100) {
-      maxHeight = '120px'; // Small messages
-    } else if (lineCount <= 5 && messageLength < 300) {
-      maxHeight = '200px'; // Medium messages
-    } else if (lineCount <= 10 && messageLength < 800) {
-      maxHeight = '300px'; // Large messages
-    } else {
-      maxHeight = '400px'; // Very large messages
-    }
-    
-    return { width, maxHeight };
-  };
-
-  const toastDimensions = getToastDimensions();
+  const allFilteredSelected =
+    filteredServices.length > 0 &&
+    filteredServices.every((service) => selectedServices.includes(service.name));
+  const someFilteredSelected =
+    filteredServices.some((service) => selectedServices.includes(service.name)) && !allFilteredSelected;
 
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="60vh">
-        <CircularProgress size={60} sx={{ color: "white" }} />
+        <CircularProgress size={56} />
       </Box>
     );
   }
 
   if (error) {
-    return (
-      <Alert severity="error" sx={{ mb: 2, borderRadius: 2 }}>
-        {error}
-      </Alert>
-    );
+    return <Alert severity="error">{error}</Alert>;
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', p: 2 }}>
-      {/* Fixed Search and Filter Header */}
+    <Box sx={{ height: "100%", display: "flex", flexDirection: "column", gap: 2, minHeight: 0 }}>
       <Paper
-        elevation={6}
+        elevation={0}
         sx={{
-          borderRadius: 3,
-          background: "rgba(255, 255, 255, 0.95)",
-          backdropFilter: "blur(10px)",
-          mb: 2,
-          flexShrink: 0 // Prevent shrinking
+          p: 1.5,
+          border: "1px solid",
+          borderColor: "divider",
+          background: "linear-gradient(180deg, rgba(255,255,255,0.94) 0%, rgba(248,250,252,0.96) 100%)",
+          boxShadow: "0 14px 34px rgba(15,23,42,0.05)",
         }}
       >
-        {/* Horizontal Search and Filter Layout */}
-        <Box sx={{ p: 3 }}>
-          {/* Search and Filters Row */}
-          <Box sx={{ 
-            display: 'flex', 
-            gap: 3, 
-            alignItems: 'flex-start',
-            flexWrap: { xs: 'wrap', lg: 'nowrap' }
-          }}>
-            {/* Filters Section */}
-            <Box sx={{ 
-              flex: 1,
-              minWidth: { xs: '100%', lg: 'auto' }
-            }}>
-              {/* Filter Header */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
-                <FilterListIcon sx={{ color: '#666', fontSize: '1.1rem' }} />
-                <Typography variant="caption" sx={{ color: '#666', fontWeight: 600, fontSize: '0.75rem' }}>
-                  QUICK FILTERS & ACTIONS:
-                </Typography>
-              </Box>
-
-              {/* Filter Chips with Bulk Actions */}
-              <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-                {/* Status Filters */}
-                <Chip
-                  label="All Status"
-                  variant={statusFilter === "all" ? "filled" : "outlined"}
-                  color={statusFilter === "all" ? "primary" : "default"}
-                  onClick={() => setStatusFilter("all")}
-                  size="small"
-                  sx={{
-                    borderRadius: 2,
-                    fontSize: '0.75rem',
-                    '&.MuiChip-filled': {
-                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                      color: 'white'
-                    }
-                  }}
-                />
-                <Chip
-                  icon={<RunningIcon sx={{ fontSize: '0.8rem' }} />}
-                  label="Running"
-                  variant={statusFilter === "running" ? "filled" : "outlined"}
-                  color={statusFilter === "running" ? "success" : "default"}
-                  onClick={() => setStatusFilter("running")}
-                  size="small"
-                  sx={{
-                    borderRadius: 2,
-                    fontSize: '0.75rem',
-                    '&.MuiChip-filled': {
-                      background: 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
-                      color: 'white'
-                    }
-                  }}
-                />
-                <Chip
-                  icon={<StoppedIcon sx={{ fontSize: '0.8rem' }} />}
-                  label="Stopped"
-                  variant={statusFilter === "stopped" ? "filled" : "outlined"}
-                  color={statusFilter === "stopped" ? "error" : "default"}
-                  onClick={() => setStatusFilter("stopped")}
-                  size="small"
-                  sx={{
-                    borderRadius: 2,
-                    fontSize: '0.75rem',
-                    '&.MuiChip-filled': {
-                      background: 'linear-gradient(45deg, #f44336 30%, #ff5722 90%)',
-                      color: 'white'
-                    }
-                  }}
-                />
-
-                {/* Type Filters */}
-                <Box sx={{ width: '1px', height: '20px', backgroundColor: '#ddd', mx: 0.5 }} />
-                
-                <Chip
-                  label="All Types"
-                  variant={typeFilter === "all" ? "filled" : "outlined"}
-                  color={typeFilter === "all" ? "primary" : "default"}
-                  onClick={() => setTypeFilter("all")}
-                  size="small"
-                  sx={{
-                    borderRadius: 2,
-                    fontSize: '0.75rem',
-                    '&.MuiChip-filled': {
-                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                      color: 'white'
-                    }
-                  }}
-                />
-                
-                {getServiceTypes().map((type) => (
-                  <Chip
-                    key={type}
-                    icon={<CodeIcon sx={{ fontSize: '0.8rem' }} />}
-                    label={type === 'others' ? 'Others' : type.charAt(0).toUpperCase() + type.slice(1)}
-                    variant={typeFilter === type ? "filled" : "outlined"}
-                    color={typeFilter === type ? "secondary" : "default"}
-                    onClick={() => setTypeFilter(type)}
-                    size="small"
-                    sx={{
-                      borderRadius: 2,
-                      fontSize: '0.75rem',
-                      '&.MuiChip-filled': {
-                        background: type === 'others' 
-                          ? 'linear-gradient(45deg, #FF9800 30%, #FFC107 90%)'
-                          : 'linear-gradient(45deg, #9C27B0 30%, #E91E63 90%)',
-                        color: 'white'
-                      }
-                    }}
-                  />
-                ))}
-
-                {/* Divider */}
-                <Box sx={{ width: '1px', height: '20px', backgroundColor: '#ddd', mx: 0.5 }} />
-
-                {/* Build Toggle */}
-                <Chip
-                  icon={<BuildIcon sx={{ fontSize: '0.8rem' }} />}
-                  label="Build Mode"
-                  variant={buildEnabled ? "filled" : "outlined"}
-                  color={buildEnabled ? "warning" : "default"}
-                  onClick={() => setBuildEnabled(!buildEnabled)}
-                  size="small"
-                  sx={{
-                    borderRadius: 2,
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    '&.MuiChip-filled': {
-                      background: 'linear-gradient(45deg, #FF9800 30%, #FFC107 90%)',
-                      color: 'white'
-                    },
-                    '&:hover': {
-                      transform: 'translateY(-1px)',
-                      boxShadow: buildEnabled 
-                        ? '0 4px 12px rgba(255, 152, 0, 0.3)'
-                        : '0 2px 8px rgba(0, 0, 0, 0.1)'
-                    },
-                    transition: 'all 0.2s ease'
-                  }}
-                />
-
-                {/* Bulk Action Chips */}
-                <Chip
-                  icon={bulkActionInProgress && currentBulkAction === 'starting' ? 
-                    <CircularProgress size={14} sx={{ color: 'inherit' }} /> : 
-                    <StartAllIcon sx={{ fontSize: '0.8rem' }} />
-                  }
-                  label={bulkActionInProgress && currentBulkAction === 'starting' ? 
-                    'Starting...' : 
-                    buildEnabled 
-                      ? `Build & Start All (${serviceCounts.stopped})`
-                      : `Start All (${serviceCounts.stopped})`
-                  }
-                  onClick={() => startAllServices(buildEnabled)}
-                  disabled={bulkActionInProgress || serviceCounts.stopped === 0}
-                  size="small"
-                  sx={{
-                    borderRadius: 2,
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    background: buildEnabled 
-                      ? 'linear-gradient(45deg, #FF9800 30%, #4CAF50 90%)'
-                      : 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
-                    color: 'white',
-                    border: 'none',
-                    cursor: 'pointer',
-                    '&:hover': {
-                      background: buildEnabled
-                        ? 'linear-gradient(45deg, #F57C00 30%, #45a049 90%)'
-                        : 'linear-gradient(45deg, #45a049 30%, #7cb342 90%)',
-                      transform: 'translateY(-1px)',
-                      boxShadow: buildEnabled
-                        ? '0 4px 12px rgba(255, 152, 0, 0.3)'
-                        : '0 4px 12px rgba(76, 175, 80, 0.3)'
-                    },
-                    '&:disabled': {
-                      background: '#e0e0e0',
-                      color: '#999',
-                      cursor: 'not-allowed',
-                      transform: 'none',
-                      boxShadow: 'none'
-                    },
-                    transition: 'all 0.2s ease'
-                  }}
-                />
-                
-                <Chip
-                  icon={bulkActionInProgress && currentBulkAction === 'stopping' ? 
-                    <CircularProgress size={14} sx={{ color: 'inherit' }} /> : 
-                    <StopAllIcon sx={{ fontSize: '0.8rem' }} />
-                  }
-                  label={bulkActionInProgress && currentBulkAction === 'stopping' ? 
-                    'Stopping...' : 
-                    `Stop All (${serviceCounts.running})`
-                  }
-                  onClick={stopAllServices}
-                  disabled={bulkActionInProgress || serviceCounts.running === 0}
-                  size="small"
-                  sx={{
-                    borderRadius: 2,
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    background: 'linear-gradient(45deg, #f44336 30%, #ff5722 90%)',
-                    color: 'white',
-                    border: 'none',
-                    cursor: 'pointer',
-                    '&:hover': {
-                      background: 'linear-gradient(45deg, #d32f2f 30%, #f4511e 90%)',
-                      transform: 'translateY(-1px)',
-                      boxShadow: '0 4px 12px rgba(244, 67, 54, 0.3)'
-                    },
-                    '&:disabled': {
-                      background: '#e0e0e0',
-                      color: '#999',
-                      cursor: 'not-allowed',
-                      transform: 'none',
-                      boxShadow: 'none'
-                    },
-                    transition: 'all 0.2s ease'
-                  }}
-                />
-              </Stack>
+        <Stack spacing={1.25}>
+          <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
+            <Box>
+              <Typography variant="overline" color="text.secondary">
+                Local Stack Overview
+              </Typography>
+              <Typography variant="h6">Manage your local stack without losing screen space</Typography>
             </Box>
+          </Box>
 
-            {/* Search Section */}
-            <Box sx={{ 
-              minWidth: { xs: '100%', lg: '350px' },
-              maxWidth: { xs: '100%', lg: '400px' },
-              flex: { xs: 'none', lg: '0 0 auto' },
-              mt: { xs: 2, lg: 0 }
-            }}>
+          <Divider />
+
+          <Stack direction={{ xs: "column", xl: "row" }} spacing={1} justifyContent="space-between">
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={handleBulkStartAll}>
+                Start all
+              </Button>
+              <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleBulkStopAll}>
+                Stop all
+              </Button>
+              <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={handleStartSelected} disabled={!selectedServices.length}>
+                Start selected
+              </Button>
+              <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleStopSelected} disabled={!selectedServices.length}>
+                Stop selected
+              </Button>
+              <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected} disabled={!selectedServices.length}>
+                Restart
+              </Button>
+            </Stack>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Button size="small" variant={buildEnabled ? "contained" : "outlined"} color="warning" onClick={() => setBuildEnabled((previous) => !previous)}>
+                {buildEnabled ? "Build on" : "Build off"}
+              </Button>
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>Preset</InputLabel>
+                <Select value={preset} label="Preset" onChange={(event) => setPreset(event.target.value)}>
+                  {PRESET_OPTIONS.map((option) => (
+                    <MenuItem key={option} value={option}>
+                      {option}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Button size="small" variant="contained" color="secondary" onClick={handleStartPreset}>
+                Run preset
+              </Button>
+            </Stack>
+          </Stack>
+
+          <Stack direction={{ xs: "column", lg: "row" }} spacing={1} alignItems={{ xs: "stretch", lg: "center" }}>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
               <TextField
                 fullWidth
-                variant="outlined"
-                placeholder="Search services..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
                 size="small"
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    borderRadius: 3,
-                    background: "rgba(255, 255, 255, 0.9)",
-                    border: "2px solid transparent",
-                    transition: "all 0.3s ease",
-                    "&:hover": {
-                      background: "rgba(255, 255, 255, 1)",
-                      borderColor: "rgba(33, 150, 243, 0.3)",
-                      boxShadow: "0 2px 8px rgba(33, 150, 243, 0.15)"
-                    },
-                    "&.Mui-focused": {
-                      background: "rgba(255, 255, 255, 1)",
-                      borderColor: "#2196F3",
-                      boxShadow: "0 0 0 3px rgba(33, 150, 243, 0.1)"
-                    }
-                  }
-                }}
+                placeholder="Search services"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">
-                      <SearchIcon sx={{ color: '#2196F3', fontSize: '1.1rem' }} />
+                      <SearchIcon />
                     </InputAdornment>
                   ),
-                  endAdornment: searchQuery && (
-                    <InputAdornment position="end">
-                      <IconButton
-                        size="small"
-                        onClick={() => setSearchQuery("")}
-                        sx={{
-                          color: '#666',
-                          p: 0.5,
-                          '&:hover': {
-                            color: '#f44336',
-                            backgroundColor: 'rgba(244, 67, 54, 0.1)'
-                          }
-                        }}
-                      >
-                        <CloseIcon fontSize="small" />
-                      </IconButton>
-                    </InputAdornment>
-                  )
                 }}
               />
-              
-              {/* Search Results Counter */}
-              {searchQuery.trim() && (
-                <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Chip
-                    label={`${filteredServices.length} Result${filteredServices.length !== 1 ? 's' : ''}`}
-                    size="small"
-                    sx={{
-                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                      color: 'white',
-                      fontWeight: 600,
-                      fontSize: '0.7rem'
-                    }}
-                  />
-                  <Typography variant="caption" sx={{ color: '#666', fontSize: '0.75rem' }}>
-                    for "{searchQuery}"
-                  </Typography>
-                </Box>
-              )}
             </Box>
-          </Box>
-
-          {/* Active Filters Summary */}
-          {(statusFilter !== "all" || typeFilter !== "all" || searchQuery.trim()) && (
-            <Box sx={{ mt: 2, p: 1.5, backgroundColor: 'rgba(33, 150, 243, 0.08)', borderRadius: 2 }}>
-              <Typography variant="caption" sx={{ color: '#1976d2', fontWeight: 600, fontSize: '0.75rem' }}>
-                Showing {filteredServices.length} of {services.length} services
-                {searchQuery.trim() && ` • Search: "${searchQuery}"`}
-                {statusFilter !== "all" && ` • Status: ${statusFilter}`}
-                {typeFilter !== "all" && ` • Type: ${typeFilter}`}
-              </Typography>
-            </Box>
-          )}
-        </Box>
-      </Paper>
-
-      {/* Scrollable Services Grid */}
-      <Paper
-        elevation={6}
-        sx={{
-          borderRadius: 3,
-          background: "rgba(255, 255, 255, 0.95)",
-          backdropFilter: "blur(10px)",
-          flexGrow: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: 0,
-          overflow: 'hidden'
-        }}
-      >
-        <Box sx={{ 
-          flexGrow: 1, 
-          overflow: 'auto', 
-          p: 3,
-          '&::-webkit-scrollbar': {
-            width: '8px',
-          },
-          '&::-webkit-scrollbar-track': {
-            background: 'rgba(0,0,0,0.05)',
-            borderRadius: '4px',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'rgba(0,0,0,0.2)',
-            borderRadius: '4px',
-            '&:hover': {
-              background: 'rgba(0,0,0,0.3)',
-            }
-          }
-        }}>
-          <Grid container spacing={2}>
-            {filteredServices.length === 0 ? (
-              <Grid item xs={12}>
-                <Paper
-                  sx={{
-                    p: 3,
-                    textAlign: "center",
-                    borderRadius: 2,
-                    background: "rgba(255, 255, 255, 0.7)",
-                  }}
-                >
-                  <Typography variant="body1" color="text.secondary">
-                    No matching services found.
-                  </Typography>
-                </Paper>
-              </Grid>
-            ) : (
-              filteredServices.map((service) => (
-                <Grid item xs={12} sm={6} lg={4} key={service.name}>
-                  <ServiceCard
-                    service={service}
-                    onActionOutput={handleActionOutput}
-                    onViewLogs={onViewLogs}
-                  />
-                </Grid>
-              ))
-            )}
-          </Grid>
-        </Box>
-      </Paper>
-
-      {/* Dynamic Toast Message for Action Output */}
-      <Snackbar
-        open={showToast}
-        autoHideDuration={10000} // 10 seconds
-        onClose={handleCloseToast}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
-        sx={{ 
-          '& .MuiSnackbarContent-root': {
-            width: toastDimensions.width,
-            maxWidth: 'calc(100vw - 48px)',
-            minWidth: '280px',
-            padding: 0,
-            backgroundColor: 'transparent',
-            boxShadow: 'none'
-          }
-        }}
-      >
-        <Paper
-          elevation={12}
-          sx={{
-            borderRadius: 3,
-            background: "linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)",
-            color: "#e5e7eb",
-            border: '1px solid rgba(254, 107, 139, 0.3)',
-            boxShadow: '0 12px 40px rgba(0,0,0,0.4), 0 0 20px rgba(254, 107, 139, 0.2)',
-            overflow: 'hidden',
-            maxHeight: toastDimensions.maxHeight,
-            display: 'flex',
-            flexDirection: 'column',
-            transition: 'all 0.3s ease-in-out'
-          }}
-        >
-          {/* Toast Header */}
-          <Box sx={{ 
-            px: 2, 
-            py: 1.5, 
-            borderBottom: '1px solid #333',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'rgba(254, 107, 139, 0.1)'
-          }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <TerminalIcon sx={{ fontSize: '1.1rem', color: '#FE6B8B' }} />
-              <Typography
-                variant="subtitle2"
-                sx={{
-                  color: "#fff",
-                  fontWeight: 600,
-                  background: "linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)",
-                  backgroundClip: "text",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  fontSize: "0.85rem",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.5px"
-                }}
-              >
-                Action Output
-              </Typography>
-            </Box>
-            
-            <IconButton
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <InputLabel>Status</InputLabel>
+              <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
+                <MenuItem value="all">All</MenuItem>
+                <MenuItem value="running">Running</MenuItem>
+                <MenuItem value="healthy">Healthy</MenuItem>
+                <MenuItem value="waiting">Waiting</MenuItem>
+                <MenuItem value="failed">Failed</MenuItem>
+                <MenuItem value="needs-attention">Needs attention</MenuItem>
+                <MenuItem value="stopped">Stopped</MenuItem>
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <InputLabel>Group</InputLabel>
+              <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
+                <MenuItem value="all">All groups</MenuItem>
+                {groups.map((group) => (
+                  <MenuItem key={group} value={group}>
+                    {group}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 150 }}>
+              <InputLabel>Type</InputLabel>
+              <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
+                <MenuItem value="all">All types</MenuItem>
+                {[...new Set(normalizedServices.map((service) => service.type).filter(Boolean))].map((type) => (
+                  <MenuItem key={type} value={type}>
+                    {type}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Button
               size="small"
-              onClick={handleCloseToast}
-              sx={{ 
-                color: "#fff", 
-                p: 0.5,
-                borderRadius: 1,
-                '&:hover': { 
-                  backgroundColor: 'rgba(255, 100, 100, 0.2)',
-                  transform: 'scale(1.1)'
-                },
-                transition: 'all 0.2s ease'
+              variant="text"
+              startIcon={<FilterListIcon />}
+              onClick={() => {
+                setSearchQuery("");
+                setStatusFilter("all");
+                setGroupFilter("all");
+                setTypeFilter("all");
               }}
             >
-              <CloseIcon fontSize="small" />
-            </IconButton>
-          </Box>
+              Clear
+            </Button>
+          </Stack>
 
-          {/* Dynamic Toast Content */}
-          <Box
-            component="pre"
-            sx={{
-              backgroundColor: "#0a0e13",
-              background: "linear-gradient(135deg, #0a0e13 0%, #1a1f2e 100%)",
-              p: output.length < 100 ? 1 : 1.5, // Less padding for short messages
-              fontSize: output.length < 50 ? "0.8rem" : "0.75rem", // Larger font for short messages
-              lineHeight: output.length < 100 ? 1.5 : 1.4,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              overflow: "auto",
-              fontFamily: "'Fira Code', 'Consolas', monospace",
-              color: "#e1e7ef",
-              margin: 0,
-              flexGrow: 1,
-              minHeight: output.length < 50 ? '40px' : '60px', // Minimum height based on content
-              '&::-webkit-scrollbar': {
-                width: '6px',
-              },
-              '&::-webkit-scrollbar-track': {
-                background: 'rgba(255,255,255,0.1)',
-                borderRadius: '3px',
-              },
-              '&::-webkit-scrollbar-thumb': {
-                background: 'rgba(254, 107, 139, 0.3)',
-                borderRadius: '3px',
-                '&:hover': {
-                  background: 'rgba(254, 107, 139, 0.5)',
-                }
-              }
-            }}
-          >
-            {output}
-          </Box>
-
-          {/* Auto-dismiss indicator */}
-          <Box sx={{
-            px: 2,
-            py: 1,
-            borderTop: '1px solid #333',
-            background: 'rgba(254, 107, 139, 0.05)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1
-          }}>
-            <Box sx={{
-              width: 6,
-              height: 6,
-              borderRadius: '50%',
-              backgroundColor: '#FE6B8B',
-              animation: 'pulse 2s ease-in-out infinite'
-            }} />
-            <Typography variant="caption" sx={{ color: '#aaa', fontSize: '0.7rem' }}>
-              Auto-dismiss in 10 seconds
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "wrap" }}>
+            <Checkbox
+              checked={allFilteredSelected}
+              indeterminate={someFilteredSelected}
+              onChange={(event) => toggleSelectFiltered(event.target.checked)}
+            />
+            <Typography variant="body2" color="text.secondary">
+              Select all filtered services
             </Typography>
+            {selectedServices.length > 0 ? (
+              <Button size="small" variant="text" onClick={() => setSelectedServices([])}>
+                Clear selection
+              </Button>
+            ) : null}
           </Box>
-        </Paper>
-      </Snackbar>
+        </Stack>
+      </Paper>
 
-      {/* Add pulse animation */}
-      <style>
-        {`
-          @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-          }
-        `}
-      </style>
+      <ProgressPanel summary={operationSummary} steps={operationSummary?.steps} onViewLogs={onViewLogs} />
+
+      <Paper
+        elevation={0}
+        sx={{
+          flexGrow: 1,
+          minHeight: 0,
+          overflow: "auto",
+          p: 1.25,
+          border: "1px solid",
+          borderColor: "divider",
+        }}
+      >
+        <Stack spacing={3}>
+          {groupedServices.length === 0 ? (
+            <Alert severity="info">No services match the current filters.</Alert>
+          ) : (
+            groupedServices.map(({ group, services: groupServices }) => (
+              <Box key={group}>
+                <Box
+                  sx={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    mb: 1.5,
+                    p: 1.5,
+                    borderRadius: 3,
+                    background: "linear-gradient(90deg, rgba(15,23,42,0.04) 0%, rgba(255,255,255,0.8) 100%)",
+                    border: "1px solid rgba(148, 163, 184, 0.16)",
+                  }}
+                >
+                  <Box>
+                    <Typography variant="h6">{group}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {groupServices.length} services in this operating zone
+                    </Typography>
+                  </Box>
+                  <Chip label={`${groupServices.length} services`} variant="outlined" />
+                </Box>
+                <Stack spacing={1}>
+                  {groupServices.map((service) => (
+                    <ServiceCard
+                      key={service.name}
+                      service={service}
+                      status={displayStates[service.name]}
+                      reverseDependencies={reverseDependencies[service.name] || []}
+                      isSelected={selectedServices.includes(service.name)}
+                      onSelect={(checked) => toggleSelection(service.name, checked)}
+                      onAction={executeSingleAction}
+                      onViewLogs={onViewLogs}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            ))
+          )}
+        </Stack>
+      </Paper>
+
+      <Snackbar
+        open={toast.open}
+        autoHideDuration={5000}
+        onClose={() => setToast((previous) => ({ ...previous, open: false }))}
+      >
+        <Alert
+          onClose={() => setToast((previous) => ({ ...previous, open: false }))}
+          severity={toast.severity}
+          sx={{ width: "100%" }}
+        >
+          {toast.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 });

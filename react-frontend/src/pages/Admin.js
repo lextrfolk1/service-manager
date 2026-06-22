@@ -1,390 +1,811 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Typography,
-  Paper,
-  TextField,
-  Button,
-  Box,
   Alert,
-  CircularProgress,
-  Snackbar,
-  Tabs,
-  Tab,
-  Grid,
+  Box,
+  Button,
   Card,
-  CardContent,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Chip,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  FormControl,
+  Grid,
+  IconButton,
+  InputAdornment,
+  InputLabel,
+  MenuItem,
+  Paper,
+  Select,
+  Snackbar,
+  Stack,
+  Tab,
+  Tabs,
+  TextField,
   Tooltip,
+  Typography,
 } from "@mui/material";
 import {
-  Save as SaveIcon,
-  Refresh as RefreshIcon,
-  Settings as SettingsIcon,
-  Code as CodeIcon,
-  Storage as StorageIcon,
   Add as AddIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  Code as CodeIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
-  Close as CloseIcon,
+  FolderOpen as FolderOpenIcon,
+  Refresh as RefreshIcon,
+  Save as SaveIcon,
+  Search as SearchIcon,
+  Settings as SettingsIcon,
+  Storage as StorageIcon,
+  WarningAmber as WarningAmberIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
+import { validateConfiguration } from "../utils/configValidation";
 
-// ServiceListItem Component
-const ServiceListItem = ({ serviceName, service, isSelected, onSelect, onDelete }) => {
+const panelSx = {
+  borderRadius: 3,
+  border: "1px solid rgba(148,163,184,0.18)",
+  backgroundColor: "rgba(255,255,255,0.92)",
+  boxShadow: "0 10px 30px rgba(15,23,42,0.05)",
+};
+
+const sectionSx = {
+  ...panelSx,
+  p: 2.5,
+};
+
+const serviceTypeOptions = ["java", "python", "npm", "redis", "neo4j", "listener"];
+const commonBasePathKeys = ["java", "python", "npm", "listener", "frontend", "backend", "microservices"];
+
+function toConfigPayload(data) {
+  if (!data) {
+    return { config: {}, services: {} };
+  }
+  const { runtime, ...rest } = data;
+  return rest;
+}
+
+function prettifyLabel(value = "") {
+  return value
+    .replace(/[-_]/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function prettifyPlatform(value = "") {
+  if (value === "darwin") return "macOS";
+  if (value === "win32") return "Windows";
+  if (value === "linux") return "Linux";
+  return value || "Unknown";
+}
+
+function tokenForBasePath(key) {
+  return `\${basePaths.${key}}`;
+}
+
+function getPlatformPathSeparator(runtimePlatform) {
+  return runtimePlatform === "win32" ? "\\" : "/";
+}
+
+function normalizePathSuffix(suffixValue = "", runtimePlatform = "unknown") {
+  const separator = getPlatformPathSeparator(runtimePlatform);
+  return String(suffixValue || "")
+    .replace(/^[\\/]+/, "")
+    .replace(/[\\/]+/g, separator);
+}
+
+function buildTemplatePathValue(baseKey, suffixValue, runtimePlatform = "unknown") {
+  if (!baseKey) return "";
+  const separator = getPlatformPathSeparator(runtimePlatform);
+  const suffix = normalizePathSuffix(suffixValue, runtimePlatform);
+  return suffix ? `\${basePaths.${baseKey}}${separator}${suffix}` : `\${basePaths.${baseKey}}`;
+}
+
+function getPathUsageCount(key, services) {
+  const token = tokenForBasePath(key);
+  return Object.values(services || {}).filter((service) => String(service.path || "").includes(token)).length;
+}
+
+function getServiceGroups(services) {
+  const groupMap = new Map();
+  Object.entries(services || {}).forEach(([serviceName, service]) => {
+    const groupName = service.group?.trim() || "Ungrouped";
+    if (!groupMap.has(groupName)) {
+      groupMap.set(groupName, []);
+    }
+    groupMap.get(groupName).push(serviceName);
+  });
+  return Array.from(groupMap.entries()).sort(([a], [b]) => a.localeCompare(b));
+}
+
+function ServiceListItem({ serviceName, service, isSelected, onSelect, onDelete }) {
   return (
     <Box
-      sx={{
-        p: 2,
-        borderBottom: '1px solid #eee',
-        cursor: 'pointer',
-        backgroundColor: isSelected ? 'rgba(102, 126, 234, 0.1)' : 'transparent',
-        borderLeft: isSelected ? '4px solid #667eea' : '4px solid transparent',
-        transition: 'all 0.2s ease',
-        '&:hover': {
-          backgroundColor: isSelected ? 'rgba(102, 126, 234, 0.15)' : 'rgba(0, 0, 0, 0.04)',
-        }
-      }}
       onClick={onSelect}
+      sx={{
+        px: 2,
+        py: 1.5,
+        borderBottom: "1px solid rgba(148,163,184,0.14)",
+        cursor: "pointer",
+        background: isSelected
+          ? "linear-gradient(90deg, rgba(37,99,235,0.14) 0%, rgba(124,58,237,0.08) 100%)"
+          : "transparent",
+        borderLeft: isSelected ? "3px solid #2563eb" : "3px solid transparent",
+        transition: "background-color 0.2s ease, border-color 0.2s ease",
+        "&:hover": {
+          backgroundColor: "rgba(148,163,184,0.08)",
+        },
+      }}
     >
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <Stack direction="row" spacing={1.5} alignItems="flex-start">
         <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Typography 
-            variant="subtitle1" 
-            sx={{ 
-              fontWeight: isSelected ? 600 : 500,
-              color: isSelected ? '#667eea' : '#333',
-              mb: 0.5,
-              wordBreak: 'break-word'
-            }}
-          >
-            {serviceName}
-          </Typography>
-          
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-            <Chip 
-              label={service.type || 'Unknown'} 
-              size="small"
-              sx={{
-                height: 20,
-                fontSize: '0.7rem',
-                backgroundColor: isSelected ? '#667eea' : 'rgba(102, 126, 234, 0.1)',
-                color: isSelected ? 'white' : '#667eea',
-                fontWeight: 600
-              }}
-            />
-            {service.port && (
-              <Chip 
-                label={`Port ${service.port}`} 
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.75 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+              {serviceName}
+            </Typography>
+            {service.type && <Chip size="small" label={service.type} sx={{ height: 22, fontWeight: 600 }} />}
+            {service.group && (
+              <Chip
                 size="small"
+                label={service.group}
                 variant="outlined"
-                sx={{
-                  height: 20,
-                  fontSize: '0.7rem',
-                  borderColor: isSelected ? '#667eea' : '#ccc',
-                  color: isSelected ? '#667eea' : '#666'
-                }}
+                sx={{ height: 22, borderColor: "rgba(99,102,241,0.28)" }}
               />
             )}
-          </Box>
-          
-          {service.description && (
-            <Typography 
-              variant="caption" 
-              sx={{ 
-                color: 'text.secondary',
-                display: '-webkit-box',
+            {service.port ? <Chip size="small" label={`:${service.port}`} variant="outlined" sx={{ height: 22 }} /> : null}
+          </Stack>
+          <Typography variant="caption" sx={{ display: "block", color: "text.secondary", mb: 0.5 }}>
+            {service.path || "No path configured"}
+          </Typography>
+          {service.description ? (
+            <Typography
+              variant="caption"
+              sx={{
+                color: "text.secondary",
+                display: "-webkit-box",
                 WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-                lineHeight: 1.3
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+                lineHeight: 1.35,
               }}
             >
               {service.description}
             </Typography>
-          )}
+          ) : null}
         </Box>
-        
-        <Tooltip title="Delete Service">
+        <Tooltip title="Delete service">
           <IconButton
-            size="small"
             color="error"
-            onClick={(e) => {
-              e.stopPropagation();
+            size="small"
+            onClick={(event) => {
+              event.stopPropagation();
               onDelete();
-            }}
-            sx={{
-              ml: 1,
-              opacity: isSelected ? 1 : 0.6,
-              '&:hover': { opacity: 1 }
             }}
           >
             <DeleteIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-      </Box>
+      </Stack>
     </Box>
   );
-};
+}
 
-// ServiceEditor Component
-const ServiceEditor = ({ serviceName, service, onServiceChange }) => {
+function BasePathRow({ pathKey, pathValue, usageCount, onChange, onDelete, onBrowse }) {
   return (
-    <>
-      <Box sx={{ 
-        p: 3, 
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        color: 'white'
-      }}>
-        <Typography variant="h6" sx={{ fontWeight: 600 }}>
-          Editing: {serviceName}
-        </Typography>
-        <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.5 }}>
-          Configure the service settings below
-        </Typography>
-      </Box>
-      
-      <Box sx={{ p: 3, flexGrow: 1, overflow: 'auto' }}>
-        <Grid container spacing={3}>
-          {/* Basic Information */}
-          <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom sx={{ color: '#333', fontWeight: 600, mb: 2 }}>
-              Basic Information
+    <Paper variant="outlined" sx={{ ...panelSx, p: 2 }}>
+      <Stack spacing={1.5}>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+              {prettifyLabel(pathKey)}
             </Typography>
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <FormControl fullWidth>
-              <InputLabel>Service Type</InputLabel>
-              <Select
-                value={service.type || ''}
-                onChange={(e) => onServiceChange(serviceName, 'type', e.target.value)}
-                label="Service Type"
-                sx={{ borderRadius: 2 }}
-              >
-                <MenuItem value="java">Java</MenuItem>
-                <MenuItem value="python">Python</MenuItem>
-                <MenuItem value="npm">NPM</MenuItem>
-                <MenuItem value="redis">Redis</MenuItem>
-                <MenuItem value="neo4j">Neo4j</MenuItem>
-                <MenuItem value="listener">Listener</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="Port Number"
-              type="number"
-              value={service.port || ''}
-              onChange={(e) => onServiceChange(serviceName, 'port', e.target.value)}
-              placeholder="8080"
-              helperText="Leave empty for services without ports"
-              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
-          </Grid>
-          
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Service Path"
-              value={service.path || ''}
-              onChange={(e) => onServiceChange(serviceName, 'path', e.target.value)}
-              placeholder="${basePaths.java}/my-service"
-              helperText="Use template variables like ${basePaths.java} for dynamic paths"
-              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
-          </Grid>
-          
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Description"
-              value={service.description || ''}
-              onChange={(e) => onServiceChange(serviceName, 'description', e.target.value)}
-              placeholder="Brief description of what this service does"
-              multiline
-              rows={2}
-              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
+            <Chip size="small" label={tokenForBasePath(pathKey)} sx={{ fontFamily: "monospace", height: 22 }} />
+            <Chip size="small" variant="outlined" label={`${usageCount} services`} sx={{ height: 22 }} />
+          </Stack>
+          <Stack direction="row" spacing={1}>
+            <Button size="small" variant="outlined" startIcon={<FolderOpenIcon />} onClick={onBrowse}>
+              Browse
+            </Button>
+            <IconButton color="error" onClick={onDelete}>
+              <DeleteIcon />
+            </IconButton>
+          </Stack>
+        </Stack>
+
+        <TextField
+          fullWidth
+          value={pathValue}
+          label="Directory Path"
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="~/Workspace/codebase/lextr"
+          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+        />
+
+        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+          Use <strong>{tokenForBasePath(pathKey)}</strong> inside service paths and build commands.
+        </Typography>
+      </Stack>
+    </Paper>
+  );
+}
+
+function ServiceEditor({
+  serviceName,
+  service,
+  services,
+  basePaths,
+  runtimePlatform,
+  onServiceChange,
+  onPickDirectory,
+  validationIssues = [],
+}) {
+  const [pathTemplateKey, setPathTemplateKey] = useState("");
+  const [pathSuffix, setPathSuffix] = useState("");
+  const [servicePathBusy, setServicePathBusy] = useState(false);
+  const [pathMode, setPathMode] = useState("absolute");
+
+  // Get errors for this specific service
+  const serviceErrors = validationIssues.filter((issue) => issue.scope === serviceName);
+  const getFieldError = (fieldName) => {
+    return serviceErrors.find((error) => error.fieldName === fieldName)?.message || "";
+  };
+  const hasFieldError = (fieldName) => !!getFieldError(fieldName);
+
+  useEffect(() => {
+    const pathValue = service.path || "";
+    const match = pathValue.match(/\$\{basePaths\.(\w+)\}(?:[\\/](.*))?$/);
+    if (match) {
+      setPathMode("template");
+      setPathTemplateKey(match[1] || "");
+      setPathSuffix(match[2] || "");
+      return;
+    }
+    setPathMode("absolute");
+    setPathTemplateKey("");
+    setPathSuffix("");
+  }, [service.path]);
+
+  const dependencyOptions = useMemo(
+    () => Object.keys(services || {}).filter((candidate) => candidate !== serviceName),
+    [serviceName, services]
+  );
+
+  const buildTemplatePath = (baseKey, suffixValue) => {
+    return buildTemplatePathValue(baseKey, suffixValue, runtimePlatform);
+  };
+
+  const handlePathModeChange = (mode) => {
+    setPathMode(mode);
+    if (mode === "template") {
+      const fallbackKey = pathTemplateKey || Object.keys(basePaths || {})[0] || "";
+      setPathTemplateKey(fallbackKey);
+      if (fallbackKey) {
+        onServiceChange(serviceName, "path", buildTemplatePath(fallbackKey, pathSuffix));
+      }
+    }
+  };
+
+  const handleTemplateBaseChange = (baseKey) => {
+    setPathTemplateKey(baseKey);
+    onServiceChange(serviceName, "path", buildTemplatePath(baseKey, pathSuffix));
+  };
+
+  const handleTemplateSuffixChange = (suffixValue) => {
+    setPathSuffix(suffixValue);
+    if (pathTemplateKey) {
+      onServiceChange(serviceName, "path", buildTemplatePath(pathTemplateKey, suffixValue));
+    }
+  };
+
+  const browseForServicePath = async () => {
+    setServicePathBusy(true);
+    try {
+      const pickedPath = await onPickDirectory(service.path || "");
+      if (pickedPath) {
+        onServiceChange(serviceName, "path", pickedPath);
+      }
+    } finally {
+      setServicePathBusy(false);
+    }
+  };
+
+  return (
+    <Box sx={{ height: "100%", width: "100%", minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+      <Box
+        sx={{
+          px: 3,
+          py: 2.25,
+          background:
+            "linear-gradient(135deg, rgba(15,23,42,0.98) 0%, rgba(30,41,59,0.95) 35%, rgba(37,99,235,0.88) 100%)",
+          color: "white",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+        }}
+      >
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }}>
+          <Box>
+            <Typography variant="caption" sx={{ opacity: 0.75, letterSpacing: 0.4 }}>
+              SERVICE EDITOR
+            </Typography>
+            <Typography variant="h5" sx={{ fontWeight: 800, mt: 0.25 }}>
+              {serviceName}
+            </Typography>
+            <Typography variant="body2" sx={{ opacity: 0.82, mt: 0.5 }}>
+              Keep the same service features, but edit them in a denser layout with stronger guidance.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Chip size="small" label={service.type || "type missing"} sx={{ backgroundColor: "rgba(255,255,255,0.12)", color: "white" }} />
+            {service.group ? <Chip size="small" label={service.group} sx={{ backgroundColor: "rgba(255,255,255,0.12)", color: "white" }} /> : null}
+            {service.port ? <Chip size="small" label={`Port ${service.port}`} sx={{ backgroundColor: "rgba(255,255,255,0.12)", color: "white" }} /> : null}
+          </Stack>
+        </Stack>
+      </Box>
+
+      <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", p: 2.5 }}>
+        <Grid container spacing={2}>
+          <Grid item xs={12} xl={7} sx={{ minHeight: 0, minWidth: 0 }}>
+            <Stack spacing={2}>
+              <Card variant="outlined" sx={sectionSx}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.5 }}>
+                  Overview
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={4}>
+                    <FormControl fullWidth>
+                      <InputLabel>Service Type</InputLabel>
+                      <Select
+                        value={service.type || ""}
+                        label="Service Type"
+                        onChange={(event) => onServiceChange(serviceName, "type", event.target.value)}
+                        sx={{ borderRadius: 2.5 }}
+                      >
+                        {serviceTypeOptions.map((type) => (
+                          <MenuItem key={type} value={type}>
+                            {prettifyLabel(type)}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      fullWidth
+                      label="Port"
+                      type="number"
+                      value={service.port || ""}
+                      onChange={(event) => onServiceChange(serviceName, "port", event.target.value)}
+                      placeholder="8080"
+                      error={hasFieldError("port")}
+                      helperText={getFieldError("port") || "Leave empty for workers or tools without ports."}
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={4}>
+                    <TextField
+                      fullWidth
+                      label="Group"
+                      value={service.group || ""}
+                      onChange={(event) => onServiceChange(serviceName, "group", event.target.value)}
+                      placeholder="Core / Data / Frontend"
+                      helperText="Used for dashboard grouping."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Description"
+                      value={service.description || ""}
+                      onChange={(event) => onServiceChange(serviceName, "description", event.target.value)}
+                      multiline
+                      minRows={2}
+                      placeholder="Short operational note for teammates."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                </Grid>
+              </Card>
+
+              <Card variant="outlined" sx={sectionSx}>
+                <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} sx={{ mb: 1.5 }}>
+                  <Box>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                      Service Location
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.25 }}>
+                      Choose one path strategy: direct folder path or reusable base-path template.
+                    </Typography>
+                  </Box>
+                </Stack>
+
+                <Stack spacing={2}>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    <Chip
+                      clickable
+                      size="small"
+                      color={pathMode === "absolute" ? "primary" : "default"}
+                      variant={pathMode === "absolute" ? "filled" : "outlined"}
+                      label="Direct Path"
+                      onClick={() => handlePathModeChange("absolute")}
+                    />
+                    <Chip
+                      clickable
+                      size="small"
+                      color={pathMode === "template" ? "primary" : "default"}
+                      variant={pathMode === "template" ? "filled" : "outlined"}
+                      label="Base Path Template"
+                      onClick={() => handlePathModeChange("template")}
+                    />
+                  </Stack>
+
+                  {pathMode === "absolute" ? (
+                    <Grid container spacing={1.5} alignItems="flex-start">
+                      <Grid item xs={12} md={9}>
+                        <TextField
+                          fullWidth
+                          label="Service Path"
+                          value={service.path || ""}
+                          onChange={(event) => onServiceChange(serviceName, "path", event.target.value)}
+                          placeholder={runtimePlatform === "win32" ? "C:\\Workspace\\codebase\\lextr\\service-name" : "~/Workspace/codebase/lextr/service-name"}
+                          error={hasFieldError("path")}
+                          helperText={getFieldError("path") || "Use a direct folder path for this service."}
+                          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                        />
+                      </Grid>
+                      <Grid item xs={12} md={3}>
+                        <Button
+                          fullWidth
+                          size="small"
+                          variant="outlined"
+                          startIcon={<FolderOpenIcon />}
+                          onClick={browseForServicePath}
+                          disabled={servicePathBusy}
+                          sx={{ minHeight: 40 }}
+                        >
+                          {servicePathBusy ? "Opening…" : "Browse"}
+                        </Button>
+                      </Grid>
+                    </Grid>
+                  ) : (
+                    <>
+                      <Grid container spacing={1.5}>
+                        <Grid item xs={12} md={5}>
+                          <FormControl fullWidth>
+                            <InputLabel>Base Path</InputLabel>
+                            <Select
+                              value={pathTemplateKey}
+                              label="Base Path"
+                              onChange={(event) => handleTemplateBaseChange(event.target.value)}
+                              sx={{ borderRadius: 2.5 }}
+                            >
+                              {Object.keys(basePaths || {}).map((key) => (
+                                <MenuItem key={key} value={key}>
+                                  {key}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                        <Grid item xs={12} md={7}>
+                          <TextField
+                            fullWidth
+                            label="Sub Path"
+                            value={pathSuffix}
+                            onChange={(event) => handleTemplateSuffixChange(event.target.value)}
+                            placeholder={runtimePlatform === "win32" ? "services\\config-service" : "services/config-service"}
+                            helperText="Updates the service path automatically."
+                            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                          />
+                        </Grid>
+                      </Grid>
+
+                      <Paper
+                        variant="outlined"
+                        sx={{
+                          p: 1.5,
+                          borderRadius: 2.5,
+                          borderStyle: "dashed",
+                          borderColor: hasFieldError("path") ? "error.main" : "rgba(37,99,235,0.24)",
+                          backgroundColor: hasFieldError("path") ? "rgba(239,68,68,0.04)" : "rgba(37,99,235,0.04)",
+                        }}
+                      >
+                        <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 0.5 }}>
+                          Saved Path
+                        </Typography>
+                        <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                          {pathTemplateKey
+                            ? buildTemplatePath(pathTemplateKey, pathSuffix)
+                            : "Choose a base path to generate a reusable template."}
+                        </Typography>
+                        {hasFieldError("path") ? (
+                          <Typography variant="caption" sx={{ color: "error.main", display: "block", mt: 0.75 }}>
+                            {getFieldError("path")}
+                          </Typography>
+                        ) : null}
+                      </Paper>
+                    </>
+                  )}
+                </Stack>
+              </Card>
+
+              <Card variant="outlined" sx={sectionSx}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.5 }}>
+                  Runtime Commands
+                </Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Start Command"
+                      value={service.command || ""}
+                      onChange={(event) => onServiceChange(serviceName, "command", event.target.value)}
+                      placeholder="npm run dev"
+                      error={hasFieldError("command")}
+                      helperText={getFieldError("command")}
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Stop Command"
+                      value={service.stopCommand || ""}
+                      onChange={(event) => onServiceChange(serviceName, "stopCommand", event.target.value)}
+                      placeholder="redis-cli shutdown"
+                      helperText="Optional explicit stop hook."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Health Check Command"
+                      value={service.healthCommand || ""}
+                      onChange={(event) => onServiceChange(serviceName, "healthCommand", event.target.value)}
+                      placeholder="curl -f http://localhost:8080/actuator/health"
+                      helperText="Optional health gate for accurate readiness."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12}>
+                    <TextField
+                      fullWidth
+                      label="Build Command"
+                      value={service.build || ""}
+                      onChange={(event) => onServiceChange(serviceName, "build", event.target.value)}
+                      placeholder="mvn clean install -DskipTests"
+                      helperText="Runs when build mode is enabled for startup."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                </Grid>
+              </Card>
+            </Stack>
           </Grid>
 
-          {/* Commands */}
-          <Grid item xs={12}>
-            <Typography variant="h6" gutterBottom sx={{ color: '#333', fontWeight: 600, mb: 2, mt: 2 }}>
-              Commands
-            </Typography>
-          </Grid>
-          
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Start Command"
-              value={service.command || ''}
-              onChange={(e) => onServiceChange(serviceName, 'command', e.target.value)}
-              placeholder="npm start"
-              helperText="Command to start the service"
-              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="Stop Command (Optional)"
-              value={service.stopCommand || ''}
-              onChange={(e) => onServiceChange(serviceName, 'stopCommand', e.target.value)}
-              placeholder="redis-cli shutdown"
-              helperText="Custom command to stop the service"
-              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
-          </Grid>
-          
-          <Grid item xs={12} sm={6}>
-            <TextField
-              fullWidth
-              label="Health Check Command (Optional)"
-              value={service.healthCommand || ''}
-              onChange={(e) => onServiceChange(serviceName, 'healthCommand', e.target.value)}
-              placeholder="pgrep -f worker.py > /dev/null"
-              helperText="Command to check if service is running"
-              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
-          </Grid>
-          
-          <Grid item xs={12}>
-            <TextField
-              fullWidth
-              label="Build Command (Optional)"
-              value={service.build || ''}
-              onChange={(e) => onServiceChange(serviceName, 'build', e.target.value)}
-              placeholder="mvn clean install -DskipTests"
-              helperText="Command to build the service (runs when build mode is enabled)"
-              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
+          <Grid item xs={12} xl={5} sx={{ minHeight: 0, minWidth: 0 }}>
+            <Stack spacing={2}>
+              <Card variant="outlined" sx={sectionSx}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.5 }}>
+                  Dependencies
+                </Typography>
+                <TextField
+                  fullWidth
+                  label="Depends On"
+                  value={Array.isArray(service.dependsOn) ? service.dependsOn.join(", ") : service.dependsOn || ""}
+                  onChange={(event) => onServiceChange(serviceName, "dependsOn", event.target.value)}
+                  placeholder="config-service, redis"
+                  error={hasFieldError("dependsOn")}
+                  helperText={getFieldError("dependsOn") || "Comma-separated service names required before this service starts."}
+                  sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                />
+                <Box sx={{ mt: 1.5 }}>
+                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 1 }}>
+                    Quick insert
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {dependencyOptions.length > 0 ? (
+                      dependencyOptions.map((dependency) => {
+                        const isActive = (service.dependsOn || []).includes(dependency);
+                        return (
+                          <Chip
+                            key={dependency}
+                            size="small"
+                            clickable
+                            color={isActive ? "primary" : "default"}
+                            variant={isActive ? "filled" : "outlined"}
+                            label={dependency}
+                            onClick={() => {
+                              const nextDeps = new Set(service.dependsOn || []);
+                              if (nextDeps.has(dependency)) {
+                                nextDeps.delete(dependency);
+                              } else {
+                                nextDeps.add(dependency);
+                              }
+                              onServiceChange(serviceName, "dependsOn", Array.from(nextDeps).join(", "));
+                            }}
+                          />
+                        );
+                      })
+                    ) : (
+                      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                        No other services available yet.
+                      </Typography>
+                    )}
+                  </Stack>
+                </Box>
+              </Card>
+
+              <Card variant="outlined" sx={sectionSx}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>
+                  Tips
+                </Typography>
+                <Stack spacing={1}>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Prefer base path templates over hardcoded absolute paths to keep config portable.
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Add a health command for services that can open a port before they are truly ready.
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Use groups like <strong>Core</strong>, <strong>Data</strong>, and <strong>Frontend</strong> so the dashboard stays easy to scan.
+                  </Typography>
+                </Stack>
+              </Card>
+            </Stack>
           </Grid>
         </Grid>
       </Box>
-    </>
+    </Box>
   );
-};
+}
 
 const Admin = ({ onConfigReload }) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [config, setConfig] = useState(null);
   const [rawConfig, setRawConfig] = useState("");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [runtimeInfo, setRuntimeInfo] = useState(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState("");
   const [snackbarSeverity, setSnackbarSeverity] = useState("info");
-
-  // Form states for base paths
   const [basePaths, setBasePaths] = useState({});
-
-  // Form state for services
   const [services, setServices] = useState({});
   const [selectedService, setSelectedService] = useState(null);
-
-  // Dialog states
+  const [serviceFilter, setServiceFilter] = useState("");
   const [addPathDialog, setAddPathDialog] = useState(false);
   const [addServiceDialog, setAddServiceDialog] = useState(false);
   const [editJsonDialog, setEditJsonDialog] = useState(false);
   const [newPathKey, setNewPathKey] = useState("");
   const [newPathValue, setNewPathValue] = useState("");
+  const [newPathMode, setNewPathMode] = useState("browse");
+  const [newPathTemplateBase, setNewPathTemplateBase] = useState("");
+  const [newPathSuffix, setNewPathSuffix] = useState("");
   const [newServiceName, setNewServiceName] = useState("");
-
-  // Raw JSON editing state
   const [isJsonReadOnly, setIsJsonReadOnly] = useState(true);
+  const [pickerBusy, setPickerBusy] = useState(false);
 
-  useEffect(() => {
-    loadConfig();
+  const validationResult = useMemo(
+    () => validateConfiguration({ config: { basePaths }, services }),
+    [basePaths, services]
+  );
+  const runtimePlatform = runtimeInfo?.platform || "unknown";
+
+  const groupedServices = useMemo(() => getServiceGroups(services), [services]);
+
+  const filteredServices = useMemo(() => {
+    const term = serviceFilter.trim().toLowerCase();
+    if (!term) return Object.entries(services);
+    return Object.entries(services).filter(([serviceName, service]) => {
+      return [
+        serviceName,
+        service.group,
+        service.type,
+        service.description,
+        service.path,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term));
+    });
+  }, [serviceFilter, services]);
+
+  const filteredServiceNames = useMemo(() => new Set(filteredServices.map(([serviceName]) => serviceName)), [filteredServices]);
+
+  const showSnackbar = useCallback((message, severity = "info") => {
+    setSnackbarMessage(message);
+    setSnackbarSeverity(severity);
+    setSnackbarOpen(true);
   }, []);
 
-  // Auto-select first service when services are loaded
-  useEffect(() => {
-    if (Object.keys(services).length > 0 && !selectedService) {
-      setSelectedService(Object.keys(services)[0]);
+  const loadConfig = useCallback(async ({ initial = false } = {}) => {
+    if (initial) {
+      setLoading(true);
+    } else {
+      setRefreshing(true);
     }
-  }, [services, selectedService]);
-
-  const loadConfig = async () => {
-    setLoading(true);
-
     try {
-      console.log('Loading config from backend...');
       const data = await api.get("/config");
-      console.log('Config loaded:', data);
-      setConfig(data);
-      
-      // Populate form states
-      setBasePaths(data.config.basePaths || {});
-      setServices(data.services || {});
-      setRawConfig(JSON.stringify(data, null, 2));
-      
-      // Notify parent to refresh dashboard
+      const payload = toConfigPayload(data);
+      setConfig(payload);
+      setBasePaths(payload.config?.basePaths || {});
+      setServices(payload.services || {});
+      setRuntimeInfo(data.runtime || null);
+      setRawConfig(JSON.stringify(payload, null, 2));
       if (onConfigReload) {
         onConfigReload();
       }
-      
-      showSnackbar("Configuration reloaded successfully", "success");
     } catch (error) {
-      console.error('Failed to load config:', error);
-      showSnackbar(`Failed to load config: ${error.message}`, "error");
+      setSnackbarMessage(`Failed to load config: ${error.message}`);
+      setSnackbarSeverity("error");
+      setSnackbarOpen(true);
     } finally {
-      setLoading(false);
+      if (initial) {
+        setLoading(false);
+      } else {
+        setRefreshing(false);
+      }
     }
-  };
+  }, [onConfigReload]);
+
+  useEffect(() => {
+    loadConfig({ initial: true });
+  }, [loadConfig]);
+
+  useEffect(() => {
+    if (selectedService && services[selectedService]) {
+      return;
+    }
+    const firstVisible = filteredServices[0]?.[0] || Object.keys(services)[0] || null;
+    setSelectedService(firstVisible);
+  }, [filteredServices, selectedService, services]);
 
   const savePaths = async () => {
+    if (validationResult.hasErrors) {
+      showSnackbar("Fix validation errors before saving", "error");
+      return;
+    }
     setSaving(true);
-    showSnackbar("Saving base paths...", "info");
-
     try {
       const updatedConfig = {
         ...config,
         config: {
           ...config.config,
-          basePaths: basePaths,
+          basePaths,
         },
       };
-
       await api.put("/config", updatedConfig);
       setConfig(updatedConfig);
+      setRuntimeInfo((prev) => prev || null);
       setRawConfig(JSON.stringify(updatedConfig, null, 2));
       showSnackbar("Base paths saved successfully", "success");
     } catch (error) {
-      showSnackbar(`Failed to save: ${error.message}`, "error");
+      showSnackbar(`Failed to save base paths: ${error.message}`, "error");
     } finally {
       setSaving(false);
     }
   };
 
   const saveServices = async () => {
+    if (validationResult.hasErrors) {
+      showSnackbar("Fix validation errors before saving", "error");
+      return;
+    }
     setSaving(true);
-    showSnackbar("Saving services...", "info");
-
     try {
       const updatedConfig = {
         ...config,
-        services: services,
+        services,
       };
-
       await api.put("/config", updatedConfig);
       setConfig(updatedConfig);
+      setRuntimeInfo((prev) => prev || null);
       setRawConfig(JSON.stringify(updatedConfig, null, 2));
       showSnackbar("Services saved successfully", "success");
     } catch (error) {
-      showSnackbar(`Failed to save: ${error.message}`, "error");
+      showSnackbar(`Failed to save services: ${error.message}`, "error");
     } finally {
       setSaving(false);
     }
@@ -392,13 +813,18 @@ const Admin = ({ onConfigReload }) => {
 
   const saveRawConfig = async () => {
     setSaving(true);
-    showSnackbar("Saving configuration...", "info");
-
     let parsedConfig;
     try {
-      parsedConfig = JSON.parse(rawConfig);
+      parsedConfig = toConfigPayload(JSON.parse(rawConfig));
     } catch (error) {
       showSnackbar(`Invalid JSON: ${error.message}`, "error");
+      setSaving(false);
+      return;
+    }
+
+    const validation = validateConfiguration(parsedConfig);
+    if (validation.hasErrors) {
+      showSnackbar("Raw JSON has validation errors. Fix them before saving.", "error");
       setSaving(false);
       return;
     }
@@ -406,89 +832,148 @@ const Admin = ({ onConfigReload }) => {
     try {
       await api.put("/config", parsedConfig);
       setConfig(parsedConfig);
-      setBasePaths(parsedConfig.config.basePaths || {});
+      setBasePaths(parsedConfig.config?.basePaths || {});
       setServices(parsedConfig.services || {});
+      setRuntimeInfo((prev) => prev || null);
       showSnackbar("Configuration saved successfully", "success");
     } catch (error) {
-      showSnackbar(`Failed to save: ${error.message}`, "error");
+      showSnackbar(`Failed to save raw config: ${error.message}`, "error");
     } finally {
       setSaving(false);
     }
   };
 
   const handleServiceChange = (serviceName, field, value) => {
-    setServices(prev => ({
+    setServices((prev) => ({
       ...prev,
       [serviceName]: {
         ...prev[serviceName],
-        [field]: field === 'port' ? parseInt(value) || '' : value,
+        [field]:
+          field === "port"
+            ? parseInt(value, 10) || ""
+            : field === "dependsOn"
+              ? String(value)
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              : value,
       },
     }));
   };
 
+  const pickDirectory = useCallback(
+    async (initialPath = "") => {
+      setPickerBusy(true);
+      try {
+        const response = await api.post("/system/pick-directory", { initialPath });
+        if (response.cancelled) {
+          return null;
+        }
+        return response.path || null;
+      } catch (error) {
+        showSnackbar(`Folder picker failed: ${error.message}`, "error");
+        return null;
+      } finally {
+        setPickerBusy(false);
+      }
+    },
+    [showSnackbar]
+  );
+
+  const resetPathDialog = () => {
+    setNewPathKey("");
+    setNewPathValue("");
+    setNewPathMode("browse");
+    setNewPathTemplateBase("");
+    setNewPathSuffix("");
+  };
+
+  const openPathDialog = (prefillKey = "") => {
+    resetPathDialog();
+    if (prefillKey) {
+      setNewPathKey(prefillKey);
+    }
+    setAddPathDialog(true);
+  };
+
+  const closePathDialog = () => {
+    setAddPathDialog(false);
+    resetPathDialog();
+  };
+
   const addNewPath = () => {
-    if (newPathKey && newPathValue) {
-      setBasePaths(prev => ({
-        ...prev,
-        [newPathKey]: newPathValue,
-      }));
-      setNewPathKey("");
-      setNewPathValue("");
-      setAddPathDialog(false);
-      showSnackbar(`Base path "${newPathKey}" added successfully`, "success");
+    const finalPath =
+      newPathMode === "template" && newPathTemplateBase
+        ? `${basePaths[newPathTemplateBase] || ""}${newPathSuffix ? `${getPlatformPathSeparator(runtimePlatform)}${normalizePathSuffix(newPathSuffix, runtimePlatform)}` : ""}`
+        : newPathValue;
+
+    if (!newPathKey || !finalPath) {
+      return;
+    }
+
+    setBasePaths((prev) => ({
+      ...prev,
+      [newPathKey.trim()]: finalPath.trim(),
+    }));
+    showSnackbar(`Base path "${newPathKey}" added successfully`, "success");
+    closePathDialog();
+  };
+
+  const browseForNewPath = async () => {
+    const pickedPath = await pickDirectory(newPathValue || basePaths[newPathTemplateBase] || "");
+    if (pickedPath) {
+      setNewPathMode("browse");
+      setNewPathValue(pickedPath);
+    }
+  };
+
+  const browseForExistingBasePath = async (pathKey) => {
+    const pickedPath = await pickDirectory(basePaths[pathKey] || "");
+    if (pickedPath) {
+      setBasePaths((prev) => ({ ...prev, [pathKey]: pickedPath }));
     }
   };
 
   const removePath = (pathKey) => {
-    setBasePaths(prev => {
-      const newPaths = { ...prev };
-      delete newPaths[pathKey];
-      return newPaths;
+    setBasePaths((prev) => {
+      const nextPaths = { ...prev };
+      delete nextPaths[pathKey];
+      return nextPaths;
     });
   };
 
   const addNewService = () => {
-    if (newServiceName) {
-      setServices(prev => ({
-        ...prev,
-        [newServiceName]: {
-          type: "",
-          port: "",
-          path: "",
-          command: "",
-          stopCommand: "",
-          healthCommand: "",
-          build: "",
-          description: "",
-        },
-      }));
-      setSelectedService(newServiceName); // Auto-select the new service
-      setNewServiceName("");
-      setAddServiceDialog(false);
-    }
+    if (!newServiceName.trim()) return;
+    setServices((prev) => ({
+      ...prev,
+      [newServiceName.trim()]: {
+        type: "",
+        port: "",
+        path: "",
+        command: "",
+        stopCommand: "",
+        healthCommand: "",
+        build: "",
+        group: "",
+        dependsOn: [],
+        description: "",
+      },
+    }));
+    setSelectedService(newServiceName.trim());
+    setNewServiceName("");
+    setAddServiceDialog(false);
+    showSnackbar(`Service "${newServiceName.trim()}" added`, "success");
   };
 
   const removeService = (serviceName) => {
-    setServices(prev => {
-      const newServices = { ...prev };
-      delete newServices[serviceName];
-      return newServices;
+    setServices((prev) => {
+      const nextServices = { ...prev };
+      delete nextServices[serviceName];
+      return nextServices;
     });
-    
-    // If we're deleting the selected service, clear the selection
     if (selectedService === serviceName) {
       setSelectedService(null);
     }
-  };
-
-  const showSnackbar = (message, severity) => {
-    setSnackbarMessage(message);
-    setSnackbarSeverity(severity);
-    setSnackbarOpen(true);
-  };
-
-  const handleTabChange = (event, newValue) => {
-    setCurrentTab(newValue);
   };
 
   const formatJson = () => {
@@ -501,727 +986,648 @@ const Admin = ({ onConfigReload }) => {
     }
   };
 
-  const enableJsonEditing = () => {
-    setEditJsonDialog(true);
-  };
-
   const confirmJsonEditing = () => {
     setIsJsonReadOnly(false);
     setEditJsonDialog(false);
-    showSnackbar("JSON editing enabled. Be careful with your changes!", "warning");
+    showSnackbar("JSON editing enabled. Use carefully.", "warning");
   };
 
   const cancelJsonEditing = () => {
     setIsJsonReadOnly(true);
-    // Reload the original config to discard any changes
     setRawConfig(JSON.stringify(config, null, 2));
-    showSnackbar("JSON editing disabled. Changes discarded.", "info");
+    showSnackbar("JSON editor locked and unsaved edits discarded.", "info");
   };
 
   const saveRawConfigAndLock = async () => {
     await saveRawConfig();
     setIsJsonReadOnly(true);
-    showSnackbar("Configuration saved and JSON editor locked", "success");
   };
 
   if (loading) {
     return (
-      <Box sx={{ height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-        <CircularProgress size={60} />
+      <Box sx={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <CircularProgress size={48} />
       </Box>
     );
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* Fixed Tabs - No header */}
-      <Box sx={{ p: 2, flexShrink: 0 }}>
-        <Paper 
-          elevation={3} 
-          sx={{ 
-            borderRadius: 2,
-            overflow: 'hidden',
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            flexShrink: 0
-          }}
-        >
-          <Tabs
-            value={currentTab}
-            onChange={handleTabChange}
-            variant="fullWidth"
-            sx={{ 
-              minHeight: 48,
-              '& .MuiTab-root': {
-                color: 'white',
-                fontWeight: 600,
-                minHeight: 48,
-                '&.Mui-selected': {
-                  color: '#fff',
-                  backgroundColor: 'rgba(255,255,255,0.1)'
-                }
-              },
-              '& .MuiTabs-indicator': {
-                backgroundColor: '#fff',
-                height: 3
-              }
-            }}
-          >
-            <Tab icon={<StorageIcon />} label="Base Paths" />
-            <Tab icon={<SettingsIcon />} label="Services" />
-            <Tab icon={<CodeIcon />} label="Raw JSON" />
-          </Tabs>
-        </Paper>
+    <Box sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", flex: 1 }}>
+      <Box sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid rgba(148,163,184,0.12)", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 2 }}>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, minWidth: 0, flexWrap: "wrap" }}>
+            <Typography variant="h6" sx={{ fontWeight: 800, m: 0 }}>
+              Configuration
+            </Typography>
+            {runtimeInfo ? (
+              <Typography variant="caption" color="text.secondary">
+                Platform: {prettifyPlatform(runtimeInfo.platform)}
+                {runtimeInfo?.overrideActive ? " • Override active" : ""}
+              </Typography>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                Manage base paths, services, and advanced JSON
+              </Typography>
+            )}
+          </Box>
+        </Box>
+
+        {/* Action Buttons */}
+        <Box sx={{ display: "flex", gap: 1, flexShrink: 0 }}>
+          <Tooltip title="Reload configuration">
+            <IconButton size="small" onClick={() => loadConfig()} disabled={refreshing || saving}>
+              <RefreshIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          {refreshing ? (
+            <Typography variant="caption" color="text.secondary" sx={{ px: 0.5 }}>
+              Refreshing…
+            </Typography>
+          ) : null}
+        </Box>
       </Box>
 
-      {/* Scrollable Content Area */}
-      <Box sx={{ flexGrow: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', p: 2, pt: 0, minHeight: 0 }}>
-        {/* Base Paths Tab */}
+      <Box sx={{ flexShrink: 0, px: 2.5, borderBottom: "1px solid rgba(148,163,184,0.12)", backgroundColor: "background.paper" }}>
+        <Tabs
+          value={currentTab}
+          onChange={(_, value) => setCurrentTab(value)}
+          sx={{
+            minHeight: 46,
+            "& .MuiTab-root": {
+              minHeight: 46,
+              textTransform: "none",
+              fontWeight: 700,
+              alignItems: "flex-start",
+              px: 2,
+            },
+          }}
+        >
+          <Tab icon={<StorageIcon fontSize="small" />} iconPosition="start" label="Paths" />
+          <Tab icon={<SettingsIcon fontSize="small" />} iconPosition="start" label="Services" />
+          <Tab icon={<CodeIcon fontSize="small" />} iconPosition="start" label="JSON" />
+        </Tabs>
+      </Box>
+
+      {/* Content Area */}
+      <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex" }}>
         {currentTab === 0 && (
-          <Paper 
-            elevation={3} 
-            sx={{ 
-              borderRadius: 2, 
-              flexGrow: 1, 
-              display: 'flex', 
-              flexDirection: 'column',
-              overflow: 'hidden',
-              minHeight: 0
-            }}
-          >
-            {/* Fixed Header */}
-            <Box sx={{ p: 4, pb: 2, flexShrink: 0 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
-                  Base Paths Configuration
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 2 }}>
-                  <Button
-                    variant="contained"
-                    startIcon={<SaveIcon />}
-                    onClick={savePaths}
-                    disabled={saving}
-                    sx={{
-                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                      boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
-                    }}
-                  >
-                    Save Base Paths
-                  </Button>
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => setAddPathDialog(true)}
-                    sx={{
-                      background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
-                      boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
-                    }}
-                  >
-                    Add Path
-                  </Button>
-                </Box>
-              </Box>
-              
-              <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.6 }}>
-                Configure base directory paths for different service types. Services use these paths with template variables like <code>${basePaths.keyName}</code>.
-                <br />
-                <strong>Common keys:</strong> java, python, npm, listener, redis, neo4j, microservices, frontend, backend
+          <Box sx={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+            {/* Base Paths Header */}
+            <Box sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid rgba(148,163,184,0.12)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                Path Library
               </Typography>
+              <Stack direction="row" spacing={1}>
+                <Button key="save-paths" size="small" variant="contained" startIcon={<SaveIcon />} onClick={savePaths} disabled={saving}>
+                  Save
+                </Button>
+                <Button key="add-path" size="small" variant="outlined" startIcon={<AddIcon />} onClick={() => openPathDialog()}>
+                  Add
+                </Button>
+              </Stack>
             </Box>
 
-            {/* Scrollable Content */}
-            <Box sx={{ flexGrow: 1, overflow: 'auto', px: 4, pb: 4 }}>
-              <Grid container spacing={3}>
-                <Grid item xs={12}>
-                  <Card variant="outlined" sx={{ p: 3, borderRadius: 2, boxShadow: 2 }}>
-                    <Typography variant="h6" gutterBottom sx={{ color: '#555', fontWeight: 600 }}>
-                      Base Paths
+            <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden" }}>
+              <Grid container spacing={2} sx={{ height: "100%", minHeight: 0, p: 2 }}>
+                <Grid item xs={12} lg={8} sx={{ minHeight: 0, minWidth: 0, display: "flex", height: "100%" }}>
+                  <Stack spacing={1.5} sx={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", pr: { lg: 1 }, pb: 0.5 }}>
+                  {Object.entries(basePaths).map(([pathKey, pathValue]) => (
+                    <BasePathRow
+                      key={pathKey}
+                      pathKey={pathKey}
+                      pathValue={pathValue}
+                      usageCount={getPathUsageCount(pathKey, services)}
+                      onChange={(value) => setBasePaths((prev) => ({ ...prev, [pathKey]: value }))}
+                      onDelete={() => removePath(pathKey)}
+                      onBrowse={() => browseForExistingBasePath(pathKey)}
+                    />
+                  ))}
+                  {Object.keys(basePaths).length === 0 ? (
+                    <Paper variant="outlined" sx={{ ...panelSx, p: 3, textAlign: "center" }}>
+                      <Typography variant="subtitle1" sx={{ fontWeight: 700, mb: 1 }}>
+                        No base paths configured yet
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
+                        Start with common roots like your Lextr workspace, frontend folder, or backend microservices root.
+                      </Typography>
+                      <Button variant="contained" startIcon={<AddIcon />} onClick={() => openPathDialog()}>
+                        Add First Path
+                      </Button>
+                    </Paper>
+                  ) : null}
+                </Stack>
+                </Grid>
+
+                <Grid item xs={12} lg={4} sx={{ minHeight: 0, minWidth: 0, display: "flex" }}>
+                  <Stack spacing={2} sx={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", pb: 0.5 }}>
+                  <Card variant="outlined" sx={sectionSx}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1 }}>
+                      Quick Tips
                     </Typography>
-                    <Grid container spacing={2}>
-                      {Object.entries(basePaths).map(([key, value]) => (
-                        <Grid item xs={12} sm={6} key={key}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <Box sx={{ flexGrow: 1 }}>
-                              <TextField
-                                fullWidth
-                                label={`${key.charAt(0).toUpperCase() + key.slice(1)} Path`}
-                                value={value}
-                                onChange={(e) => setBasePaths(prev => ({ ...prev, [key]: e.target.value }))}
-                                sx={{ 
-                                  '& .MuiOutlinedInput-root': {
-                                    borderRadius: 2,
-                                  }
-                                }}
-                              />
-                              <Box sx={{ mt: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <Chip
-                                  label={`\${basePaths.${key}}`}
-                                  size="small"
-                                  sx={{
-                                    backgroundColor: 'rgba(21, 101, 192, 0.1)', // Professional blue tint
-                                    color: '#1565C0', // Professional blue
-                                    fontFamily: 'monospace',
-                                    fontSize: '0.7rem',
-                                    height: 20
-                                  }}
-                                />
-                                <Typography variant="caption" color="text.secondary">
-                                  Use this in service paths
-                                </Typography>
-                              </Box>
-                            </Box>
-                            <Tooltip title="Remove Path">
-                              <IconButton 
-                                color="error" 
-                                onClick={() => removePath(key)}
-                                sx={{ ml: 1, alignSelf: 'flex-start', mt: 1 }}
-                              >
-                                <DeleteIcon />
-                              </IconButton>
-                            </Tooltip>
-                          </Box>
-                        </Grid>
-                      ))}
-                    </Grid>
+                    <Stack spacing={1}>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Use short, stable keys like <strong>java</strong>, <strong>frontend</strong>, or <strong>microservices</strong>.
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        Prefer a small set of shared roots, then append service-specific subfolders in the service editor.
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                        The new folder picker opens your local system dialog, so you can browse instead of pasting paths.
+                      </Typography>
+                    </Stack>
                   </Card>
+
+                  <Card variant="outlined" sx={sectionSx}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.25 }}>
+                      Suggested Keys
+                    </Typography>
+                    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                      {commonBasePathKeys.map((key) => (
+                        <Chip
+                          key={key}
+                          size="small"
+                          clickable
+                          label={key}
+                          onClick={() => {
+                            openPathDialog(key);
+                          }}
+                        />
+                      ))}
+                    </Stack>
+                  </Card>
+
+                  <Card variant="outlined" sx={sectionSx}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800, mb: 1.25 }}>
+                      Usage Overview
+                    </Typography>
+                    <Stack spacing={1}>
+                      {Object.keys(basePaths).map((key) => (
+                        <Stack key={key} direction="row" justifyContent="space-between" alignItems="center">
+                          <Typography variant="body2">{key}</Typography>
+                          <Chip size="small" variant="outlined" label={`${getPathUsageCount(key, services)} services`} />
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </Card>
+
+                  {validationResult.hasErrors ? (
+                    <Alert severity="error" sx={{ borderRadius: 3 }}>
+                      Save is blocked until required config issues are fixed.
+                    </Alert>
+                  ) : null}
+                </Stack>
                 </Grid>
               </Grid>
             </Box>
-          </Paper>
+          </Box>
         )}
 
-        {/* Services Tab */}
         {currentTab === 1 && (
-          <Paper 
-            elevation={3} 
-            sx={{ 
-              borderRadius: 2, 
-              flexGrow: 1, 
-              display: 'flex', 
-              flexDirection: 'column',
-              overflow: 'hidden',
-              minHeight: 0
-            }}
-          >
-            {/* Fixed Header */}
-            <Box sx={{ p: 4, pb: 2, flexShrink: 0 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h5" sx={{ fontWeight: 600, color: '#333' }}>
-                  Services Configuration
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 2 }}>
-                  <Button
-                    variant="contained"
-                    startIcon={<SaveIcon />}
-                    onClick={saveServices}
-                    disabled={saving}
-                    sx={{
-                      background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)',
-                      boxShadow: '0 3px 5px 2px rgba(33, 203, 243, .3)',
-                    }}
-                  >
-                    Save Services
-                  </Button>
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => setAddServiceDialog(true)}
-                    sx={{
-                      background: 'linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)',
-                      boxShadow: '0 3px 5px 2px rgba(255, 105, 135, .3)',
-                    }}
-                  >
-                    Add Service
-                  </Button>
-                </Box>
-              </Box>
-              
-              <Typography variant="body2" color="text.secondary">
-                Select a service from the list to edit its configuration. Use template variables like <code>${basePaths.java}/service-name</code> for paths.
+          <Box sx={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+            {/* Services Header */}
+            <Box sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid rgba(148,163,184,0.12)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                Services
               </Typography>
+              <Stack direction="row" spacing={1}>
+                <Button key="save-services" size="small" variant="contained" startIcon={<SaveIcon />} onClick={saveServices} disabled={saving}>
+                  Save
+                </Button>
+                <Button key="add-service" size="small" variant="outlined" startIcon={<AddIcon />} onClick={() => setAddServiceDialog(true)}>
+                  Add
+                </Button>
+              </Stack>
             </Box>
 
-            {/* Two-Column Layout */}
-            <Box sx={{ flexGrow: 1, display: 'flex', px: 4, pb: 4, gap: 3, minHeight: 0 }}>
-              {/* Left Side - Service List */}
-              <Paper 
-                elevation={2} 
-                sx={{ 
-                  width: '300px', 
-                  flexShrink: 0, 
-                  borderRadius: 2, 
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column'
-                }}
-              >
-                <Box sx={{ 
-                  p: 2, 
-                  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                  color: 'white'
-                }}>
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    Services ({Object.keys(services).length})
-                  </Typography>
-                </Box>
-                
-                <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
-                  {Object.keys(services).length === 0 ? (
-                    <Box sx={{ p: 3, textAlign: 'center', color: 'text.secondary' }}>
-                      <Typography variant="body2">
-                        No services configured.
-                        <br />
-                        Click "Add Service" to get started.
+            {validationResult.hasErrors ? (
+              <Alert severity="error" sx={{ mx: 2, mt: 1.5, borderRadius: 3, flexShrink: 0 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                  ⚠️ Configuration Issues - Fix before saving
+                </Typography>
+                <Stack spacing={0.5}>
+                  {validationResult.issues
+                    .filter((issue) => issue.severity === "error")
+                    .map((issue, idx) => (
+                      <Typography key={idx} variant="body2" sx={{ color: "text.primary", display: "flex", gap: 1 }}>
+                        <span style={{ fontWeight: 600 }}>{issue.scope}:</span>
+                        <span>{issue.message}</span>
                       </Typography>
-                    </Box>
-                  ) : (
-                    Object.entries(services).map(([serviceName, service]) => (
-                      <ServiceListItem
-                        key={serviceName}
-                        serviceName={serviceName}
-                        service={service}
-                        isSelected={selectedService === serviceName}
-                        onSelect={() => setSelectedService(serviceName)}
-                        onDelete={() => removeService(serviceName)}
-                      />
-                    ))
-                  )}
-                </Box>
-              </Paper>
+                    ))}
+                </Stack>
+              </Alert>
+            ) : null}
 
-              {/* Right Side - Service Editor */}
-              <Paper 
-                elevation={2} 
-                sx={{ 
-                  flexGrow: 1, 
-                  borderRadius: 2, 
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column'
-                }}
-              >
-                {selectedService ? (
-                  <ServiceEditor
-                    serviceName={selectedService}
-                    service={services[selectedService]}
-                    onServiceChange={handleServiceChange}
-                  />
-                ) : (
-                  <Box sx={{ 
-                    flexGrow: 1, 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center',
-                    p: 4
-                  }}>
-                    <Box sx={{ textAlign: 'center', color: 'text.secondary' }}>
-                      <SettingsIcon sx={{ fontSize: 64, mb: 2, opacity: 0.3 }} />
-                      <Typography variant="h6" gutterBottom>
-                        Select a Service to Edit
-                      </Typography>
-                      <Typography variant="body2">
-                        Choose a service from the list on the left to view and edit its configuration.
-                      </Typography>
-                    </Box>
+            <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden" }}>
+              <Grid container spacing={2} sx={{ height: "100%", minHeight: 0, p: 2 }}>
+                <Grid item xs={12} xl={3.5} sx={{ minHeight: 0, minWidth: 0, display: "flex", height: "100%" }}>
+                  <Paper sx={{ ...panelSx, height: "100%", width: "100%", display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0 }}>
+                  <Box sx={{ p: 2, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
+                    <TextField
+                      fullWidth
+                      value={serviceFilter}
+                      onChange={(event) => setServiceFilter(event.target.value)}
+                      placeholder="Search services, groups, paths…"
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon fontSize="small" />
+                          </InputAdornment>
+                        ),
+                      }}
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 999 } }}
+                    />
+                    <Stack direction="row" spacing={1} sx={{ mt: 1.5 }} flexWrap="wrap" useFlexGap>
+                      {groupedServices.slice(0, 6).map(([groupName, groupServices]) => (
+                        <Chip
+                          key={groupName}
+                          size="small"
+                          label={`${groupName} · ${groupServices.length}`}
+                          variant="outlined"
+                          onClick={() => setServiceFilter(groupName === "Ungrouped" ? "" : groupName)}
+                        />
+                      ))}
+                    </Stack>
                   </Box>
-                )}
-              </Paper>
+
+                  <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+                    {filteredServices.length === 0 ? (
+                      <Box sx={{ p: 3, textAlign: "center" }}>
+                        <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.75 }}>
+                          No services match this filter
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                          Try a different search term or clear the filter.
+                        </Typography>
+                      </Box>
+                    ) : (
+                      filteredServices.map(([serviceName, service]) => (
+                        <ServiceListItem
+                          key={serviceName}
+                          serviceName={serviceName}
+                          service={service}
+                          isSelected={selectedService === serviceName}
+                          onSelect={() => setSelectedService(serviceName)}
+                          onDelete={() => removeService(serviceName)}
+                        />
+                      ))
+                    )}
+                  </Box>
+                </Paper>
+                </Grid>
+
+                <Grid item xs={12} xl={8.5} sx={{ minHeight: 0, minWidth: 0, display: "flex", height: "100%" }}>
+                  <Paper sx={{ ...panelSx, height: "100%", width: "100%", overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                  {selectedService && filteredServiceNames.has(selectedService) ? (
+                    <ServiceEditor
+                      serviceName={selectedService}
+                      service={services[selectedService]}
+                      services={services}
+                      basePaths={basePaths}
+                      runtimePlatform={runtimePlatform}
+                      onServiceChange={handleServiceChange}
+                      onPickDirectory={pickDirectory}
+                      validationIssues={validationResult.issues}
+                    />
+                  ) : (
+                    <Box sx={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", p: 4 }}>
+                      <Box sx={{ textAlign: "center", maxWidth: 420 }}>
+                        <SettingsIcon sx={{ fontSize: 52, opacity: 0.28, mb: 2 }} />
+                        <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>
+                          Pick a service to edit
+                        </Typography>
+                        <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                          The service editor stays focused on one service at a time so we can keep this screen compact without losing any features.
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                </Paper>
+                </Grid>
+              </Grid>
             </Box>
-          </Paper>
+          </Box>
         )}
 
-        {/* Raw JSON Tab */}
         {currentTab === 2 && (
-          <Paper 
-            elevation={3} 
-            sx={{ 
-              borderRadius: 2, 
-              flexGrow: 1, 
-              display: 'flex', 
-              flexDirection: 'column',
-              overflow: 'hidden',
-              minHeight: 0
-            }}
-          >
-            {/* Fixed Header */}
-            <Box sx={{ p: 4, pb: 2, flexShrink: 0 }}>
-              <Typography variant="h5" gutterBottom sx={{ fontWeight: 600, color: '#333' }}>
-                Raw JSON Configuration
+          <Box sx={{ height: "100%", width: "100%", display: "flex", flexDirection: "column", minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+            {/* Raw JSON Header */}
+            <Box sx={{ flexShrink: 0, px: 2.5, py: 1.5, borderBottom: "1px solid rgba(148,163,184,0.12)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
+                Advanced Configuration
               </Typography>
-              
+              <Stack direction="row" spacing={1}>
+                <Button key="format" size="small" variant="outlined" onClick={formatJson} disabled={saving || isJsonReadOnly}>
+                  Format
+                </Button>
+                {!isJsonReadOnly ? (
+                  <Button key="save-lock" size="small" variant="contained" startIcon={<SaveIcon />} onClick={saveRawConfigAndLock} disabled={saving}>
+                    Save & Lock
+                  </Button>
+                ) : (
+                  <Button key="enable" size="small" variant="outlined" startIcon={<EditIcon />} onClick={() => setEditJsonDialog(true)}>
+                    Edit
+                  </Button>
+                )}
+                {!isJsonReadOnly ? (
+                  <Button key="cancel" size="small" variant="outlined" color="error" onClick={cancelJsonEditing} disabled={saving}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </Stack>
+            </Box>
+
+            <Box sx={{ flexGrow: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column", px: 2.5, py: 2 }}>
               {isJsonReadOnly ? (
-                <Alert severity="info" sx={{ mb: 3, borderRadius: 2 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Box>
-                      <strong>Read-Only Mode:</strong> JSON configuration is protected from accidental changes.
-                      <br />
-                      Use the structured editors above for safe configuration changes.
-                    </Box>
-                    <Button
-                      variant="contained"
-                      startIcon={<EditIcon />}
-                      onClick={enableJsonEditing}
-                      size="small"
-                      sx={{
-                        ml: 2,
-                        background: 'linear-gradient(45deg, #FF9800 30%, #F57C00 90%)',
-                        boxShadow: '0 3px 5px 2px rgba(255, 152, 0, .3)',
-                        whiteSpace: 'nowrap'
-                      }}
-                    >
-                      Enable Editing
-                    </Button>
-                  </Box>
+                <Alert severity="info" sx={{ borderRadius: 3, mb: 1.5 }}>
+                  Locked - use tabs above for editing
                 </Alert>
               ) : (
-                <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
-                  <strong>Editing Mode Active:</strong> Be careful! Invalid JSON will break the backend.
-                  Changes will be lost if you cancel or reload without saving.
+                <Alert severity="warning" sx={{ borderRadius: 3, mb: 1.5 }}>
+                  Advanced mode - be careful with JSON
                 </Alert>
               )}
 
-              <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-                {!isJsonReadOnly && (
-                  <>
-                    <Button
-                      variant="contained"
-                      startIcon={<SaveIcon />}
-                      onClick={saveRawConfigAndLock}
-                      disabled={saving}
-                      sx={{
-                        background: 'linear-gradient(45deg, #4CAF50 30%, #45a049 90%)',
-                        boxShadow: '0 3px 5px 2px rgba(76, 175, 80, .3)',
-                      }}
-                    >
-                      {saving ? "Saving..." : "Save & Lock"}
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      startIcon={<CloseIcon />}
-                      onClick={cancelJsonEditing}
-                      disabled={saving}
-                      color="error"
-                      sx={{ borderRadius: 2 }}
-                    >
-                      Cancel & Lock
-                    </Button>
-                  </>
-                )}
-                <Button
-                  variant="outlined"
-                  startIcon={<RefreshIcon />}
-                  onClick={loadConfig}
-                  disabled={loading || saving}
-                  sx={{ borderRadius: 2 }}
-                >
-                  Reload
-                </Button>
-                <Button 
-                  variant="outlined" 
-                  onClick={formatJson} 
-                  disabled={saving || isJsonReadOnly}
-                  sx={{ borderRadius: 2 }}
-                >
-                  Format JSON
-                </Button>
-              </Box>
-            </Box>
-
-            {/* Scrollable JSON Editor */}
-            <Box sx={{ flexGrow: 1, px: 4, pb: 4, minHeight: 0 }}>
               <TextField
                 fullWidth
                 multiline
                 value={rawConfig}
-                onChange={(e) => setRawConfig(e.target.value)}
-                variant="outlined"
+                onChange={(event) => setRawConfig(event.target.value)}
+                disabled={saving || isJsonReadOnly}
+                InputProps={{ readOnly: isJsonReadOnly }}
                 sx={{
-                  height: '100%',
+                  flexGrow: 1,
+                  minHeight: 0,
                   "& .MuiInputBase-input": {
                     fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
-                    fontSize: "0.875rem",
-                    lineHeight: 1.5,
-                    backgroundColor: isJsonReadOnly ? 'rgba(0, 0, 0, 0.02)' : 'transparent',
+                    fontSize: "0.86rem",
+                    lineHeight: 1.55,
+                    backgroundColor: isJsonReadOnly ? "rgba(15,23,42,0.02)" : "transparent",
                   },
                   "& .MuiOutlinedInput-root": {
-                    borderRadius: 2,
-                    height: '100%',
-                    '& textarea': {
-                      height: '100% !important',
-                      overflow: 'auto !important',
+                    borderRadius: 3,
+                    height: "100%",
+                    "& textarea": {
+                      height: "100% !important",
+                      overflow: "auto !important",
                     },
-                    ...(isJsonReadOnly && {
-                      '& fieldset': {
-                        borderColor: 'rgba(0, 0, 0, 0.12)',
-                      }
-                    })
-                  }
-                }}
-                disabled={saving || isJsonReadOnly}
-                InputProps={{
-                  readOnly: isJsonReadOnly,
+                  },
                 }}
               />
             </Box>
-          </Paper>
+          </Box>
         )}
       </Box>
 
-      {/* Add Path Dialog */}
-      <Dialog open={addPathDialog} onClose={() => setAddPathDialog(false)} maxWidth="md" fullWidth>
+      <Dialog open={addPathDialog} onClose={closePathDialog} maxWidth="md" fullWidth>
         <DialogTitle
           sx={{
-            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+            background:
+              "linear-gradient(135deg, rgba(15,23,42,1) 0%, rgba(37,99,235,0.94) 100%)",
             color: "white",
-            fontWeight: 600,
-            textAlign: "center"
+            py: 2.5,
           }}
         >
-          Add New Base Path
-        </DialogTitle>
-        <DialogContent sx={{ pt: 3 }}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3, lineHeight: 1.6 }}>
-            Base paths are used in service configurations with template variables like <code>${basePaths.keyName}</code>.
-            Choose a logical key name that represents the type of services or technology.
-          </Typography>
-          
-          {/* Common Key Examples */}
-          <Paper 
-            elevation={1} 
-            sx={{ 
-              p: 2, 
-              mb: 3, 
-              background: "rgba(102, 126, 234, 0.05)",
-              border: "1px solid rgba(102, 126, 234, 0.2)"
-            }}
-          >
-            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, color: "#667eea" }}>
-              Common Key Names:
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-              {['java', 'python', 'npm', 'listener', 'frontend', 'backend', 'microservices'].map((key) => (
-                <Chip
-                  key={key}
-                  label={key}
-                  size="small"
-                  clickable
-                  onClick={() => setNewPathKey(key)}
-                  sx={{
-                    backgroundColor: newPathKey === key ? '#1565C0' : 'rgba(21, 101, 192, 0.1)', // Professional blue
-                    color: newPathKey === key ? 'white' : '#1565C0', // Professional blue
-                    '&:hover': {
-                      backgroundColor: newPathKey === key ? '#5a6fd8' : 'rgba(102, 126, 234, 0.2)',
-                    }
-                  }}
-                />
-              ))}
+          <Stack direction="row" spacing={1.25} alignItems="center">
+            <FolderOpenIcon />
+            <Box>
+              <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                Add Base Path
+              </Typography>
+              <Typography variant="body2" sx={{ opacity: 0.82 }}>
+                Use the local folder picker or compose a reusable path template.
+              </Typography>
             </Box>
-            <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-              Click a chip to use that key name, or type your own custom key below.
-            </Typography>
-          </Paper>
+          </Stack>
+        </DialogTitle>
 
-          <TextField
-            autoFocus
-            margin="dense"
-            label="Path Key Name"
-            fullWidth
-            variant="outlined"
-            value={newPathKey}
-            onChange={(e) => setNewPathKey(e.target.value)}
-            placeholder="e.g., java, python, microservices"
-            helperText="Use lowercase, no spaces. This will be used as ${basePaths.keyName} in service paths."
-            sx={{ mb: 3 }}
-          />
-          <TextField
-            margin="dense"
-            label="Directory Path"
-            fullWidth
-            variant="outlined"
-            value={newPathValue}
-            onChange={(e) => setNewPathValue(e.target.value)}
-            placeholder="~/codebase/java-services (Unix) or C:/codebase/java-services (Windows)"
-            helperText="Absolute path or use ~ for home directory. Use forward slashes (/) for cross-platform compatibility."
-          />
-          
-          {newPathKey && newPathValue && (
-            <Paper
-              elevation={1}
-              sx={{
-                mt: 3,
-                p: 2,
-                background: "rgba(76, 175, 80, 0.05)",
-                border: "1px solid rgba(76, 175, 80, 0.2)"
-              }}
-            >
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: "#4CAF50", mb: 1 }}>
-                Usage Example:
-              </Typography>
-              <Typography variant="body2" sx={{ fontFamily: 'monospace', color: '#333' }}>
-                "path": "$&#123;basePaths.{newPathKey}&#125;/my-service"
-              </Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                This will resolve to: <strong>{newPathValue}/my-service</strong>
-              </Typography>
-            </Paper>
-          )}
+        <DialogContent sx={{ pt: 3 }}>
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={7}>
+              <Stack spacing={2}>
+                <TextField
+                  autoFocus
+                  label="Path Key"
+                  value={newPathKey}
+                  onChange={(event) => setNewPathKey(event.target.value.replace(/\s+/g, "-"))}
+                  placeholder="java, frontend, microservices"
+                  helperText={String.raw`Stored as \${basePaths.key} and reused throughout service paths.`}
+                  sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                />
+
+                <Box>
+                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 1 }}>
+                    Suggested keys
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {commonBasePathKeys.map((key) => (
+                      <Chip key={key} size="small" clickable label={key} onClick={() => setNewPathKey(key)} />
+                    ))}
+                  </Stack>
+                </Box>
+
+                <Divider />
+
+                <Box>
+                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mb: 1 }}>
+                    Path source
+                  </Typography>
+                  <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                    {[
+                      { value: "browse", label: "Browse Local Folder" },
+                      { value: "manual", label: "Enter Path Manually" },
+                      { value: "template", label: "Compose from Existing Base Path" },
+                    ].map((option) => (
+                      <Chip
+                        key={option.value}
+                        clickable
+                        color={newPathMode === option.value ? "primary" : "default"}
+                        variant={newPathMode === option.value ? "filled" : "outlined"}
+                        label={option.label}
+                        onClick={() => setNewPathMode(option.value)}
+                      />
+                    ))}
+                  </Stack>
+                </Box>
+
+                {newPathMode === "browse" && (
+                  <Stack spacing={1.5}>
+                    <TextField
+                      label="Selected Directory"
+                      value={newPathValue}
+                      onChange={(event) => setNewPathValue(event.target.value)}
+                      placeholder="Use Browse to pick a local folder"
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                    <Button variant="outlined" startIcon={<FolderOpenIcon />} onClick={browseForNewPath} disabled={pickerBusy}>
+                      {pickerBusy ? "Opening Folder Picker…" : "Browse Folder"}
+                    </Button>
+                  </Stack>
+                )}
+
+                {newPathMode === "manual" && (
+                  <TextField
+                    label="Directory Path"
+                    value={newPathValue}
+                    onChange={(event) => setNewPathValue(event.target.value)}
+                    placeholder={runtimePlatform === "win32" ? "C:\\Workspace\\codebase\\lextr" : "~/Workspace/codebase/lextr"}
+                    helperText="Absolute path or home-relative path."
+                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                  />
+                )}
+
+                {newPathMode === "template" && (
+                  <Grid container spacing={1.5}>
+                    <Grid item xs={12} md={5}>
+                      <FormControl fullWidth>
+                        <InputLabel>Existing Base Path</InputLabel>
+                        <Select
+                          value={newPathTemplateBase}
+                          label="Existing Base Path"
+                          onChange={(event) => setNewPathTemplateBase(event.target.value)}
+                          sx={{ borderRadius: 2.5 }}
+                        >
+                          {Object.keys(basePaths).map((key) => (
+                            <MenuItem key={key} value={key}>
+                              {key}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={12} md={7}>
+                      <TextField
+                        fullWidth
+                        label="Sub Path"
+                        value={newPathSuffix}
+                        onChange={(event) => setNewPathSuffix(event.target.value)}
+                        placeholder={runtimePlatform === "win32" ? "services\\shared" : "services/shared"}
+                        helperText="Optional folder appended to the selected base path."
+                        sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                      />
+                    </Grid>
+                  </Grid>
+                )}
+              </Stack>
+            </Grid>
+
+            <Grid item xs={12} md={5}>
+              <Paper variant="outlined" sx={{ ...panelSx, p: 2, height: "100%" }}>
+                <Stack spacing={1.5}>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <AutoAwesomeIcon color="primary" fontSize="small" />
+                    <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>
+                      Preview
+                    </Typography>
+                  </Stack>
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Final base path value stored in config:
+                  </Typography>
+                  <Paper
+                    variant="outlined"
+                    sx={{
+                      p: 1.5,
+                      borderRadius: 2.5,
+                      borderStyle: "dashed",
+                      backgroundColor: "rgba(15,23,42,0.03)",
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                      {newPathMode === "template" && newPathTemplateBase
+                        ? `${basePaths[newPathTemplateBase] || ""}${newPathSuffix ? `${getPlatformPathSeparator(runtimePlatform)}${normalizePathSuffix(newPathSuffix, runtimePlatform)}` : ""}`
+                        : newPathValue || "Choose a path source to preview the value"}
+                    </Typography>
+                  </Paper>
+
+                  <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                    Services will reference it like:
+                  </Typography>
+                  <Chip
+                    label={newPathKey ? tokenForBasePath(newPathKey) : String.raw`\${basePaths.your-key}`}
+                    sx={{ width: "fit-content", fontFamily: "monospace" }}
+                  />
+
+                  <Alert severity="info" sx={{ borderRadius: 2.5 }}>
+                    The folder picker opens on your local machine through the backend, which means you can choose real directories instead of typing them by hand.
+                  </Alert>
+                </Stack>
+              </Paper>
+            </Grid>
+          </Grid>
         </DialogContent>
-        <DialogActions sx={{ p: 3, pt: 1 }}>
-          <Button 
-            onClick={() => setAddPathDialog(false)}
-            sx={{ color: '#666' }}
-          >
-            Cancel
-          </Button>
-          <Button 
-            onClick={addNewPath} 
+
+        <DialogActions sx={{ p: 3, pt: 1.5 }}>
+          <Button onClick={closePathDialog}>Cancel</Button>
+          <Button
             variant="contained"
-            disabled={!newPathKey || !newPathValue}
-            sx={{
-              background: 'linear-gradient(45deg, #2E7D32 30%, #388E3C 90%)', // Professional green gradient
-              '&:disabled': { background: '#E0E0E0' }
-            }}
+            startIcon={<AddIcon />}
+            onClick={addNewPath}
+            disabled={
+              !newPathKey ||
+              !(
+                (newPathMode === "template" && newPathTemplateBase) ||
+                (newPathMode !== "template" && newPathValue)
+              )
+            }
           >
             Add Base Path
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Add Service Dialog */}
       <Dialog open={addServiceDialog} onClose={() => setAddServiceDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add New Service</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>Add New Service</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
-            margin="dense"
-            label="Service Name"
             fullWidth
-            variant="outlined"
+            label="Service Name"
+            margin="dense"
             value={newServiceName}
-            onChange={(e) => setNewServiceName(e.target.value)}
+            onChange={(event) => setNewServiceName(event.target.value)}
             placeholder="my-new-service"
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
           />
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ p: 3, pt: 1.5 }}>
           <Button onClick={() => setAddServiceDialog(false)}>Cancel</Button>
-          <Button onClick={addNewService} variant="contained">Add</Button>
+          <Button variant="contained" onClick={addNewService}>
+            Add Service
+          </Button>
         </DialogActions>
       </Dialog>
 
-      {/* Edit JSON Confirmation Dialog */}
-      <Dialog 
-        open={editJsonDialog} 
-        onClose={() => setEditJsonDialog(false)}
-        maxWidth="sm"
-        fullWidth
-        PaperProps={{
-          sx: {
-            borderRadius: 3,
-            background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.9) 100%)",
-            backdropFilter: "blur(10px)",
-          }
-        }}
-      >
+      <Dialog open={editJsonDialog} onClose={() => setEditJsonDialog(false)} maxWidth="sm" fullWidth>
         <DialogTitle
           sx={{
-            background: "linear-gradient(135deg, #FF9800 0%, #F57C00 100%)",
+            background: "linear-gradient(135deg, #f59e0b 0%, #f97316 100%)",
             color: "white",
-            fontWeight: 700,
-            fontSize: "1.3rem",
-            textAlign: "center",
-            py: 3,
-            borderRadius: "12px 12px 0 0"
+            py: 2.5,
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
-            <EditIcon sx={{ fontSize: 28 }} />
-            Enable JSON Editing
-          </Box>
+          <Stack direction="row" spacing={1.25} alignItems="center">
+            <WarningAmberIcon />
+            <Typography variant="h6" sx={{ fontWeight: 800 }}>
+              Enable JSON Editing
+            </Typography>
+          </Stack>
         </DialogTitle>
-        
-        <DialogContent sx={{ p: 4 }}>
-          <Alert severity="warning" sx={{ mb: 3, borderRadius: 2 }}>
-            <Typography variant="body1" sx={{ fontWeight: 600, mb: 1 }}>
-              ⚠️ Advanced Feature - Proceed with Caution
-            </Typography>
-            <Typography variant="body2">
-              You are about to enable direct JSON editing. This is powerful but dangerous.
-            </Typography>
+        <DialogContent sx={{ pt: 3 }}>
+          <Alert severity="warning" sx={{ mb: 2, borderRadius: 2.5 }}>
+            This is advanced mode. Invalid JSON or broken references can stop the application from loading correctly.
           </Alert>
-          
-          <Typography variant="body1" sx={{ mb: 2, lineHeight: 1.6 }}>
-            <strong>Risks of JSON editing:</strong>
+          <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
+            The structured editors validate ports, dependencies, and missing commands for you. Only use raw JSON when you need bulk edits or advanced config changes.
           </Typography>
-          <Box component="ul" sx={{ pl: 2, mb: 3, '& li': { mb: 1 } }}>
-            <li>Invalid JSON syntax will break the backend</li>
-            <li>Incorrect service configurations may prevent startup</li>
-            <li>Changes bypass validation and safety checks</li>
-            <li>Typos can cause service failures</li>
+          <Box component="ul" sx={{ pl: 2.5, m: 0, color: "text.secondary" }}>
+            <li>Invalid JSON syntax will break saving</li>
+            <li>Typos in service names can break dependencies</li>
+            <li>Missing commands or duplicate ports can block startup flows</li>
           </Box>
-          
-          <Typography variant="body1" sx={{ mb: 2, lineHeight: 1.6 }}>
-            <strong>Recommended approach:</strong>
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3, lineHeight: 1.6 }}>
-            Use the "Base Paths" and "Services" tabs above for safe, guided configuration. 
-            Only use JSON editing for advanced scenarios or bulk operations.
-          </Typography>
-          
-          <Paper
-            elevation={1}
-            sx={{
-              p: 2,
-              background: "rgba(76, 175, 80, 0.05)",
-              border: "1px solid rgba(76, 175, 80, 0.2)",
-              borderRadius: 2
-            }}
-          >
-            <Typography variant="body2" sx={{ fontWeight: 600, color: "#4CAF50", mb: 0.5 }}>
-              💡 Pro Tip:
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Make a backup of your current configuration before making changes. 
-              Use "Format JSON" to validate syntax before saving.
-            </Typography>
-          </Paper>
         </DialogContent>
-        
-        <DialogActions sx={{ p: 4, pt: 2, gap: 2 }}>
-          <Button 
-            onClick={() => setEditJsonDialog(false)}
-            variant="outlined"
-            sx={{
-              borderColor: "#ccc",
-              color: "#666",
-              borderRadius: 2,
-              px: 3,
-              py: 1,
-              fontWeight: 600,
-              "&:hover": {
-                borderColor: "#999",
-                backgroundColor: "rgba(0,0,0,0.04)"
-              }
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={confirmJsonEditing}
-            startIcon={<EditIcon />}
-            sx={{
-              background: "linear-gradient(45deg, #FF9800 30%, #F57C00 90%)",
-              borderRadius: 2,
-              px: 4,
-              py: 1,
-              fontWeight: 600,
-              boxShadow: "0 4px 12px rgba(255, 152, 0, 0.3)",
-              "&:hover": {
-                background: "linear-gradient(45deg, #F57C00 30%, #FF9800 90%)",
-                boxShadow: "0 6px 16px rgba(255, 152, 0, 0.4)",
-              }
-            }}
-          >
-            I Understand - Enable Editing
+        <DialogActions sx={{ p: 3, pt: 1.5 }}>
+          <Button onClick={() => setEditJsonDialog(false)}>Cancel</Button>
+          <Button variant="contained" color="warning" startIcon={<EditIcon />} onClick={confirmJsonEditing}>
+            I Understand
           </Button>
         </DialogActions>
       </Dialog>
@@ -1232,7 +1638,7 @@ const Admin = ({ onConfigReload }) => {
         onClose={() => setSnackbarOpen(false)}
         anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
       >
-        <Alert onClose={() => setSnackbarOpen(false)} severity={snackbarSeverity}>
+        <Alert onClose={() => setSnackbarOpen(false)} severity={snackbarSeverity} sx={{ borderRadius: 2.5 }}>
           {snackbarMessage}
         </Alert>
       </Snackbar>

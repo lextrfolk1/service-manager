@@ -6,6 +6,15 @@ const { killByPort, waitForPort, isPortOpen } = require("./utils/portUtils");
 const os = require("os");
 const path = require("path");
 
+function createOperationError(message, options = {}) {
+  const error = new Error(message);
+  error.code = options.code || "operation_failed";
+  error.phase = options.phase || "runtime";
+  error.service = options.service || null;
+  error.details = options.details || null;
+  return error;
+}
+
 function resolveHome(p) {
   if (!p) return p;
   
@@ -59,7 +68,11 @@ class ServiceManager {
     const svc = this._getService(name);
 
     if (!svc.command) {
-      throw new Error(`Service ${name} has no command configured`);
+      throw createOperationError(`Service ${name} has no command configured`, {
+        code: "invalid_config",
+        phase: "validation",
+        service: name
+      });
     }
 
     // Resolve placeholders in path and command using basePaths
@@ -68,7 +81,7 @@ class ServiceManager {
     
     const logFile = logger.createLogFile(name);
     const out = fs.openSync(logFile, "a");
-    let gitAutoPull = svc.gitAutoPull || true;
+    const gitAutoPull = svc.gitAutoPull !== false;
 
     if (gitAutoPull && resolvedDir) {
       await new Promise((resolve, reject) => {
@@ -80,9 +93,12 @@ class ServiceManager {
             fs.appendFileSync(logFile, `\n[GIT PULL STDERR]\n${stderr || ""}`);
 
             if (err) {
-              return reject(
-                new Error(`Git pull failed for ${name}: ${err.message}`)
-              );
+              return reject(createOperationError(`Git pull failed for ${name}: ${err.message}`, {
+                code: "git_pull_failed",
+                phase: "git_pull",
+                service: name,
+                details: stderr || stdout || err.message
+              }));
             }
             resolve();
           }
@@ -101,9 +117,12 @@ class ServiceManager {
             fs.appendFileSync(logFile, `\n[BUILD STDOUT]\n${stdout || ""}`);
             fs.appendFileSync(logFile, `\n[BUILD STDERR]\n${stderr || ""}`);
             if (err) {
-              return reject(
-                new Error(`Build failed for ${name}: ${err.message}`)
-              );
+              return reject(createOperationError(`Build failed for ${name}: ${err.message}`, {
+                code: "build_failed",
+                phase: "build",
+                service: name,
+                details: stderr || stdout || err.message
+              }));
             }
             resolve();
           }
@@ -128,8 +147,44 @@ class ServiceManager {
     const child = spawn(resolvedCommand, spawnOptions);
     this.processes[name] = child.pid;
 
+    const exitPromise = new Promise((_, reject) => {
+      child.once("exit", (code, signal) => {
+        if (svc.port) {
+          reject(createOperationError(
+            `Service ${name} exited before becoming ready${code !== null ? ` (code ${code})` : ""}${signal ? ` (${signal})` : ""}`,
+            {
+              code: "command_failed",
+              phase: "start",
+              service: name,
+              details: `Process exited before port ${svc.port} became ready`
+            }
+          ));
+        }
+      });
+      child.once("error", (error) => {
+        reject(createOperationError(`Failed to start ${name}: ${error.message}`, {
+          code: "command_failed",
+          phase: "start",
+          service: name,
+          details: error.message
+        }));
+      });
+    });
+
     if (svc.port) {
-      await waitForPort(svc.port, 60000);
+      try {
+        await Promise.race([
+          waitForPort(svc.port, 60000),
+          exitPromise
+        ]);
+      } catch (error) {
+        throw createOperationError(error.message, {
+          code: error.code || (String(error.message).includes("Timeout") ? "startup_timeout" : "command_failed"),
+          phase: error.phase || (String(error.message).includes("Timeout") ? "health_check" : "start"),
+          service: name,
+          details: error.details || null
+        });
+      }
     }
 
     return { message: `Service ${name} started`, pid: child.pid, logFile };
@@ -147,9 +202,12 @@ class ServiceManager {
           { cwd: resolvedDir, shell: true },
           (err) => {
             if (err) {
-              return reject(
-                new Error(`stopCommand failed for ${name}: ${err.message}`)
-              );
+              return reject(createOperationError(`stopCommand failed for ${name}: ${err.message}`, {
+                code: "stop_command_failed",
+                phase: "stop",
+                service: name,
+                details: err.message
+              }));
             }
             resolve();
           }
@@ -174,32 +232,46 @@ class ServiceManager {
     const svc = this._getService(name);
     let running = false;
     let checkable = true;
+    let healthState = "unknown";
 
     // For services with ports, check if port is open
     if (svc.port) {
       running = await isPortOpen(svc.port);
+      healthState = svc.healthCommand
+        ? (await this._checkHealthCommand(name, svc) ? "healthy" : "unhealthy")
+        : (running ? "port-open" : "unknown");
     } 
     // For services with explicit health commands, use health check
     else if (svc.healthCommand) {
       running = await this._checkHealthCommand(name, svc);
+      healthState = running ? "healthy" : "unhealthy";
     }
     // For listener services without health commands, mark as not checkable
     else if (svc.type === 'listener') {
       checkable = false;
       running = false;
+      healthState = "unknown";
     }
     // For other services without ports, check if process is in our tracking
     else {
       running = !!this.processes[name];
+      healthState = running ? "unknown" : "unknown";
     }
+
+    const healthy = checkable ? (running ? true : null) : null;
+    const lifecycleState = running ? "running" : "stopped";
 
     return {
       service: name,
       running,
       checkable,
+      healthy,
+      lifecycleState,
+      healthState,
       port: svc.port || null,
       type: svc.type || null,
-      path: svc.path || null
+      path: svc.path || null,
+      pid: this.processes[name] || null
     };
   }
 
