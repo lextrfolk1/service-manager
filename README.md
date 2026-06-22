@@ -1,71 +1,109 @@
 # Struo – Local Microservices Manager
 
-Struo is a lightweight tool for managing local microservices during development.  
-It provides a React-based web dashboard to start, stop, restart, view logs, and configure multiple Java/Python/Node/DB services from one place.
+Struo is a local service control plane for development environments. It provides a React dashboard and Node/Express backend to start, stop, restart, monitor, and configure multiple services from one place.
 
-**Cross-Platform Support:** Works on macOS, Linux, and Windows with platform-specific configurations.
+It is designed to work across macOS, Linux, and Windows, while keeping service commands configurable per machine and per operating system.
 
 ---
 
 ## Features
 
-- Unified React dashboard for all services
-- Start / Stop / Restart with automatic port cleanup
-- Build mode toggle for services that need compilation
-- Real-time service status monitoring
-- Multi-service log viewer with tabs
-- Configurable service definitions via `services.json`
-- Support for listener services (background processes)
-- One-command startup script
-- **Cross-platform compatibility** (macOS, Linux, Windows)
+- Unified dashboard for local services
+- Start / stop / restart actions with port cleanup
+- Build-on-start support
+- Real-time status monitoring
+- Multi-service log viewing with live streaming for current files
+- Config-driven service definitions
+- Base path templates for reusable service locations
+- Native folder picker support in Admin
+- Platform-aware config selection
+
+---
+
+## Requirements
+
+Install the tools that match the services you want to run:
+
+- `Node.js` 16+ for Struo itself
+- `Git` if you use `gitAutoPull`
+- `Java` + `Maven` for Java services
+- `Python` for Python services
+- `Redis`, `Neo4j`, or other service binaries if configured
+
+Struo itself is cross-platform, but each service command must still be valid for the machine where it runs.
 
 ---
 
 ## Quick Start
 
-### macOS / Linux
-```bash
-bash start-application.sh
-```
+| Platform | Startup Command |
+| --- | --- |
+| macOS / Linux | `bash start-application.sh` |
+| Windows | `start-application.bat` |
 
-### Windows
-```cmd
-start-application.bat
-```
+After startup:
 
-For detailed Windows setup instructions, see [WINDOWS_SETUP.md](WINDOWS_SETUP.md).
+- Frontend: `http://localhost:4005`
+- Backend API: `http://localhost:4000`
 
 ---
 
 ## Project Structure
 
-```
+```text
 service-manager/
-├── backend/                # Node.js API server
-│   ├── src/
-│   └── config/
-│       └── services.json   # Service definitions
-├── react-frontend/         # React Dashboard UI
-├── logs/                   # Captured logs
-└── start-application.sh    # Single startup script with auto-dependencies
+├── backend/
+│   ├── config/
+│   │   ├── services.json
+│   │   └── services.windows.json
+│   └── src/
+├── react-frontend/
+├── logs/
+├── start-application.sh
+└── start-application.bat
 ```
 
 ---
 
-## Service Configuration
+## Configuration Model
 
-### Base Path Configuration
+Struo reads service definitions from JSON config files.
 
-Struo supports different base paths for different service types, allowing you to organize your projects by technology:
+### Config selection order
+
+Struo resolves config files in this order:
+
+1. `STRUO_CONFIG_FILE`
+2. platform-specific file if present
+3. fallback `backend/config/services.json`
+
+Current platform-specific filenames supported automatically:
+
+- Windows: `backend/config/services.windows.json`
+- macOS: `backend/config/services.macos.json`
+- Linux: `backend/config/services.linux.json`
+
+Examples:
+
+```bash
+STRUO_CONFIG_FILE=backend/config/services.json npm start
+```
+
+```cmd
+set STRUO_CONFIG_FILE=backend\config\services.windows.json && npm start
+```
+
+### Base paths
+
+Base paths let you reuse common roots across services.
 
 ```json
 {
   "config": {
     "basePaths": {
       "java": "~/workspace/java-services",
-      "python": "~/workspace/python-services", 
+      "python": "~/workspace/python-services",
       "npm": "~/workspace/npm-services",
-      "neo4j": "~/databases/neo4j",
       "listener": "~/workspace/python-services",
       "default": "~/workspace/microservices"
     }
@@ -73,11 +111,13 @@ Struo supports different base paths for different service types, allowing you to
 }
 ```
 
-### Service Definitions (`services.json`)
+Use them in service paths like:
 
-Each service entry defines how it should be built, started, and monitored. Service directories are resolved using `${basePaths.type}` placeholders.
+- `${basePaths.java}/config-service`
+- `${basePaths.python}/execution-service`
+- `${basePaths.listener}/workers`
 
-### Sample Configuration
+### Service definition example
 
 ```json
 {
@@ -90,27 +130,17 @@ Each service entry defines how it should be built, started, and monitored. Servi
       "build": "mvn clean install -DskipTests",
       "description": "Spring Cloud Config Server"
     },
-
     "execution-service": {
       "type": "python",
       "port": 5002,
       "path": "${basePaths.python}/execution-service",
-      "command": "$(pwd)/.venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "command": ".venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
       "description": "Code execution service"
     },
-
-    "redis": {
-      "type": "redis",
-      "port": 6379,
-      "command": "redis-server",
-      "stopCommand": "redis-cli shutdown",
-      "description": "Redis in-memory data store"
-    },
-
     "execution-listener": {
       "type": "listener",
       "path": "${basePaths.listener}/execution-service",
-      "command": "$(pwd)/.venv/bin/python worker.py",
+      "command": ".venv/bin/python worker.py",
       "stopCommand": "pkill -f worker.py",
       "healthCommand": "pgrep -f worker.py > /dev/null",
       "description": "Background execution worker"
@@ -119,14 +149,58 @@ Each service entry defines how it should be built, started, and monitored. Servi
 }
 ```
 
-**Path Resolution Examples:**
-- `${basePaths.java}/config-service` → `~/workspace/java-services/config-service`
-- `${basePaths.python}/execution-service` → `~/workspace/python-services/execution-service`  
-- `${basePaths.neo4j}` → `~/databases/neo4j`
+---
+
+## Cross-Platform Guidance
+
+Struo handles platform awareness around config loading, path picking, and port cleanup. Service commands remain your responsibility.
+
+### What Struo handles
+
+- Picks the right config file for the current OS
+- Expands home-directory style paths
+- Uses native folder picker support in Admin
+- Uses platform-appropriate process cleanup for occupied ports
+
+### What you configure per platform
+
+- `command`
+- `build`
+- `stopCommand`
+- `healthCommand`
+- base paths for your machine
+
+### Command differences by platform
+
+| Concern | macOS / Linux | Windows |
+| --- | --- | --- |
+| Python venv | `.venv/bin/python` | `.venv\\Scripts\\python.exe` |
+| Env var in command | `export PYTHONPATH=/path && ...` | `set PYTHONPATH=C:\\path && ...` |
+| Process health check | `pgrep -f worker.py` | `tasklist /fi "IMAGENAME eq python.exe" \| findstr python.exe` |
+| Stop process | `pkill -f worker.py` | `taskkill /f /im python.exe` |
+| Typical path | `~/codebase/lextr` | `C:/codebase/lextr` |
+
+### Recommended Windows approach
+
+Use `backend/config/services.windows.json` and keep Windows-specific commands there.
+
+Example:
+
+```json
+{
+  "execution-service": {
+    "type": "python",
+    "port": 5002,
+    "path": "${basePaths.python}\\execution-service",
+    "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5002",
+    "description": "Service to handle code execution tasks"
+  }
+}
+```
 
 ---
 
-## Starting the Application
+## Starting Struo
 
 ### macOS / Linux
 
@@ -140,62 +214,83 @@ bash start-application.sh
 start-application.bat
 ```
 
-**For Windows users:** See [WINDOWS_SETUP.md](WINDOWS_SETUP.md) for detailed setup instructions and configuration examples.
+The startup scripts:
 
-This script will:
-- **Auto-install dependencies** for both backend and React frontend (if not present)
-- **Stop any existing processes** on ports 4000 and 4005
-- **Start backend API** on port 4000
-- **Start React frontend** on port 4005
-- **Provide colored output** with clear status messages
-- **Handle graceful shutdown** with Ctrl+C (Unix) or process management (Windows)
-
-The script includes:
-- Automatic dependency detection and installation
-- Health checks for backend readiness
-- Colored terminal output for better visibility
-- Proper cleanup on exit
-- Comprehensive logging
-- **Platform-specific process management**
+- install missing frontend/backend dependencies when needed
+- stop processes on Struo ports
+- start backend on `4000`
+- start frontend on `4005`
+- write boot logs to `logs/`
 
 ---
 
-## Access URLs
+## Admin Experience
 
-| Component          | URL                   |
-| ------------------ | --------------------- |
-| React Dashboard    | http://localhost:4005 |
-| Backend API        | http://localhost:4000 |
+The Admin screen supports:
+
+- editing base paths
+- editing service definitions
+- native folder picking
+- raw JSON editing for advanced cases
+- validation before save
+
+Runtime metadata is shown in Admin so users can see:
+
+- current platform
+- active config file
+- whether `STRUO_CONFIG_FILE` is overriding default selection
 
 ---
 
-## React Dashboard Features
+## Logs
 
-The React dashboard provides modern service management with:
+Logs are stored in:
 
-- **Real-time status monitoring** for all service types
-- **Build mode toggle** - enable/disable builds per service or globally
-- **Multi-service log viewer** - monitor logs from multiple services simultaneously
-- **Advanced filtering** - filter by service type, status, or search text
-- **Bulk operations** - start/stop all services with progress tracking
-- **Listener service support** - manage background processes without ports
-- **Responsive design** - works on desktop and mobile
-- **Toast notifications** - real-time feedback for all operations
+- `logs/backend.log`
+- `logs/react-frontend.log`
+- `backend/logs/<service>/`
 
-### Service Types Supported:
-- **Java** services (with Maven build support)
-- **Python** services (with virtual environment support)
-- **NPM** services (with build support)
-- **Database** services (Redis, Neo4j)
-- **Listener** services (background processes)
+Current log file behavior:
+
+- current active file supports live streaming
+- older files are static
+- log viewing is service-oriented in the UI
+
+---
+
+## Troubleshooting
+
+### Path not found
+
+- verify base paths point to real directories
+- verify service `path` values resolve correctly
+- on Windows, prefer forward slashes or properly escaped backslashes
+
+### Python environment not found
+
+- create the virtual environment in the service repo
+- verify the configured Python executable path matches the OS
+
+### Port already in use
+
+- Struo tries to free configured ports automatically
+- if needed, verify manually with platform tools:
+  - macOS / Linux: `lsof -nP -iTCP:<port> -sTCP:LISTEN`
+  - Windows: `netstat -ano | findstr :<port>`
+
+### Java or Maven not found
+
+- ensure `java` and `mvn` are installed and available in `PATH`
+
+### Health looks wrong
+
+- add an explicit `healthCommand` for services that can open a port before they are actually ready
 
 ---
 
 ## Notes
 
-- Java + Maven required for Java services
-- Python + virtual environments recommended for Python services
-- Redis/Neo4j binaries must exist for database services
-- Listener services require `healthCommand` for status monitoring
-- `~` is automatically expanded to your home directory
-- Build mode can be toggled per service or globally
+- `~` is expanded automatically
+- Windows users can configure machine-specific paths in `services.windows.json`
+- Build mode can be toggled per service or globally from the UI
+- Listener services benefit from explicit `healthCommand` values

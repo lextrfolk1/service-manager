@@ -1,1125 +1,1036 @@
-import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
-  Typography,
-  Paper,
+  Alert,
   Box,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Button,
-  IconButton,
-  Toolbar,
   Chip,
-  Grid,
-  Tabs,
+  Divider,
+  FormControl,
+  IconButton,
+  InputAdornment,
+  InputLabel,
+  MenuItem,
+  Paper,
+  Select,
+  Stack,
   Tab,
-  Fab,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
+  Tabs,
+  TextField,
+  Tooltip,
+  Typography,
 } from "@mui/material";
 import {
-  Refresh as RefreshIcon,
-  WrapText as WrapIcon,
   Clear as ClearIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
   Close as CloseIcon,
-  Add as AddIcon,
-  Fullscreen as MaximizeIcon,
-  FullscreenExit as MinimizeIcon,
+  ContentCopy as ContentCopyIcon,
+  FolderOpen as FolderOpenIcon,
+  Fullscreen as FullscreenIcon,
+  FullscreenExit as FullscreenExitIcon,
+  PushPin as PushPinIcon,
+  Refresh as RefreshIcon,
+  Search as SearchIcon,
+  WrapText as WrapTextIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 
-const LogViewer = ({ serviceName, onClose, isActive, openServices, activeServiceTab, onServiceTabChange, onCloseService, isMaximized, onToggleMaximize }) => {
-  const [logFiles, setLogFiles] = useState([]);
+const SEARCH_DEBOUNCE_MS = 400;
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_MAX_CHARS = 120;
+
+const shellCardSx = {
+  height: "100%",
+  borderRadius: 4,
+  border: "1px solid rgba(148,163,184,0.2)",
+  background:
+    "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%)",
+  boxShadow: "0 24px 60px rgba(15,23,42,0.08)",
+  overflow: "hidden",
+};
+
+const panelSx = {
+  borderRadius: 3,
+  border: "1px solid rgba(148,163,184,0.18)",
+  backgroundColor: "rgba(255,255,255,0.9)",
+  boxShadow: "0 10px 30px rgba(15,23,42,0.05)",
+};
+
+function prettifyStatus(status) {
+  switch (status) {
+    case "connected":
+      return { label: "Live", color: "success" };
+    case "connecting":
+      return { label: "Connecting", color: "warning" };
+    case "error":
+      return { label: "Stream error", color: "error" };
+    default:
+      return { label: "Idle", color: "default" };
+  }
+}
+
+function ExplorerItem({ service, active, pinned, onOpen, onPin }) {
+  return (
+    <Paper
+      variant="outlined"
+      onClick={onOpen}
+      sx={{
+        ...panelSx,
+        p: 1.5,
+        cursor: "pointer",
+        borderColor: active ? "rgba(37,99,235,0.4)" : "rgba(148,163,184,0.18)",
+        background: active
+          ? "linear-gradient(135deg, rgba(37,99,235,0.12) 0%, rgba(124,58,237,0.08) 100%)"
+          : "rgba(255,255,255,0.9)",
+        transition: "all 0.16s ease",
+        "&:hover": {
+          borderColor: "rgba(37,99,235,0.32)",
+          transform: "translateY(-1px)",
+        },
+      }}
+    >
+      <Stack direction="row" spacing={1.25} alignItems="flex-start">
+        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+              {service.name}
+            </Typography>
+            {service.type ? <Chip size="small" label={service.type} sx={{ height: 22 }} /> : null}
+            {service.group ? <Chip size="small" label={service.group} variant="outlined" sx={{ height: 22 }} /> : null}
+          </Stack>
+          <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+            {service.description || service.path || "Open latest log instantly"}
+          </Typography>
+        </Box>
+        <Tooltip title={pinned ? "Pinned in quick access" : "Pin for quick access"}>
+          <IconButton
+            size="small"
+            onClick={(event) => {
+              event.stopPropagation();
+              onPin();
+            }}
+            color={pinned ? "primary" : "default"}
+          >
+            <PushPinIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Stack>
+    </Paper>
+  );
+}
+
+function FileChip({ fileName, active, onClick, live = false }) {
+  return (
+    <Chip
+      label={live ? `${fileName} • Live` : fileName}
+      clickable
+      onClick={onClick}
+      color={live ? "success" : active ? "primary" : "default"}
+      variant={active ? "filled" : "outlined"}
+      sx={{
+        height: 28,
+        maxWidth: 320,
+        fontWeight: live ? 700 : 500,
+        "& .MuiChip-label": {
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+        },
+      }}
+    />
+  );
+}
+
+function OpenServiceTabLabel({ serviceName, onClose }) {
+  return (
+    <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
+      <Typography
+        variant="body2"
+        sx={{
+          fontWeight: 700,
+          maxWidth: 160,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {serviceName}
+      </Typography>
+      <IconButton
+        size="small"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose();
+        }}
+        sx={{ p: 0.25 }}
+      >
+        <CloseIcon sx={{ fontSize: "0.95rem" }} />
+      </IconButton>
+    </Stack>
+  );
+}
+
+const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onServiceTabChange, onAddService }, ref) => {
+  const [services, setServices] = useState([]);
+  const [serviceFilter, setServiceFilter] = useState("");
+  const [selectedServiceName, setSelectedServiceName] = useState("");
   const [selectedLogFile, setSelectedLogFile] = useState("");
-  const [logContent, setLogContent] = useState("(no log loaded)");
-  const [isWrapped, setIsWrapped] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState('disconnected'); // disconnected, connecting, connected, error
-  const logContentRef = useRef(null);
+  const [activeLogFiles, setActiveLogFiles] = useState([]);
+  const [archivedLogFiles, setArchivedLogFiles] = useState([]);
+  const [logContent, setLogContent] = useState("(select a service to load logs)");
+  const [serviceSearchState, setServiceSearchState] = useState({});
+  const [wrapped, setWrapped] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState("disconnected");
+  const [loadingFiles, setLoadingFiles] = useState(false);
+  const [maximized, setMaximized] = useState(false);
+  const [pinnedServices, setPinnedServices] = useState([]);
+  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const eventSourceRef = useRef(null);
+  const logContentRef = useRef(null);
 
-  useEffect(() => {
-    if (serviceName && isActive) {
-      loadLogFiles();
-    }
-  }, [serviceName, isActive]);
+  const activeServiceFromTabs = openServices[activeServiceTab] || "";
+  const currentService = selectedServiceName || activeServiceFromTabs || services[0]?.name || "";
+  const isArchivedSelection = archivedLogFiles.includes(selectedLogFile);
+  const isActiveSelection = activeLogFiles.includes(selectedLogFile);
+  const liveFile = activeLogFiles[0] || "";
+  const otherFiles = [...activeLogFiles.slice(1), ...archivedLogFiles];
+  const currentSearchState = serviceSearchState[currentService] || {
+    searchQuery: "",
+    debouncedSearchQuery: "",
+    searchResults: [],
+    searchTotalMatches: 0,
+    searchLoading: false,
+    searchError: "",
+    selectedMatchLine: null,
+  };
+  const {
+    searchQuery,
+    debouncedSearchQuery,
+    searchResults,
+    searchTotalMatches,
+    searchLoading,
+    searchError,
+    selectedMatchLine,
+  } = currentSearchState;
+  const selectedMatchIndex = useMemo(
+    () => searchResults.findIndex((match) => match.lineNumber === selectedMatchLine),
+    [searchResults, selectedMatchLine]
+  );
+  const selectedMatch = selectedMatchIndex >= 0 ? searchResults[selectedMatchIndex] : null;
 
-  useEffect(() => {
-    if (selectedLogFile && selectedLogFile !== "No log files" && isActive) {
-      startLogStreaming();
-    } else {
-      stopLogStreaming();
-    }
-    return () => stopLogStreaming();
-  }, [selectedLogFile, isActive]);
+  const updateCurrentSearchState = useCallback((updates) => {
+    if (!currentService) return;
+    setServiceSearchState((previous) => ({
+      ...previous,
+      [currentService]: {
+        searchQuery: "",
+        debouncedSearchQuery: "",
+        searchResults: [],
+        searchTotalMatches: 0,
+        searchLoading: false,
+        searchError: "",
+        selectedMatchLine: null,
+        ...(previous[currentService] || {}),
+        ...(typeof updates === "function" ? updates(previous[currentService] || {}) : updates),
+      },
+    }));
+  }, [currentService]);
 
-  // Handle keyboard shortcuts
-  useEffect(() => {
-    const handleKeyPress = (event) => {
-      if (event.key === 'Escape' && isMaximized) {
-        onToggleMaximize();
-      }
-      if (event.key === 'F11' && isActive) {
-        event.preventDefault();
-        onToggleMaximize();
-      }
-      
-      // Tab switching in maximized mode
-      if (isMaximized && openServices && openServices.length > 1) {
-        if (event.ctrlKey || event.metaKey) {
-          if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-            event.preventDefault();
-            const newIndex = activeServiceTab > 0 ? activeServiceTab - 1 : openServices.length - 1;
-            onServiceTabChange(null, newIndex);
-          }
-          if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-            event.preventDefault();
-            const newIndex = activeServiceTab < openServices.length - 1 ? activeServiceTab + 1 : 0;
-            onServiceTabChange(null, newIndex);
-          }
-        }
-      }
-    };
-
-    if (isActive) {
-      document.addEventListener('keydown', handleKeyPress);
-      return () => document.removeEventListener('keydown', handleKeyPress);
-    }
-  }, [isMaximized, isActive, openServices, activeServiceTab, onServiceTabChange, onToggleMaximize]);
-
-  const loadLogFiles = async () => {
-    if (!serviceName) return;
-
-    try {
-      const data = await api.get(`/logs/${serviceName}`);
-      const files = (data.files || []).sort().reverse();
-
-      setLogFiles(files);
-
-      if (files.length === 0) {
-        setSelectedLogFile("No log files");
-        setLogContent("(no log files available)");
+  useImperativeHandle(ref, () => ({
+    addService: (serviceName) => {
+      setSelectedServiceName(serviceName);
+      if (!openServices.includes(serviceName)) {
+        onAddService(serviceName);
       } else {
-        setSelectedLogFile(files[0]);
+        onServiceTabChange(openServices.indexOf(serviceName));
       }
-    } catch (error) {
-      setLogFiles([]);
-      setSelectedLogFile("Error loading logs");
-      setLogContent(`Error loading log files: ${error.message}`);
-    }
-  };
+    },
+  }));
 
-  const startLogStreaming = () => {
-    stopLogStreaming(); // Clean up any existing connection
-    
-    if (!serviceName || !selectedLogFile || selectedLogFile === "No log files") {
-      return;
-    }
-
-    setConnectionStatus('connecting');
-    setIsStreaming(true);
-
-    // Use the same base URL as the API service
-    const API_BASE = process.env.NODE_ENV === "production" ? "http://localhost:4000" : "http://localhost:4000";
-    const streamUrl = `${API_BASE}/logs/${serviceName}/${encodeURIComponent(selectedLogFile)}/stream`;
-
-    const eventSource = new EventSource(streamUrl);
-
-    eventSource.onopen = () => {
-      setConnectionStatus('connected');
-    };
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        const logElement = logContentRef.current;
-        
-        if (data.type === 'initial' || data.type === 'replace') {
-          // Replace entire content
-          setLogContent(data.content || "(empty)");
-          
-          // Scroll to bottom after content is set
-          if (logElement) {
-            setTimeout(() => {
-              logElement.scrollTop = logElement.scrollHeight;
-            }, 0);
-          }
-        } else if (data.type === 'append') {
-          // Append new content
-          const wasAtBottom = logElement &&
-            logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight < 40;
-          
-          setLogContent(prev => prev + data.content);
-          
-          // Auto-scroll if user was at bottom
-          if (logElement && wasAtBottom) {
-            setTimeout(() => {
-              logElement.scrollTop = logElement.scrollHeight;
-            }, 0);
-          }
-        } else if (data.type === 'heartbeat') {
-          // Just keep the connection alive, no action needed
-          console.log('Received heartbeat from log stream');
-        }
-      } catch (error) {
-        console.error('Error parsing SSE data:', error);
-      }
-    };
-
-    eventSource.onerror = (error) => {
-      console.error('SSE connection error:', error);
-      setConnectionStatus('error');
-      
-      // Attempt to reconnect after a delay
-      setTimeout(() => {
-        if (isActive && selectedLogFile && selectedLogFile !== "No log files") {
-          startLogStreaming();
-        }
-      }, 3000);
-    };
-
-    eventSourceRef.current = eventSource;
-  };
-
-  const stopLogStreaming = () => {
+  const stopStreaming = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    setIsStreaming(false);
-    setConnectionStatus('disconnected');
-  };
-
-  const loadLog = async (isRefresh = false) => {
-    // Fallback method for manual refresh when streaming fails
-    if (!serviceName || !selectedLogFile || selectedLogFile === "No log files") {
-      return;
-    }
-
-    try {
-      const data = await api.get(
-        `/logs/${serviceName}/${encodeURIComponent(selectedLogFile)}`
-      );
-
-      const logElement = logContentRef.current;
-      const wasAtBottom =
-        logElement &&
-        logElement.scrollHeight - logElement.scrollTop - logElement.clientHeight < 40;
-
-      setLogContent(data.content || "(empty)");
-
-      if (logElement && (!isRefresh || wasAtBottom)) {
-        setTimeout(() => {
-          logElement.scrollTop = logElement.scrollHeight;
-        }, 0);
-      }
-    } catch (error) {
-      setLogContent(`Error loading log: ${error.message}`);
-    }
-  };
-
-  const toggleWrap = () => {
-    setIsWrapped(!isWrapped);
-  };
-
-  const clearLog = async () => {
-    if (!serviceName || !selectedLogFile || selectedLogFile === "No log files") {
-      return;
-    }
-
-    try {
-      await api.post(`/logs/${serviceName}/${encodeURIComponent(selectedLogFile)}/clear`);
-      if (!isStreaming) {
-        setLogContent("");
-      }
-    } catch (error) {
-      console.error('Error clearing log:', error);
-      // Fallback: clear display locally
-      setLogContent("");
-    }
-  };
-
-  const toggleStreaming = () => {
-    if (isStreaming) {
-      stopLogStreaming();
-    } else {
-      startLogStreaming();
-    }
-  };
-
-  const getConnectionStatusColor = () => {
-    switch (connectionStatus) {
-      case 'connected': return '#4CAF50';
-      case 'connecting': return '#FF9800';
-      case 'error': return '#f44336';
-      default: return '#666';
-    }
-  };
-
-  const getConnectionStatusText = () => {
-    switch (connectionStatus) {
-      case 'connected': return 'Live';
-      case 'connecting': return 'Connecting...';
-      case 'error': return 'Error';
-      default: return 'Disconnected';
-    }
-  };
-
-  return (
-    <Box sx={{ 
-      height: '100%', 
-      display: 'flex', 
-      flexDirection: 'column',
-      minHeight: 0,
-      ...(isMaximized && {
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 9999,
-        backgroundColor: 'rgba(0, 0, 0, 0.95)',
-        backdropFilter: 'blur(10px)'
-      })
-    }}>
-      {/* Fixed Controls - Hide when maximized */}
-      {!isMaximized && (
-        <Paper
-          elevation={3}
-          sx={{
-            p: 2,
-            borderRadius: 2,
-            background: "rgba(255, 255, 255, 0.95)",
-            backdropFilter: "blur(10px)",
-            mb: 2,
-            flexShrink: 0,
-            minHeight: 'auto'
-          }}
-        >
-          <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} md={6}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <FormControl fullWidth size="small">
-                  <InputLabel>Log File</InputLabel>
-                  <Select
-                    value={selectedLogFile}
-                    label="Log File"
-                    onChange={(e) => setSelectedLogFile(e.target.value)}
-                    disabled={logFiles.length === 0}
-                    sx={{
-                      borderRadius: 2,
-                      background: "rgba(255, 255, 255, 0.8)",
-                    }}
-                  >
-                    {logFiles.length === 0 ? (
-                      <MenuItem disabled>No log files</MenuItem>
-                    ) : (
-                      logFiles.map((file) => (
-                        <MenuItem key={file} value={file}>
-                          {file}
-                        </MenuItem>
-                      ))
-                    )}
-                  </Select>
-                </FormControl>
-                
-                <Button
-                  variant="contained"
-                  startIcon={
-                    <Box
-                      sx={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        backgroundColor: getConnectionStatusColor(),
-                        animation: connectionStatus === 'connecting' ? 'pulse 1.5s ease-in-out infinite' : 'none'
-                      }}
-                    />
-                  }
-                  onClick={toggleStreaming}
-                  disabled={false}
-                  size="small"
-                  sx={{
-                    background: connectionStatus === 'connected' 
-                      ? "linear-gradient(45deg, #4CAF50 30%, #45a049 90%)"
-                      : connectionStatus === 'error'
-                      ? "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)"
-                      : "linear-gradient(45deg, #9E9E9E 30%, #757575 90%)",
-                    boxShadow: connectionStatus === 'connected'
-                      ? "0 3px 5px 2px rgba(76, 175, 80, .3)"
-                      : connectionStatus === 'error'
-                      ? "0 3px 5px 2px rgba(244, 67, 54, .3)"
-                      : "0 3px 5px 2px rgba(158, 158, 158, .3)",
-                    color: "white",
-                    borderRadius: 2,
-                    whiteSpace: 'nowrap',
-                    minWidth: 'auto',
-                    px: 2,
-                    height: 32,
-                    flexShrink: 0,
-                    "&:hover": {
-                      background: connectionStatus === 'connected'
-                        ? "linear-gradient(45deg, #45a049 30%, #4CAF50 90%)"
-                        : connectionStatus === 'error'
-                        ? "linear-gradient(45deg, #d32f2f 30%, #f44336 90%)"
-                        : "linear-gradient(45deg, #757575 30%, #9E9E9E 90%)",
-                    }
-                  }}
-                >
-                  {getConnectionStatusText()}
-                </Button>
-              </Box>
-            </Grid>
-
-            <Grid item xs={12} md={6}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
-                <Button
-                  variant="contained"
-                  startIcon={<RefreshIcon />}
-                  onClick={() => loadLog(false)}
-                  disabled={!selectedLogFile || selectedLogFile === "No log files"}
-                  size="small"
-                  sx={{
-                    background: "linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)",
-                    boxShadow: "0 3px 5px 2px rgba(33, 203, 243, .3)",
-                    borderRadius: 2,
-                    whiteSpace: 'nowrap',
-                    minWidth: 'auto',
-                    px: 2,
-                    height: 32
-                  }}
-                >
-                  Refresh
-                </Button>
-                
-                <Button
-                  variant="contained"
-                  startIcon={<CloseIcon />}
-                  onClick={onClose}
-                  size="small"
-                  sx={{
-                    background: "linear-gradient(45deg, #f44336 30%, #d32f2f 90%)",
-                    boxShadow: "0 3px 5px 2px rgba(244, 67, 54, .3)",
-                    color: "white",
-                    borderRadius: 2,
-                    whiteSpace: 'nowrap',
-                    minWidth: 'auto',
-                    px: 2,
-                    height: 32,
-                    "&:hover": {
-                      background: "linear-gradient(45deg, #d32f2f 30%, #f44336 90%)",
-                    },
-                  }}
-                >
-                  Close
-                </Button>
-              </Box>
-            </Grid>
-          </Grid>
-        </Paper>
-      )}
-
-      {/* Log Content Panel - Only this scrolls */}
-      <Paper
-        elevation={6}
-        sx={{
-          borderRadius: isMaximized ? 0 : 3,
-          background: "linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)",
-          flexGrow: 1,
-          display: 'flex',
-          flexDirection: 'column',
-          minHeight: 0,
-          overflow: 'hidden', // Prevent this container from scrolling
-          ...(isMaximized && {
-            margin: 0,
-            height: '100vh'
-          })
-        }}
-      >
-        <Toolbar
-          sx={{
-            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            color: "#fff",
-            justifyContent: "space-between",
-            minHeight: "48px !important",
-            flexShrink: 0 // Prevent toolbar from shrinking
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexGrow: 1 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-              {serviceName} - Log Output
-            </Typography>
-            
-            {/* Show tab navigation in maximized mode */}
-            {isMaximized && openServices && openServices.length > 1 && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 2 }}>
-                <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.7rem' }}>
-                  Switch Service:
-                </Typography>
-                <Tabs
-                  value={activeServiceTab}
-                  onChange={onServiceTabChange}
-                  variant="scrollable"
-                  scrollButtons="auto"
-                  sx={{
-                    minHeight: 32,
-                    '& .MuiTab-root': {
-                      color: 'rgba(255,255,255,0.8)',
-                      fontWeight: 500,
-                      textTransform: 'none',
-                      minHeight: 32,
-                      minWidth: 80,
-                      fontSize: '0.75rem',
-                      py: 0.5,
-                      px: 1,
-                      '&.Mui-selected': {
-                        color: '#fff',
-                        backgroundColor: 'rgba(255,255,255,0.2)',
-                        borderRadius: 1
-                      },
-                      '&:hover': {
-                        backgroundColor: 'rgba(255,255,255,0.1)',
-                        borderRadius: 1
-                      }
-                    },
-                    '& .MuiTabs-indicator': {
-                      display: 'none' // Hide indicator in compact mode
-                    },
-                    '& .MuiTabs-scrollButtons': {
-                      color: 'white',
-                      '&.Mui-disabled': {
-                        opacity: 0.3
-                      }
-                    }
-                  }}
-                >
-                  {openServices.map((svcName, index) => (
-                    <Tab
-                      key={svcName}
-                      label={
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          {svcName}
-                          <IconButton
-                            size="small"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onCloseService(svcName);
-                            }}
-                            sx={{ 
-                              color: 'inherit', 
-                              p: 0.25,
-                              '&:hover': { backgroundColor: 'rgba(255,255,255,0.2)' }
-                            }}
-                          >
-                            <CloseIcon sx={{ fontSize: '0.8rem' }} />
-                          </IconButton>
-                        </Box>
-                      }
-                      value={index}
-                    />
-                  ))}
-                </Tabs>
-              </Box>
-            )}
-            
-            {/* Show controls in maximized mode */}
-            {isMaximized && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 'auto', mr: 2 }}>
-                <Chip
-                  label={
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <Box
-                        sx={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: '50%',
-                          backgroundColor: getConnectionStatusColor(),
-                          animation: connectionStatus === 'connecting' ? 'pulse 1.5s ease-in-out infinite' : 'none'
-                        }}
-                      />
-                      {getConnectionStatusText()}
-                    </Box>
-                  }
-                  size="small"
-                  sx={{
-                    backgroundColor: 'rgba(255,255,255,0.2)',
-                    color: 'white',
-                    fontSize: '0.7rem'
-                  }}
-                />
-                
-                <FormControl size="small" sx={{ minWidth: 180 }}>
-                  <Select
-                    value={selectedLogFile}
-                    onChange={(e) => setSelectedLogFile(e.target.value)}
-                    disabled={logFiles.length === 0}
-                    sx={{
-                      color: 'white',
-                      fontSize: '0.8rem',
-                      '& .MuiOutlinedInput-notchedOutline': {
-                        borderColor: 'rgba(255,255,255,0.3)',
-                      },
-                      '&:hover .MuiOutlinedInput-notchedOutline': {
-                        borderColor: 'rgba(255,255,255,0.5)',
-                      },
-                      '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                        borderColor: 'white',
-                      },
-                      '& .MuiSvgIcon-root': {
-                        color: 'white',
-                      }
-                    }}
-                  >
-                    {logFiles.length === 0 ? (
-                      <MenuItem disabled>No log files</MenuItem>
-                    ) : (
-                      logFiles.map((file) => (
-                        <MenuItem key={file} value={file}>
-                          {file}
-                        </MenuItem>
-                      ))
-                    )}
-                  </Select>
-                </FormControl>
-              </Box>
-            )}
-          </Box>
-          
-          <Box sx={{ display: "flex", gap: 1 }}>
-            <IconButton
-              size="small"
-              onClick={toggleWrap}
-              sx={{ 
-                color: "#fff",
-                "&:hover": { backgroundColor: "rgba(255,255,255,0.1)" }
-              }}
-              title={isWrapped ? "Unwrap text" : "Wrap text"}
-            >
-              <WrapIcon />
-            </IconButton>
-            <IconButton
-              size="small"
-              onClick={clearLog}
-              sx={{ 
-                color: "#fff",
-                "&:hover": { backgroundColor: "rgba(255,255,255,0.1)" }
-              }}
-              title="Clear log"
-            >
-              <ClearIcon />
-            </IconButton>
-            <IconButton
-              size="small"
-              onClick={onToggleMaximize}
-              sx={{ 
-                color: "#fff",
-                "&:hover": { backgroundColor: "rgba(255,255,255,0.1)" }
-              }}
-              title={isMaximized ? "Minimize window (Esc)" : "Maximize window (F11)"}
-            >
-              {isMaximized ? <MinimizeIcon /> : <MaximizeIcon />}
-            </IconButton>
-          </Box>
-        </Toolbar>
-
-        <Box
-          ref={logContentRef}
-          component="pre"
-          sx={{
-            backgroundColor: "#0d1117",
-            color: "#e5e7eb",
-            p: 2,
-            fontSize: "0.8rem",
-            overflow: "auto",
-            whiteSpace: isWrapped ? "pre-wrap" : "pre",
-            lineHeight: 1.4,
-            fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
-            margin: 0,
-            border: "1px solid #333",
-            flexGrow: 1,
-          }}
-        >
-          {logContent}
-        </Box>
-      </Paper>
-
-      {/* Add pulse animation for connection indicator */}
-      <style>
-        {`
-          @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.5; transform: scale(0.8); }
-          }
-        `}
-      </style>
-    </Box>
-  );
-};
-
-const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onServiceTabChange, onAddService }, ref) => {
-  const [services, setServices] = useState([]);
-  const [availableService, setAvailableService] = useState("");
-  const [showAddDialog, setShowAddDialog] = useState(false);
-  const [isMaximized, setIsMaximized] = useState(false); // Lifted maximized state
-
-  const toggleMaximize = () => {
-    setIsMaximized(!isMaximized);
-  };
-
-  useImperativeHandle(ref, () => ({
-    addService: (serviceName) => {
-      onAddService(serviceName);
-    }
-  }));
-
-  useEffect(() => {
-    initLogsPage();
+    setConnectionStatus("disconnected");
   }, []);
 
-  const initLogsPage = async () => {
+  const loadServices = useCallback(async () => {
     try {
       const data = await api.get("/services");
       setServices(data.services || []);
     } catch (error) {
-      console.error("Failed to load services:", error);
+      setServices([]);
+      setLogContent(`Unable to load services: ${error.message}`);
+    }
+  }, []);
+
+  const loadLogFiles = useCallback(async (serviceName) => {
+    if (!serviceName) return;
+    setLoadingFiles(true);
+    try {
+      const data = await api.get(`/logs/${serviceName}`);
+      const files = (data.files || []).sort().reverse();
+      const archivedFiles = (data.archivedFiles || []).sort().reverse();
+      setActiveLogFiles(files);
+      setArchivedLogFiles(archivedFiles);
+      setSelectedLogFile((previous) => {
+        if (previous && (files.includes(previous) || archivedFiles.includes(previous))) {
+          return previous;
+        }
+        return files[0] || archivedFiles[0] || "";
+      });
+      if (!files[0] && !archivedFiles[0]) {
+        setLogContent("(no log files available for this service)");
+      }
+    } catch (error) {
+      setActiveLogFiles([]);
+      setArchivedLogFiles([]);
+      setSelectedLogFile("");
+      setLogContent(`Error loading log files: ${error.message}`);
+    } finally {
+      setLoadingFiles(false);
+    }
+  }, []);
+
+  const refreshCurrentLog = useCallback(async () => {
+    if (!currentService || !selectedLogFile) return;
+    try {
+      const data = await api.get(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}`);
+      setLogContent(data.content || "(empty)");
+    } catch (error) {
+      setLogContent(`Error loading log content: ${error.message}`);
+    }
+  }, [currentService, selectedLogFile]);
+
+  const clearCurrentLog = useCallback(async () => {
+    if (!currentService || !selectedLogFile) return;
+    await api.post(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/clear`);
+    setLogContent("");
+  }, [currentService, selectedLogFile]);
+
+  const startStreaming = useCallback(() => {
+    stopStreaming();
+    if (!currentService || !selectedLogFile || !isActiveSelection) return;
+
+    setConnectionStatus("connecting");
+    const base = "http://localhost:4000";
+    const stream = new EventSource(`${base}/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/stream`);
+
+    stream.onopen = () => setConnectionStatus("connected");
+    stream.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === "initial" || data.type === "replace") {
+          setLogContent(data.content || "(empty)");
+        } else if (data.type === "append") {
+          setLogContent((previous) => previous + (data.content || ""));
+        }
+      } catch {
+        setConnectionStatus("error");
+      }
+    };
+    stream.onerror = () => setConnectionStatus("error");
+    eventSourceRef.current = stream;
+  }, [currentService, isActiveSelection, selectedLogFile, stopStreaming]);
+
+  useEffect(() => {
+    loadServices();
+  }, [loadServices]);
+
+  useEffect(() => {
+    if (!selectedServiceName && activeServiceFromTabs) {
+      setSelectedServiceName(activeServiceFromTabs);
+    }
+  }, [activeServiceFromTabs, selectedServiceName]);
+
+  useEffect(() => {
+    if (!selectedServiceName && services[0]?.name) {
+      setSelectedServiceName(services[0].name);
+    }
+  }, [selectedServiceName, services]);
+
+  useEffect(() => {
+    if (!currentService) return;
+    loadLogFiles(currentService);
+    return stopStreaming;
+  }, [currentService, loadLogFiles, stopStreaming]);
+
+  useEffect(() => {
+    if (!selectedLogFile || !currentService) return undefined;
+    if (!isActiveSelection) {
+      stopStreaming();
+      return undefined;
+    }
+    startStreaming();
+    return stopStreaming;
+  }, [currentService, isActiveSelection, selectedLogFile, startStreaming, stopStreaming]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const normalizedQuery = searchQuery.trim().slice(0, SEARCH_MAX_CHARS);
+      updateCurrentSearchState({
+        debouncedSearchQuery: normalizedQuery.length >= SEARCH_MIN_CHARS ? normalizedQuery : "",
+      });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(handle);
+  }, [searchQuery, updateCurrentSearchState]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function runSearch() {
+      if (!currentService || !selectedLogFile || !debouncedSearchQuery) {
+        updateCurrentSearchState({
+          searchResults: [],
+          searchTotalMatches: 0,
+          searchLoading: false,
+          searchError: "",
+          selectedMatchLine: null,
+        });
+        return;
+      }
+
+      updateCurrentSearchState({
+        searchLoading: true,
+        searchError: "",
+      });
+      try {
+        const data = await api.get(
+          `/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/search?q=${encodeURIComponent(debouncedSearchQuery)}&limit=50`
+        );
+        if (!active) return;
+        updateCurrentSearchState({
+          searchResults: data.matches || [],
+          searchTotalMatches: data.totalMatches || 0,
+          selectedMatchLine: (data.matches || [])[0]?.lineNumber || null,
+        });
+      } catch (error) {
+        if (!active) return;
+        updateCurrentSearchState({
+          searchResults: [],
+          searchTotalMatches: 0,
+          selectedMatchLine: null,
+          searchError: error.message || "Search is unavailable",
+        });
+      } finally {
+        if (active) {
+          updateCurrentSearchState({
+            searchLoading: false,
+          });
+        }
+      }
+    }
+
+    runSearch();
+    return () => {
+      active = false;
+    };
+  }, [currentService, debouncedSearchQuery, selectedLogFile, updateCurrentSearchState]);
+
+  const filteredServices = useMemo(() => {
+    const term = serviceFilter.trim().toLowerCase();
+    const serviceList = [...services].sort((left, right) => {
+      const leftPinned = pinnedServices.includes(left.name) ? 1 : 0;
+      const rightPinned = pinnedServices.includes(right.name) ? 1 : 0;
+      if (leftPinned !== rightPinned) return rightPinned - leftPinned;
+      return left.name.localeCompare(right.name);
+    });
+
+    if (!term) return serviceList;
+    return serviceList.filter((service) =>
+      [service.name, service.group, service.type, service.description]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(term))
+    );
+  }, [pinnedServices, serviceFilter, services]);
+
+  const streamChip = prettifyStatus(connectionStatus);
+
+  const copyLogs = async () => {
+    try {
+      await navigator.clipboard.writeText(logContent);
+    } catch {
+      // ignore
     }
   };
 
-  const addServiceTab = () => {
-    if (availableService && !openServices.includes(availableService)) {
-      onAddService(availableService);
-      setAvailableService("");
-      setShowAddDialog(false);
+  const jumpToMatch = useCallback((lineNumber) => {
+    updateCurrentSearchState({
+      selectedMatchLine: lineNumber,
+    });
+    if (!logContentRef.current) return;
+    const lineHeightPx = 19.2;
+    logContentRef.current.scrollTop = Math.max(0, (lineNumber - 3) * lineHeightPx);
+  }, [updateCurrentSearchState]);
+
+  const moveToSearchResult = useCallback((direction) => {
+    if (!searchResults.length) return;
+    const currentIndex = selectedMatchIndex >= 0 ? selectedMatchIndex : 0;
+    const nextIndex =
+      direction === "next"
+        ? Math.min(searchResults.length - 1, currentIndex + 1)
+        : Math.max(0, currentIndex - 1);
+    jumpToMatch(searchResults[nextIndex].lineNumber);
+  }, [jumpToMatch, searchResults, selectedMatchIndex]);
+
+  const highlightMatchPreview = useCallback((line, query) => {
+    if (!query) return line;
+    const lowerLine = String(line).toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const matchIndex = lowerLine.indexOf(lowerQuery);
+    if (matchIndex === -1) return line;
+    const before = line.slice(0, matchIndex);
+    const match = line.slice(matchIndex, matchIndex + query.length);
+    const after = line.slice(matchIndex + query.length);
+    return (
+      <>
+        {before}
+        <Box component="mark" sx={{ backgroundColor: "rgba(250,204,21,0.45)", color: "inherit", px: 0.25, borderRadius: 0.5 }}>
+          {match}
+        </Box>
+        {after}
+      </>
+    );
+  }, []);
+
+  const highlightLogLine = useCallback((line, query) => {
+    if (!query) return line || "\u00A0";
+
+    const sourceLine = String(line || "");
+    const lowerLine = sourceLine.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+
+    if (!lowerLine.includes(lowerQuery)) {
+      return sourceLine || "\u00A0";
     }
-  };
 
-  const closeServiceTab = (serviceName) => {
-    onCloseService(serviceName);
-  };
+    const parts = [];
+    let cursor = 0;
+    let matchIndex = lowerLine.indexOf(lowerQuery);
 
-  const handleServiceTabChange = (_, newValue) => {
-    onServiceTabChange(newValue);
-  };
-
-  const availableServicesToAdd = services.filter(service => !openServices.includes(service.name));
-
-  return (
-    <Box sx={{ 
-      height: '100%', 
-      display: 'flex', 
-      flexDirection: 'column', 
-      position: 'relative'
-    }}>
-      {/* Fixed Service Tabs - Never shrink */}
-      {openServices.length > 0 && (
-        <Paper
-          elevation={3}
+    while (matchIndex !== -1) {
+      if (matchIndex > cursor) {
+        parts.push(sourceLine.slice(cursor, matchIndex));
+      }
+      parts.push(
+        <Box
+          key={`${matchIndex}-${cursor}`}
+          component="mark"
           sx={{
-            borderRadius: 0,
-            borderBottomLeftRadius: 2,
-            borderBottomRightRadius: 2,
-            overflow: 'hidden',
-            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            position: 'relative',
-            flexShrink: 0,
-            minHeight: 48,
-            maxHeight: 48
+            backgroundColor: "rgba(250,204,21,0.45)",
+            color: "inherit",
+            px: 0.25,
+            borderRadius: 0.5,
           }}
         >
-          {/* Tab Count Indicator */}
-          {openServices.length > 3 && (
-            <Box
-              sx={{
-                position: 'absolute',
-                top: 8,
-                right: 8,
-                backgroundColor: 'rgba(255,255,255,0.2)',
-                borderRadius: '12px',
-                px: 1.5,
-                py: 0.5,
-                zIndex: 1
-              }}
-            >
-              <Typography variant="caption" sx={{ color: 'white', fontWeight: 600, fontSize: '0.7rem' }}>
-                {openServices.length} services
-              </Typography>
-            </Box>
-          )}
-          
-          <Tabs
-            value={activeServiceTab}
-            onChange={handleServiceTabChange}
-            variant="scrollable"
-            scrollButtons="auto"
-            allowScrollButtonsMobile
-            sx={{
-              height: 48,
-              minHeight: 48,
-              '& .MuiTab-root': {
-                color: 'white',
-                fontWeight: 600,
-                textTransform: 'none',
-                minHeight: 48,
-                maxHeight: 48,
-                minWidth: 120,
-                maxWidth: 200,
-                '&.Mui-selected': {
-                  color: '#fff',
-                  backgroundColor: 'rgba(255,255,255,0.15)'
-                },
-                '&:hover': {
-                  backgroundColor: 'rgba(255,255,255,0.1)'
-                }
-              },
-              '& .MuiTabs-indicator': {
-                backgroundColor: '#fff',
-                height: 3
-              },
-              '& .MuiTabs-scrollButtons': {
-                color: 'white',
-                '&.Mui-disabled': {
-                  opacity: 0.3
-                }
-              },
-              '& .MuiTabScrollButton-root': {
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                margin: '0 4px',
-                borderRadius: 1,
-                '&:hover': {
-                  backgroundColor: 'rgba(255,255,255,0.2)'
-                }
-              }
-            }}
-          >
-            {openServices.map((serviceName) => (
-              <Tab
-                key={serviceName}
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {serviceName}
-                    <IconButton
-                      size="small"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        closeServiceTab(serviceName);
-                      }}
-                      sx={{ 
-                        color: 'white', 
-                        ml: 1,
-                        '&:hover': { backgroundColor: 'rgba(255,255,255,0.2)' }
-                      }}
-                    >
-                      <CloseIcon fontSize="small" />
-                    </IconButton>
-                  </Box>
-                }
-              />
-            ))}
-          </Tabs>
-        </Paper>
-      )}
+          {sourceLine.slice(matchIndex, matchIndex + query.length)}
+        </Box>
+      );
+      cursor = matchIndex + query.length;
+      matchIndex = lowerLine.indexOf(lowerQuery, cursor);
+    }
 
-      {/* Fixed Height Log Content Area */}
-      <Box sx={{ 
-        flexGrow: 1, 
-        display: 'flex', 
-        flexDirection: 'column',
-        minHeight: 0 // Important for flex children
-      }}>
-        {openServices.length > 0 ? (
-          openServices.map((serviceName) => (
-            <Box
-              key={serviceName}
-              sx={{
-                display: activeServiceTab === openServices.indexOf(serviceName) ? 'flex' : 'none',
-                height: '100%',
-                flexDirection: 'column',
-                p: 2,
-                minHeight: 0 // Important for flex children
-              }}
-            >
-              <LogViewer
-                serviceName={serviceName}
-                onClose={() => closeServiceTab(serviceName)}
-                isActive={activeServiceTab === openServices.indexOf(serviceName)}
-                openServices={openServices}
-                activeServiceTab={activeServiceTab}
-                onServiceTabChange={handleServiceTabChange}
-                onCloseService={closeServiceTab}
-                isMaximized={isMaximized}
-                onToggleMaximize={toggleMaximize}
-              />
-            </Box>
-          ))
-        ) : (
-          <Box
-            sx={{
-              flexGrow: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              p: 4
-            }}
-          >
-            <Paper
-              sx={{
-                p: 6,
-                textAlign: "center",
-                borderRadius: 3,
-                background: "rgba(255, 255, 255, 0.9)",
-                backdropFilter: "blur(10px)",
-                maxWidth: 500
-              }}
-            >
-              <Typography 
-                variant="h5" 
-                gutterBottom
-                sx={{
-                  fontWeight: 600,
-                  background: "linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)",
-                  backgroundClip: "text",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  mb: 2,
-                }}
-              >
-                Service Logs
-              </Typography>
-              <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-                Click "Logs" on any service card in the Dashboard to start monitoring, or add a service below.
-              </Typography>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setShowAddDialog(true)}
-                disabled={availableServicesToAdd.length === 0}
-                sx={{
-                  background: "linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)",
-                  boxShadow: "0 3px 5px 2px rgba(255, 105, 135, .3)",
-                  borderRadius: 2,
-                  px: 4,
-                  py: 1.5
-                }}
-              >
-                Add Service to Monitor
-              </Button>
-            </Paper>
-          </Box>
-        )}
-      </Box>
+    if (cursor < sourceLine.length) {
+      parts.push(sourceLine.slice(cursor));
+    }
 
-      {/* Simple Floating Add Button - Only when services are open */}
-      {openServices.length > 0 && availableServicesToAdd.length > 0 && (
-        <Fab
-          color="primary"
-          onClick={() => setShowAddDialog(true)}
+    return parts.length > 0 ? parts : "\u00A0";
+  }, []);
+
+  const renderedLogContent = useMemo(() => {
+    if (!debouncedSearchQuery) {
+      return logContent;
+    }
+
+    return logContent.split("\n").map((line, index) => {
+      const lineNumber = index + 1;
+      const isSelected = selectedMatchLine === lineNumber;
+
+      return (
+        <Box
+          key={`${lineNumber}-${line}`}
+          component="div"
           sx={{
-            position: 'absolute',
-            bottom: 24,
-            right: 24,
-            background: "linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)",
-            '&:hover': {
-              background: "linear-gradient(45deg, #FF8E53 30%, #FE6B8B 90%)",
+            display: "block",
+            width: "100%",
+            backgroundColor: isSelected
+              ? "rgba(59,130,246,0.18)"
+              : "transparent",
+            borderLeft: isSelected ? "2px solid rgba(96,165,250,0.95)" : "2px solid transparent",
+            pl: 1,
+            ml: -1,
+          }}
+        >
+          {isSelected ? highlightLogLine(line, debouncedSearchQuery) : (line || "\u00A0")}
+        </Box>
+      );
+    });
+  }, [debouncedSearchQuery, highlightLogLine, logContent, selectedMatchLine]);
+
+  const renderSearchControls = () => (
+    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+      <TextField
+        size="small"
+        placeholder="Search inside current log"
+        value={searchQuery}
+        onChange={(event) => updateCurrentSearchState({ searchQuery: event.target.value })}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <SearchIcon fontSize="small" />
+            </InputAdornment>
+          ),
+        }}
+        sx={{ minWidth: { xs: "100%", sm: 250 }, "& .MuiOutlinedInput-root": { borderRadius: 999 } }}
+      />
+      {searchQuery ? (
+        <Button size="small" variant="text" onClick={() => updateCurrentSearchState({
+          searchQuery: "",
+          debouncedSearchQuery: "",
+          searchResults: [],
+          searchTotalMatches: 0,
+          searchLoading: false,
+          searchError: "",
+          selectedMatchLine: null,
+        })}>
+          Clear
+        </Button>
+      ) : null}
+      <Tooltip title={wrapped ? "Disable wrap" : "Wrap lines"}>
+        <IconButton onClick={() => setWrapped((previous) => !previous)}>
+          <WrapTextIcon />
+        </IconButton>
+      </Tooltip>
+    </Stack>
+  );
+
+  const renderViewerTabs = () => (
+    <Box
+      sx={{
+        px: maximized ? 1.5 : 1.5,
+        pt: maximized ? 1 : 1.25,
+        pb: maximized ? 1 : 0,
+        borderBottom: "1px solid rgba(148,163,184,0.16)",
+        backgroundColor: "rgba(248,250,252,0.88)",
+      }}
+    >
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        spacing={1.25}
+        justifyContent="space-between"
+        alignItems={{ xs: "flex-start", md: "center" }}
+      >
+        <Tabs
+          value={Math.max(0, openServices.indexOf(currentService))}
+          onChange={(_, newValue) => {
+            const serviceName = openServices[newValue];
+            if (serviceName) {
+              setSelectedServiceName(serviceName);
+              onServiceTabChange(newValue);
             }
           }}
-        >
-          <AddIcon />
-        </Fab>
-      )}
-
-      {/* Add Service Dialog */}
-      <Dialog 
-        open={showAddDialog} 
-        onClose={() => setShowAddDialog(false)}
-        maxWidth="md"
-        fullWidth
-        PaperProps={{
-          sx: {
-            borderRadius: 3,
-            background: "linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.9) 100%)",
-            backdropFilter: "blur(10px)",
-          }
-        }}
-      >
-        <DialogTitle
+          variant="scrollable"
+          scrollButtons="auto"
           sx={{
-            background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-            color: "white",
-            fontWeight: 700,
-            fontSize: "1.5rem",
-            textAlign: "center",
-            py: 3,
-            borderRadius: "12px 12px 0 0"
+            minHeight: 40,
+            flex: 1,
+            minWidth: 0,
+            "& .MuiTab-root": {
+              minHeight: 40,
+              textTransform: "none",
+              minWidth: 0,
+              px: 1.25,
+              py: 0.5,
+              borderRadius: 2,
+              mr: 1,
+              alignItems: "flex-start",
+              color: "text.secondary",
+            },
+            "& .MuiTab-root.Mui-selected": {
+              color: "text.primary",
+              backgroundColor: "rgba(37,99,235,0.08)",
+            },
+            "& .MuiTabs-indicator": {
+              display: "none",
+            },
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
-            <AddIcon sx={{ fontSize: 28 }} />
-            Add Service to Monitor
+          {openServices.map((serviceName, index) => (
+            <Tab
+              key={serviceName}
+              value={index}
+              label={
+                <OpenServiceTabLabel
+                  serviceName={serviceName}
+                  onClose={() => onCloseService(serviceName)}
+                />
+              }
+            />
+          ))}
+        </Tabs>
+
+        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {maximized ? renderSearchControls() : null}
+          {!maximized ? (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`${openServices.length} open`}
+              sx={{ flexShrink: 0 }}
+            />
+          ) : null}
+          <Tooltip title={maximized ? "Exit focus mode" : "Focus log area"}>
+            <IconButton onClick={() => setMaximized((previous) => !previous)}>
+              {maximized ? <FullscreenExitIcon /> : <FullscreenIcon />}
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      </Stack>
+    </Box>
+  );
+
+  return (
+    <Paper
+      sx={{
+        ...shellCardSx,
+        p: maximized ? 0 : 2.25,
+        borderRadius: maximized ? 0 : shellCardSx.borderRadius,
+      }}
+    >
+      {!maximized ? (
+        <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} justifyContent="space-between" sx={{ mb: 2 }}>
+          <Box>
+            <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700, letterSpacing: 0.4 }}>
+              LOG EXPLORER
+            </Typography>
+            <Typography variant="h5" sx={{ fontWeight: 800, mt: 0.25 }}>
+              Service Logs
+            </Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.75, maxWidth: 760 }}>
+              Open a service once and its latest active log appears immediately. Only the current active file streams live; older files stay as static snapshots.
+            </Typography>
           </Box>
-        </DialogTitle>
-        
-        <DialogContent sx={{ p: 4 }}>
-          <Typography 
-            variant="body1" 
-            color="text.secondary" 
-            sx={{ mb: 3, textAlign: 'center', lineHeight: 1.6 }}
-          >
-            Select a service to start monitoring its logs. You can add multiple services and switch between them using tabs.
-          </Typography>
-          
-          <FormControl fullWidth>
-            <InputLabel 
-              sx={{ 
-                fontWeight: 600,
-                "&.Mui-focused": { 
-                  color: "#667eea" 
-                }
-              }}
-            >
-              Select Service
-            </InputLabel>
-            <Select
-              value={availableService}
-              label="Select Service"
-              onChange={(e) => setAvailableService(e.target.value)}
-              sx={{ 
-                borderRadius: 2,
-                "& .MuiOutlinedInput-notchedOutline": {
-                  borderWidth: 2,
-                },
-                "&:hover .MuiOutlinedInput-notchedOutline": {
-                  borderColor: "#667eea",
-                },
-                "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                  borderColor: "#667eea",
-                }
-              }}
-            >
-              {availableServicesToAdd.length === 0 ? (
-                <MenuItem disabled>
-                  <Typography color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                    All services are already being monitored
-                  </Typography>
-                </MenuItem>
-              ) : (
-                availableServicesToAdd.map((service) => (
-                  <MenuItem 
-                    key={service.name} 
-                    value={service.name}
-                    sx={{
-                      py: 2,
-                      borderRadius: 1,
-                      mx: 1,
-                      my: 0.5,
-                      "&:hover": {
-                        backgroundColor: "rgba(102, 126, 234, 0.1)",
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Chip label={`${services.length} services`} variant="outlined" />
+            <Chip label={`${activeLogFiles.length + archivedLogFiles.length} files`} variant="outlined" />
+            <Chip label={streamChip.label} color={streamChip.color} variant={streamChip.color === "default" ? "outlined" : "filled"} />
+          </Stack>
+        </Stack>
+      ) : null}
+
+      <Box
+        sx={{
+          height: maximized ? "100%" : "calc(100% - 104px)",
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "1fr",
+            xl: maximized ? "1fr" : explorerCollapsed ? "56px minmax(0, 1fr)" : "320px minmax(0, 1fr)",
+          },
+          gap: 2,
+          minHeight: 0,
+        }}
+      >
+        {!maximized && (
+          <Paper sx={{ ...panelSx, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <Box sx={{ p: explorerCollapsed ? 1 : 2, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
+              <Stack
+                direction={explorerCollapsed ? "column" : "row"}
+                spacing={1}
+                justifyContent="space-between"
+                alignItems={explorerCollapsed ? "center" : "center"}
+              >
+                {!explorerCollapsed ? (
+                  <TextField
+                    fullWidth
+                    size="small"
+                    value={serviceFilter}
+                    onChange={(event) => setServiceFilter(event.target.value)}
+                    placeholder="Search services"
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <SearchIcon fontSize="small" />
+                        </InputAdornment>
+                      ),
+                    }}
+                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: 999 } }}
+                  />
+                ) : (
+                  <Tooltip title="Service explorer">
+                    <SearchIcon fontSize="small" color="action" />
+                  </Tooltip>
+                )}
+
+                <Tooltip title={explorerCollapsed ? "Expand explorer" : "Collapse explorer"}>
+                  <IconButton size="small" onClick={() => setExplorerCollapsed((previous) => !previous)}>
+                    {explorerCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+
+            </Box>
+
+            {!explorerCollapsed ? (
+              <Box sx={{ flexGrow: 1, overflow: "auto", p: 1.5, display: "flex", flexDirection: "column", gap: 1.25 }}>
+                {filteredServices.map((service) => (
+                  <ExplorerItem
+                    key={service.name}
+                    service={service}
+                    active={currentService === service.name}
+                    pinned={pinnedServices.includes(service.name)}
+                    onOpen={() => {
+                      setSelectedServiceName(service.name);
+                      if (!openServices.includes(service.name)) {
+                        onAddService(service.name);
+                      } else {
+                        onServiceTabChange(openServices.indexOf(service.name));
                       }
                     }}
-                  >
-                    <Box sx={{ width: '100%' }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-                        <Typography variant="body1" sx={{ fontWeight: 600, color: "#333" }}>
-                          {service.name}
+                    onPin={() =>
+                      setPinnedServices((previous) =>
+                        previous.includes(service.name)
+                          ? previous.filter((item) => item !== service.name)
+                          : [...previous, service.name]
+                      )
+                    }
+                  />
+                ))}
+                {filteredServices.length === 0 ? (
+                  <Alert severity="info">No services match this filter.</Alert>
+                ) : null}
+              </Box>
+            ) : (
+              <Box sx={{ flexGrow: 1, overflow: "auto", p: 0.75, display: "flex", flexDirection: "column", alignItems: "center", gap: 0.75 }}>
+                {filteredServices.slice(0, 18).map((service) => (
+                  <Tooltip key={service.name} title={service.name} placement="right">
+                    <Chip
+                      size="small"
+                      clickable
+                      color={currentService === service.name ? "primary" : "default"}
+                      variant={currentService === service.name ? "filled" : "outlined"}
+                      label={service.name.slice(0, 2).toUpperCase()}
+                      onClick={() => {
+                        setSelectedServiceName(service.name);
+                        if (!openServices.includes(service.name)) {
+                          onAddService(service.name);
+                        } else {
+                          onServiceTabChange(openServices.indexOf(service.name));
+                        }
+                      }}
+                      sx={{ width: 40, "& .MuiChip-label": { px: 0 } }}
+                    />
+                  </Tooltip>
+                ))}
+              </Box>
+            )}
+          </Paper>
+        )}
+
+        <Paper sx={{ ...panelSx, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {currentService ? (
+            <>
+              {openServices.length > 0 ? renderViewerTabs() : null}
+
+              <Box sx={{ p: maximized ? 1.25 : 2, borderBottom: maximized ? "1px solid rgba(148,163,184,0.16)" : "1px solid rgba(148,163,184,0.16)" }}>
+                {!maximized ? (
+                  <>
+                    <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} justifyContent="space-between">
+                      <Box>
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                        <Typography variant="h6" sx={{ fontWeight: 800 }}>
+                          {currentService}
+                          </Typography>
+                          <Chip size="small" label={selectedLogFile || "No file"} variant="outlined" />
+                          <Chip
+                            size="small"
+                            label={isArchivedSelection ? "Archived snapshot" : "Current live file"}
+                            color={isArchivedSelection ? "default" : "success"}
+                            variant={isArchivedSelection ? "outlined" : "filled"}
+                          />
+                          {loadingFiles ? <Chip size="small" label="Loading files…" color="warning" /> : null}
+                        </Stack>
+                        <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
+                          {isArchivedSelection
+                            ? "Archived files are read-only snapshots."
+                            : "Current log file streams live while the service is writing to it."}
                         </Typography>
-                        <Chip 
-                          label={service.type || "Unknown"} 
-                          size="small"
-                          sx={{
-                            backgroundColor: "rgba(102, 126, 234, 0.1)",
-                            color: "#667eea",
-                            fontWeight: 600,
-                            fontSize: "0.75rem"
-                          }}
-                        />
                       </Box>
-                      <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.4 }}>
-                        {service.description || 'No description available'}
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+                        {renderSearchControls()}
+                        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={refreshCurrentLog}>
+                          Refresh
+                        </Button>
+                        <Tooltip title="Copy visible content">
+                          <IconButton onClick={copyLogs}>
+                            <ContentCopyIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Clear current file">
+                          <IconButton onClick={clearCurrentLog} disabled={!selectedLogFile}>
+                            <ClearIcon />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </Stack>
+
+                    <Divider sx={{ my: 1.5 }} />
+                  </>
+                ) : null}
+
+                <Stack direction={{ xs: "column", lg: "row" }} spacing={1.25} alignItems={{ xs: "flex-start", lg: "center" }}>
+                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                    {!maximized ? <FolderOpenIcon sx={{ color: "text.secondary", fontSize: "1rem" }} /> : null}
+                    {!maximized ? (
+                      <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
+                        Current
                       </Typography>
-                      {service.port && (
-                        <Typography variant="caption" sx={{ color: "#667eea", fontWeight: 600, mt: 0.5, display: 'block' }}>
-                          Port: {service.port}
-                        </Typography>
-                      )}
-                    </Box>
-                  </MenuItem>
-                ))
-              )}
-            </Select>
-          </FormControl>
-          
-          {availableService && (
-            <Paper
-              elevation={2}
-              sx={{
-                mt: 3,
-                p: 3,
-                borderRadius: 2,
-                background: "linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%)",
-                border: "1px solid rgba(102, 126, 234, 0.2)"
-              }}
-            >
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: "#667eea", mb: 1 }}>
-                Selected Service:
-              </Typography>
-              <Typography variant="body1" sx={{ fontWeight: 600, mb: 0.5 }}>
-                {availableService}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {services.find(s => s.name === availableService)?.description || 'No description'}
-              </Typography>
-            </Paper>
+                    ) : null}
+                    {liveFile ? (
+                      <FileChip
+                        fileName={liveFile}
+                        active={selectedLogFile === liveFile}
+                        live
+                        onClick={() => setSelectedLogFile(liveFile)}
+                      />
+                    ) : (
+                      <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                        No active file
+                      </Typography>
+                    )}
+                  </Stack>
+
+                  {otherFiles.length > 0 ? (
+                    <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 320 } }}>
+                      <InputLabel>Other Files</InputLabel>
+                      <Select
+                        value={selectedLogFile !== liveFile ? selectedLogFile : ""}
+                        label="Other Files"
+                        onChange={(event) => setSelectedLogFile(event.target.value)}
+                        sx={{ borderRadius: 999 }}
+                      >
+                        {activeLogFiles.slice(1).map((fileName) => (
+                          <MenuItem key={fileName} value={fileName}>
+                            {fileName}
+                          </MenuItem>
+                        ))}
+                        {archivedLogFiles.length > 0 ? (
+                          <MenuItem disabled value="__archive_header__">
+                            Archived files
+                          </MenuItem>
+                        ) : null}
+                        {archivedLogFiles.map((fileName) => (
+                          <MenuItem key={fileName} value={fileName}>
+                            {fileName}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  ) : null}
+                </Stack>
+
+                {debouncedSearchQuery ? (
+                  <Box sx={{ mt: 1.25 }}>
+                    <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} sx={{ mb: 1 }}>
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
+                        Search Results
+                      </Typography>
+                        <Chip
+                          size="small"
+                          label={searchLoading
+                            ? "Searching…"
+                            : `${searchTotalMatches} match${searchTotalMatches === 1 ? "" : "es"}`}
+                          color={searchLoading ? "warning" : "default"}
+                          variant="outlined"
+                        />
+                      </Stack>
+                      <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
+                        {searchLoading
+                          ? `Searching ${selectedLogFile}…`
+                          : `Full log remains unchanged • ${selectedLogFile} • debounced ${SEARCH_DEBOUNCE_MS}ms`}
+                      </Typography>
+                    </Stack>
+                    {searchError ? (
+                      <Alert severity="warning" sx={{ borderRadius: 2 }}>
+                        Search is unavailable right now: {searchError}. If the backend was updated recently, restart it and try again.
+                      </Alert>
+                    ) : !searchLoading ? (
+                      <Paper
+                        variant="outlined"
+                        sx={{
+                          p: 1.25,
+                          borderRadius: 2,
+                          backgroundColor: "rgba(248,250,252,0.75)",
+                          borderColor: "rgba(148,163,184,0.16)",
+                        }}
+                      >
+                        {selectedMatch ? (
+                          <Stack spacing={1}>
+                            <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }}>
+                              <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700 }}>
+                                Match {selectedMatchIndex + 1} of {searchResults.length} • Line {selectedMatch.lineNumber}
+                              </Typography>
+                              <Stack direction="row" spacing={1}>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => moveToSearchResult("previous")}
+                                  disabled={selectedMatchIndex <= 0}
+                                >
+                                  Previous
+                                </Button>
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  onClick={() => moveToSearchResult("next")}
+                                  disabled={selectedMatchIndex === -1 || selectedMatchIndex >= searchResults.length - 1}
+                                >
+                                  Next
+                                </Button>
+                              </Stack>
+                            </Stack>
+                            <Typography variant="body2" sx={{ fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace', fontSize: "0.78rem", wordBreak: "break-word" }}>
+                              {selectedMatch.preview ? highlightMatchPreview(selectedMatch.preview, debouncedSearchQuery) : "(empty line)"}
+                            </Typography>
+                          </Stack>
+                        ) : (
+                          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                            No matching lines found.
+                          </Typography>
+                        )}
+                      </Paper>
+                    ) : null}
+                  </Box>
+                ) : null}
+              </Box>
+
+              <Box
+                component="pre"
+                ref={logContentRef}
+                sx={{
+                  flexGrow: 1,
+                  overflow: "auto",
+                  m: 0,
+                  p: 2,
+                  backgroundColor: "#0f172a",
+                  color: "#e2e8f0",
+                  whiteSpace: wrapped ? "pre-wrap" : "pre",
+                  fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
+                  fontSize: "0.8rem",
+                  lineHeight: 1.5,
+                }}
+              >
+                {renderedLogContent}
+              </Box>
+            </>
+          ) : (
+            <Box sx={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", p: 4 }}>
+              <Alert severity="info">Select a service from the left to load its latest logs.</Alert>
+            </Box>
           )}
-        </DialogContent>
-        
-        <DialogActions sx={{ p: 4, pt: 2, gap: 2 }}>
-          <Button 
-            onClick={() => setShowAddDialog(false)}
-            variant="outlined"
-            sx={{
-              borderColor: "#ccc",
-              color: "#666",
-              borderRadius: 2,
-              px: 3,
-              py: 1,
-              fontWeight: 600,
-              "&:hover": {
-                borderColor: "#999",
-                backgroundColor: "rgba(0,0,0,0.04)"
-              }
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            onClick={addServiceTab}
-            disabled={!availableService}
-            startIcon={<AddIcon />}
-            sx={{
-              background: "linear-gradient(45deg, #FE6B8B 30%, #FF8E53 90%)",
-              borderRadius: 2,
-              px: 4,
-              py: 1,
-              fontWeight: 600,
-              boxShadow: "0 4px 12px rgba(254, 107, 139, 0.3)",
-              "&:hover": {
-                background: "linear-gradient(45deg, #FF8E53 30%, #FE6B8B 90%)",
-                boxShadow: "0 6px 16px rgba(254, 107, 139, 0.4)",
-              },
-              "&:disabled": {
-                background: "#ccc",
-                boxShadow: "none"
-              }
-            }}
-          >
-            Add Service
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
+        </Paper>
+      </Box>
+    </Paper>
   );
 });
 

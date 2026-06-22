@@ -2,9 +2,10 @@ const API_BASE =
   process.env.NODE_ENV === "production" ? "http://localhost:4000" : "";
 
 class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, details = {}) {
     super(message);
     this.status = status;
+    Object.assign(this, details);
   }
 }
 
@@ -22,7 +23,15 @@ async function apiRequest(path, options = {}) {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new ApiError(text || response.statusText, response.status);
+      try {
+        const parsed = JSON.parse(text);
+        throw new ApiError(parsed.error || response.statusText, response.status, parsed);
+      } catch (error) {
+        if (error instanceof ApiError) {
+          throw error;
+        }
+        throw new ApiError(text || response.statusText, response.status);
+      }
     }
 
     return await response.json();
