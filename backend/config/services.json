@@ -122,10 +122,10 @@
       "description": "AI-powered assistant service"
     },
     "semantic-service": {
-      "type": "python",
-      "port": 5004,
-      "path": "${basePaths.python}/semantic-service",
-      "command": "$(pwd)/ib-venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5004",
+      "type": "java",
+      "port": 8083,
+      "path": "${basePaths.java}/semantic-layer",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "description": "Semantic service"
     },
     "analytics-service": {
