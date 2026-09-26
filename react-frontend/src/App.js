@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { Box, Tabs, Tab, AppBar, Toolbar, Typography, Container } from "@mui/material";
 import {
   Dashboard as DashboardIcon,
@@ -93,12 +93,12 @@ function App() {
   const [adminTarget, setAdminTarget] = useState(null);
 
   const handleCloneService = (service) => {
-    setAdminTarget({ action: "clone", service });
+    setAdminTarget({ action: "clone", service, id: Date.now() });
     setCurrentTab(2);
   };
 
   const handleEditInAdmin = (service) => {
-    setAdminTarget({ action: "edit", service });
+    setAdminTarget({ action: "edit", service, id: Date.now() });
     setCurrentTab(2);
   };
 
@@ -110,12 +110,12 @@ function App() {
     }
   };
 
-  const handleConfigReload = () => {
+  const handleConfigReload = useCallback(() => {
     // Refresh dashboard data when config is reloaded
     if (dashboardRef.current) {
       dashboardRef.current.refreshServices();
     }
-  };
+  }, []);
 
   const getPageTitle = () => {
     switch (currentTab) {
