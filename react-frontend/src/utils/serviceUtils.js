@@ -136,3 +136,126 @@ export function categorizeFailure(error) {
   if (/port/i.test(message)) return "Port issue";
   return "Operation failed";
 }
+
+export function getServiceLinks(service) {
+  if (!service || !service.port) return [];
+
+  const port = service.port;
+  const baseUrl = `http://localhost:${port}`;
+  const links = [];
+
+  // Determine non-HTTP services
+  const isNonHttp = ["redis", "listener"].includes(service.type);
+  if (isNonHttp) {
+    return [
+      {
+        id: "connection",
+        label: `${(service.type || "Service").toUpperCase()} Connection`,
+        url: `localhost:${port}`,
+        path: `:${port}`,
+        isCopyOnly: true,
+      },
+    ];
+  }
+
+  // 1. Web UI / Root Link
+  const isFrontend =
+    service.type === "npm" ||
+    (service.name || "").includes("frontend") ||
+    (service.name || "").includes("ui");
+
+  links.push({
+    id: "root",
+    label: isFrontend ? "Web Application" : "Root / Base API",
+    url: `${baseUrl}/`,
+    path: "/",
+    isRoot: true,
+    isExternal: true,
+  });
+
+  // 2. API Documentation (Swagger / OpenAPI / ReDoc)
+  if (service.docsPath) {
+    const cleanDocs = service.docsPath.startsWith("/") ? service.docsPath : `/${service.docsPath}`;
+    links.push({
+      id: "docs",
+      label: "API Documentation",
+      url: `${baseUrl}${cleanDocs}`,
+      path: cleanDocs,
+      isDocs: true,
+      isExternal: true,
+    });
+  } else if (service.type === "java") {
+    links.push({
+      id: "docs",
+      label: "Swagger UI",
+      url: `${baseUrl}/swagger-ui/index.html`,
+      path: "/swagger-ui/index.html",
+      isDocs: true,
+      isExternal: true,
+    });
+    links.push({
+      id: "openapi-spec",
+      label: "OpenAPI Spec (JSON)",
+      url: `${baseUrl}/v3/api-docs`,
+      path: "/v3/api-docs",
+      isSpec: true,
+      isExternal: true,
+    });
+  } else if (service.type === "python") {
+    links.push({
+      id: "docs",
+      label: "FastAPI Swagger Docs",
+      url: `${baseUrl}/docs`,
+      path: "/docs",
+      isDocs: true,
+      isExternal: true,
+    });
+    links.push({
+      id: "redoc",
+      label: "ReDoc",
+      url: `${baseUrl}/redoc`,
+      path: "/redoc",
+      isSpec: true,
+      isExternal: true,
+    });
+  } else if (!isFrontend) {
+    links.push({
+      id: "docs",
+      label: "API Documentation",
+      url: `${baseUrl}/swagger-ui/index.html`,
+      path: "/swagger-ui/index.html",
+      isDocs: true,
+      isExternal: true,
+    });
+  }
+
+  // 3. Health Endpoint
+  let healthPath = service.healthPath;
+  if (!healthPath && service.healthCommand) {
+    const match = service.healthCommand.match(/https?:\/\/[^/\s]+(\/[^\s"']+)/);
+    if (match) {
+      healthPath = match[1];
+    }
+  }
+
+  if (!healthPath) {
+    if (service.type === "java") {
+      healthPath = "/actuator/health";
+    } else {
+      healthPath = "/health";
+    }
+  }
+
+  const cleanHealthPath = healthPath.startsWith("/") ? healthPath : `/${healthPath}`;
+  links.push({
+    id: "health",
+    label: "Health Endpoint",
+    url: `${baseUrl}${cleanHealthPath}`,
+    path: cleanHealthPath,
+    isHealth: true,
+    isExternal: true,
+  });
+
+  return links;
+}
+

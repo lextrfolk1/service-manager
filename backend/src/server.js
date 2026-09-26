@@ -132,6 +132,9 @@ app.get("/services", (req, res) => {
       group: meta.group || null,
       hasBuild: Boolean(meta.build),
       hasHealthCheck: Boolean(meta.healthCommand),
+      healthCommand: meta.healthCommand || null,
+      docsPath: meta.docsPath || null,
+      healthPath: meta.healthPath || null,
       enableGit: meta.enableGit !== false && freshConfig.config?.enableGit !== false
     }));
     

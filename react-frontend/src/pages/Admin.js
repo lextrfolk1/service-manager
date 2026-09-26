@@ -455,6 +455,28 @@ function ServiceEditor({
                       sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
                     />
                   </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="API Docs Path (Swagger / OpenAPI)"
+                      value={service.docsPath || ""}
+                      onChange={(event) => onServiceChange(serviceName, "docsPath", event.target.value)}
+                      placeholder="/swagger-ui/index.html or /docs"
+                      helperText="Optional custom path. Auto-detected by service type if empty."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Health Check Path"
+                      value={service.healthPath || ""}
+                      onChange={(event) => onServiceChange(serviceName, "healthPath", event.target.value)}
+                      placeholder="/actuator/health or /health"
+                      helperText="Optional custom path. Auto-detected from health command or type if empty."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
                 </Grid>
               </Card>
 

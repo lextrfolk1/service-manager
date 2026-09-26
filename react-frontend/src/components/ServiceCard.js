@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   Alert,
   Box,
@@ -7,6 +7,7 @@ import {
   Chip,
   CircularProgress,
   Collapse,
+  Divider,
   IconButton,
   ListItemIcon,
   ListItemText,
@@ -19,9 +20,15 @@ import {
 } from "@mui/material";
 import {
   AccountTree as AccountTreeIcon,
+  ArrowDropDown as ArrowDropDownIcon,
+  Check as CheckIcon,
   ContentCopy as ContentCopyIcon,
+  Description as DescriptionIcon,
   DownloadRounded as DownloadRoundedIcon,
+  FavoriteBorderRounded as FavoriteBorderIcon,
+  Language as LanguageIcon,
   Launch as LaunchIcon,
+  MenuBookRounded as MenuBookIcon,
   MoreVert as MoreVertIcon,
   OpenInNew as OpenInNewIcon,
   PlayArrowRounded as PlayArrowIcon,
@@ -31,6 +38,7 @@ import {
 } from "@mui/icons-material";
 import StatusChip from "./StatusChip";
 import BranchSelector from "./BranchSelector";
+import { getServiceLinks } from "../utils/serviceUtils";
 
 function ServiceCard({
   service,
@@ -57,6 +65,25 @@ function ServiceCard({
   const canRestart = !isBusy;
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
   const isMenuOpen = Boolean(menuAnchorEl);
+  const [linksAnchorEl, setLinksAnchorEl] = useState(null);
+  const [copiedLink, setCopiedLink] = useState(false);
+  const isLinksOpen = Boolean(linksAnchorEl);
+
+  const links = useMemo(() => getServiceLinks(service), [service]);
+  const primaryDocsLink = links.find((l) => l.isDocs);
+  const healthLink = links.find((l) => l.isHealth);
+
+  const handleCopyUrl = (url, event) => {
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(url);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    }
+  };
 
   return (
     <Paper
@@ -237,7 +264,185 @@ function ServiceCard({
           </ListItemIcon>
           <ListItemText primary="View Logs" primaryTypographyProps={{ fontSize: "0.82rem" }} />
         </MenuItem>
+
+        {status.running && service.port ? (
+          <>
+            <Divider sx={{ my: 0.5 }} />
+            <MenuItem
+              component="a"
+              href={`http://localhost:${service.port}/`}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setMenuAnchorEl(null)}
+              sx={{ py: 0.75 }}
+            >
+              <ListItemIcon sx={{ minWidth: 28 }}>
+                <LanguageIcon fontSize="small" sx={{ fontSize: 16, color: "primary.main" }} />
+              </ListItemIcon>
+              <ListItemText
+                primary="Open Web UI / Root"
+                secondary={`localhost:${service.port}`}
+                primaryTypographyProps={{ fontSize: "0.82rem" }}
+                secondaryTypographyProps={{ fontSize: "0.68rem" }}
+              />
+              <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled", ml: 0.5 }} />
+            </MenuItem>
+
+            {primaryDocsLink ? (
+              <MenuItem
+                component="a"
+                href={primaryDocsLink.url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setMenuAnchorEl(null)}
+                sx={{ py: 0.75 }}
+              >
+                <ListItemIcon sx={{ minWidth: 28 }}>
+                  <MenuBookIcon fontSize="small" sx={{ fontSize: 16, color: "#4f46e5" }} />
+                </ListItemIcon>
+                <ListItemText
+                  primary={primaryDocsLink.label}
+                  secondary={primaryDocsLink.path}
+                  primaryTypographyProps={{ fontSize: "0.82rem", color: "#4f46e5", fontWeight: 600 }}
+                  secondaryTypographyProps={{ fontSize: "0.68rem" }}
+                />
+                <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled", ml: 0.5 }} />
+              </MenuItem>
+            ) : null}
+
+            {healthLink ? (
+              <MenuItem
+                component="a"
+                href={healthLink.url}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setMenuAnchorEl(null)}
+                sx={{ py: 0.75 }}
+              >
+                <ListItemIcon sx={{ minWidth: 28 }}>
+                  <FavoriteBorderIcon fontSize="small" sx={{ fontSize: 16, color: "#166534" }} />
+                </ListItemIcon>
+                <ListItemText
+                  primary="Health Endpoint"
+                  secondary={healthLink.path}
+                  primaryTypographyProps={{ fontSize: "0.82rem" }}
+                  secondaryTypographyProps={{ fontSize: "0.68rem" }}
+                />
+                <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled", ml: 0.5 }} />
+              </MenuItem>
+            ) : null}
+          </>
+        ) : null}
       </Menu>
+
+      {/* Direct App & API Links Dropdown Menu */}
+      <Menu
+        anchorEl={linksAnchorEl}
+        open={isLinksOpen}
+        onClose={() => setLinksAnchorEl(null)}
+        onClick={(event) => event.stopPropagation()}
+        transformOrigin={{ horizontal: "left", vertical: "top" }}
+        anchorOrigin={{ horizontal: "left", vertical: "bottom" }}
+        PaperProps={{
+          sx: {
+            minWidth: 270,
+            maxWidth: 340,
+            borderRadius: 2.5,
+            boxShadow: "0 10px 30px rgba(15,23,42,0.16)",
+            p: 0.5,
+          },
+        }}
+      >
+        <Box
+          sx={{
+            px: 1.5,
+            py: 1,
+            mb: 0.5,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            bgcolor: "rgba(15, 23, 42, 0.03)",
+            borderRadius: 1.5,
+          }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="caption" sx={{ fontSize: "0.68rem", fontWeight: 700, color: "text.secondary", display: "block" }}>
+              APP & API ENDPOINTS
+            </Typography>
+            <Typography variant="body2" sx={{ fontSize: "0.78rem", fontWeight: 600, fontFamily: "monospace" }} noWrap>
+              http://localhost:{service.port}
+            </Typography>
+          </Box>
+          <Tooltip title={copiedLink ? "Copied!" : "Copy base URL"}>
+            <IconButton
+              size="small"
+              onClick={(e) => handleCopyUrl(`http://localhost:${service.port}`, e)}
+              sx={{ p: 0.5, ml: 1, color: copiedLink ? "success.main" : "text.secondary" }}
+            >
+              {copiedLink ? <CheckIcon sx={{ fontSize: 16 }} /> : <ContentCopyIcon sx={{ fontSize: 16 }} />}
+            </IconButton>
+          </Tooltip>
+        </Box>
+
+        {links.map((link) => {
+          const isDocs = link.isDocs;
+          const isHealth = link.isHealth;
+          const isSpec = link.isSpec;
+
+          return (
+            <MenuItem
+              key={link.id}
+              component="a"
+              href={link.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setLinksAnchorEl(null)}
+              sx={{
+                py: 0.75,
+                px: 1.25,
+                borderRadius: 1.5,
+                mb: 0.25,
+                "&:hover": {
+                  bgcolor: isDocs
+                    ? "rgba(99, 102, 241, 0.08)"
+                    : isHealth
+                    ? "rgba(34, 197, 94, 0.08)"
+                    : "rgba(15, 23, 42, 0.04)",
+                },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 28 }}>
+                {isDocs ? (
+                  <MenuBookIcon sx={{ fontSize: 17, color: "#4f46e5" }} />
+                ) : isHealth ? (
+                  <FavoriteBorderIcon sx={{ fontSize: 17, color: "#166534" }} />
+                ) : isSpec ? (
+                  <DescriptionIcon sx={{ fontSize: 17, color: "text.secondary" }} />
+                ) : (
+                  <LanguageIcon sx={{ fontSize: 17, color: "primary.main" }} />
+                )}
+              </ListItemIcon>
+              <ListItemText
+                primary={link.label}
+                secondary={link.path}
+                primaryTypographyProps={{
+                  fontSize: "0.8rem",
+                  fontWeight: isDocs || link.isRoot ? 600 : 500,
+                  color: isDocs ? "#4f46e5" : "text.primary",
+                }}
+                secondaryTypographyProps={{
+                  fontSize: "0.68rem",
+                  fontFamily: "monospace",
+                  color: "text.secondary",
+                  noWrap: true,
+                }}
+              />
+              <OpenInNewIcon sx={{ fontSize: 13, color: "text.disabled", ml: 1, flexShrink: 0 }} />
+            </MenuItem>
+          );
+        })}
+      </Menu>
+
 
       {/* 2. Description (Consistent 2-line height for grid alignment) */}
       <Tooltip title={service.description || "No description provided"} enterDelay={600}>
@@ -297,31 +502,74 @@ function ServiceCard({
 
         {service.port ? (
           status.running ? (
-            <Tooltip title={`Open http://localhost:${service.port}`}>
-              <Chip
-                label={`:${service.port}`}
-                size="small"
-                component="a"
-                href={`http://localhost:${service.port}`}
-                target="_blank"
-                rel="noreferrer"
-                clickable
-                icon={<OpenInNewIcon sx={{ fontSize: "11px !important" }} />}
-                sx={{
-                  height: 20,
-                  fontSize: "0.68rem",
-                  fontFamily: "monospace",
-                  fontWeight: 600,
-                  backgroundColor: "rgba(34, 197, 94, 0.1)",
-                  color: "#166534",
-                  border: "1px solid rgba(34, 197, 94, 0.3)",
-                  "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
-                  "&:hover": {
-                    backgroundColor: "rgba(34, 197, 94, 0.2)",
-                  },
-                }}
-              />
-            </Tooltip>
+            <>
+              {/* Port & Direct Links Dropdown Chip */}
+              <Tooltip title={`Open App & API Links (port ${service.port})`}>
+                <Chip
+                  label={`:${service.port}`}
+                  size="small"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setLinksAnchorEl(event.currentTarget);
+                  }}
+                  deleteIcon={
+                    <ArrowDropDownIcon
+                      sx={{ fontSize: "15px !important", color: "inherit !important", ml: "-4px !important" }}
+                    />
+                  }
+                  onDelete={(event) => {
+                    event.stopPropagation();
+                    setLinksAnchorEl(event.currentTarget.parentElement || event.currentTarget);
+                  }}
+                  icon={<OpenInNewIcon sx={{ fontSize: "11px !important" }} />}
+                  clickable
+                  sx={{
+                    height: 20,
+                    fontSize: "0.68rem",
+                    fontFamily: "monospace",
+                    fontWeight: 600,
+                    backgroundColor: "rgba(34, 197, 94, 0.1)",
+                    color: "#166534",
+                    border: "1px solid rgba(34, 197, 94, 0.3)",
+                    "& .MuiChip-icon": { ml: 0.5, mr: -0.25, color: "#166534" },
+                    "& .MuiChip-deleteIcon": { mr: 0.25 },
+                    "&:hover": {
+                      backgroundColor: "rgba(34, 197, 94, 0.2)",
+                      borderColor: "rgba(34, 197, 94, 0.6)",
+                    },
+                  }}
+                />
+              </Tooltip>
+
+              {/* Dedicated 1-Click Swagger / Docs Chip */}
+              {primaryDocsLink ? (
+                <Tooltip title={`Open ${primaryDocsLink.label}: ${primaryDocsLink.url}`}>
+                  <Chip
+                    label={service.type === "java" ? "Swagger" : "Docs"}
+                    size="small"
+                    component="a"
+                    href={primaryDocsLink.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    clickable
+                    icon={<MenuBookIcon sx={{ fontSize: "11px !important" }} />}
+                    sx={{
+                      height: 20,
+                      fontSize: "0.68rem",
+                      fontWeight: 600,
+                      backgroundColor: "rgba(99, 102, 241, 0.09)",
+                      color: "#4f46e5",
+                      border: "1px solid rgba(99, 102, 241, 0.25)",
+                      "& .MuiChip-icon": { ml: 0.5, mr: -0.25, color: "#4f46e5" },
+                      "&:hover": {
+                        backgroundColor: "rgba(99, 102, 241, 0.18)",
+                        borderColor: "rgba(99, 102, 241, 0.5)",
+                      },
+                    }}
+                  />
+                </Tooltip>
+              ) : null}
+            </>
           ) : (
             <Chip
               label={`:${service.port}`}
