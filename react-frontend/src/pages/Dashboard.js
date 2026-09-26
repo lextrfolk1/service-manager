@@ -207,7 +207,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
   });
   const [showLiveMetrics, setShowLiveMetrics] = useState(() => {
     const saved = localStorage.getItem("struo_show_live_metrics");
-    return saved !== null ? saved === "true" : true;
+    return saved !== null ? saved === "true" : false;
   });
   const [metrics, setMetrics] = useState({});
   const [draggedServiceName, setDraggedServiceName] = useState("");
