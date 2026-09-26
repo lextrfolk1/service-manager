@@ -3,10 +3,10 @@ import {
   Alert,
   Box,
   Button,
+  ButtonBase,
   Checkbox,
   Chip,
   CircularProgress,
-  Divider,
   FormControl,
   InputAdornment,
   InputLabel,
@@ -19,6 +19,7 @@ import {
   Typography,
 } from "@mui/material";
 import {
+  ExpandMore as ExpandMoreIcon,
   FilterList as FilterListIcon,
   PlayArrow as PlayArrowIcon,
   Refresh as RefreshIcon,
@@ -152,6 +153,10 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [groupFilter, setGroupFilter] = useState("all");
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
+  const [draggedServiceName, setDraggedServiceName] = useState("");
+  const [dragOverGroup, setDragOverGroup] = useState("");
+  const [movingServiceName, setMovingServiceName] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
@@ -269,6 +274,32 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
       setError(`Failed to load services: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function moveServiceToGroup(serviceName, targetGroup) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service || service.group === targetGroup || movingServiceName) return;
+
+    setMovingServiceName(serviceName);
+    try {
+      const updatedConfig = await api.get("/config");
+      delete updatedConfig.runtime;
+      const updatedServices = {
+        ...updatedConfig.services,
+        [serviceName]: {
+          ...updatedConfig.services[serviceName],
+          group: targetGroup,
+        },
+      };
+
+      await api.put("/config", { ...updatedConfig, services: updatedServices });
+      setServices(Object.entries(updatedServices).map(([name, definition]) => ({ name, ...definition })));
+      showToast(`${serviceName} moved to ${targetGroup}`, "success");
+    } catch (err) {
+      showToast(`Could not move ${serviceName}: ${err.message}`, "error");
+    } finally {
+      setMovingServiceName("");
     }
   }
 
@@ -677,17 +708,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
           boxShadow: "0 14px 34px rgba(15,23,42,0.05)",
         }}
       >
-        <Stack spacing={1.25}>
-          <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap", alignItems: "center" }}>
-            <Box>
-              <Typography variant="overline" color="text.secondary">
-                Local Stack Overview
-              </Typography>
-              <Typography variant="h6">Manage your local stack without losing screen space</Typography>
-            </Box>
-          </Box>
-
-          <Divider />
+        <Stack spacing={0.75}>
 
           <Stack direction={{ xs: "column", xl: "row" }} spacing={1} justifyContent="space-between">
             <Stack direction="row" spacing={1} flexWrap="wrap">
@@ -697,15 +718,19 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
               <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleBulkStopAll}>
                 Stop all
               </Button>
-              <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={handleStartSelected} disabled={!selectedServices.length}>
-                Start selected
-              </Button>
-              <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleStopSelected} disabled={!selectedServices.length}>
-                Stop selected
-              </Button>
-              <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected} disabled={!selectedServices.length}>
-                Restart
-              </Button>
+              {selectedServices.length > 0 ? (
+                <>
+                  <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={handleStartSelected}>
+                    Start selected
+                  </Button>
+                  <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleStopSelected}>
+                    Stop selected
+                  </Button>
+                  <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected}>
+                    Restart
+                  </Button>
+                </>
+              ) : null}
             </Stack>
             <Stack direction="row" spacing={1} flexWrap="wrap">
               <Button size="small" variant={buildEnabled ? "contained" : "outlined"} color="warning" onClick={() => setBuildEnabled((previous) => !previous)}>
@@ -727,8 +752,13 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
             </Stack>
           </Stack>
 
-          <Stack direction={{ xs: "column", lg: "row" }} spacing={1} alignItems={{ xs: "stretch", lg: "center" }}>
-            <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={0.75}
+            alignItems={{ xs: "stretch", sm: "center" }}
+            sx={{ flexWrap: "wrap" }}
+          >
+            <Box sx={{ flex: "1 1 180px", minWidth: { xs: 0, sm: 180 } }}>
               <TextField
                 fullWidth
                 size="small"
@@ -744,7 +774,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 }}
               />
             </Box>
-            <FormControl size="small" sx={{ minWidth: 150 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 120 }, flex: { sm: "1 1 120px" } }}>
               <InputLabel>Status</InputLabel>
               <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
                 <MenuItem value="all">All</MenuItem>
@@ -756,7 +786,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 <MenuItem value="stopped">Stopped</MenuItem>
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: 150 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 120 }, flex: { sm: "1 1 120px" } }}>
               <InputLabel>Group</InputLabel>
               <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
                 <MenuItem value="all">All groups</MenuItem>
@@ -767,7 +797,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: 150 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 120 }, flex: { sm: "1 1 120px" } }}>
               <InputLabel>Type</InputLabel>
               <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
                 <MenuItem value="all">All types</MenuItem>
@@ -791,23 +821,24 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
             >
               Clear
             </Button>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, ml: { sm: "auto" }, whiteSpace: "nowrap" }}>
+              <Checkbox
+                size="small"
+                checked={allFilteredSelected}
+                indeterminate={someFilteredSelected}
+                onChange={(event) => toggleSelectFiltered(event.target.checked)}
+                inputProps={{ "aria-label": "Select all filtered services" }}
+              />
+              <Typography variant="body2" color="text.secondary">
+                Select filtered
+              </Typography>
+              {selectedServices.length > 0 ? (
+                <Button size="small" variant="text" onClick={() => setSelectedServices([])}>
+                  Clear ({selectedServices.length})
+                </Button>
+              ) : null}
+            </Box>
           </Stack>
-
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "wrap" }}>
-            <Checkbox
-              checked={allFilteredSelected}
-              indeterminate={someFilteredSelected}
-              onChange={(event) => toggleSelectFiltered(event.target.checked)}
-            />
-            <Typography variant="body2" color="text.secondary">
-              Select all filtered services
-            </Typography>
-            {selectedServices.length > 0 ? (
-              <Button size="small" variant="text" onClick={() => setSelectedServices([])}>
-                Clear selection
-              </Button>
-            ) : null}
-          </Box>
         </Stack>
       </Paper>
 
@@ -829,41 +860,89 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
             <Alert severity="info">No services match the current filters.</Alert>
           ) : (
             groupedServices.map(({ group, services: groupServices }) => (
-              <Box key={group}>
-                <Box
+              <Box
+                key={group}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  setDragOverGroup(group);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const serviceName = event.dataTransfer.getData("text/plain") || draggedServiceName;
+                  setDragOverGroup("");
+                  setDraggedServiceName("");
+                  if (serviceName) moveServiceToGroup(serviceName, group);
+                }}
+                sx={{
+                  borderRadius: 2,
+                  outline: dragOverGroup === group ? "2px dashed" : "2px solid transparent",
+                  outlineColor: dragOverGroup === group ? "primary.main" : "transparent",
+                  outlineOffset: 2,
+                }}
+              >
+                <ButtonBase
+                  onClick={() =>
+                    setCollapsedGroups((previous) => ({
+                      ...previous,
+                      [group]: !(previous[group] ?? true),
+                    }))
+                  }
+                  aria-expanded={collapsedGroups[group] === false}
                   sx={{
                     display: "flex",
+                    width: "100%",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    mb: 1.5,
-                    p: 1.5,
-                    borderRadius: 3,
+                    mb: 1,
+                    p: 0.75,
+                    borderRadius: 2,
                     background: "linear-gradient(90deg, rgba(15,23,42,0.04) 0%, rgba(255,255,255,0.8) 100%)",
                     border: "1px solid rgba(148, 163, 184, 0.16)",
+                    textAlign: "left",
                   }}
                 >
-                  <Box>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                     <Typography variant="h6">{group}</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {groupServices.length} services in this operating zone
-                    </Typography>
+                    <Chip label={groupServices.length} size="small" variant="outlined" />
                   </Box>
-                  <Chip label={`${groupServices.length} services`} variant="outlined" />
-                </Box>
-                <Stack spacing={1}>
-                  {groupServices.map((service) => (
-                    <ServiceCard
-                      key={service.name}
-                      service={service}
-                      status={displayStates[service.name]}
-                      reverseDependencies={reverseDependencies[service.name] || []}
-                      isSelected={selectedServices.includes(service.name)}
-                      onSelect={(checked) => toggleSelection(service.name, checked)}
-                      onAction={executeSingleAction}
-                      onViewLogs={onViewLogs}
-                    />
-                  ))}
-                </Stack>
+                  <ExpandMoreIcon
+                    sx={{
+                      transform: collapsedGroups[group] === false ? "rotate(180deg)" : "none",
+                      transition: "transform 160ms ease",
+                    }}
+                  />
+                </ButtonBase>
+                {collapsedGroups[group] === false ? (
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), min(100%, 310px)))",
+                      gap: 1,
+                      alignItems: "stretch",
+                      justifyContent: "start",
+                    }}
+                  >
+                    {groupServices.map((service) => (
+                      <ServiceCard
+                        key={service.name}
+                        service={service}
+                        status={displayStates[service.name]}
+                        reverseDependencies={reverseDependencies[service.name] || []}
+                        isMoving={movingServiceName === service.name}
+                        isSelected={selectedServices.includes(service.name)}
+                        onSelect={(checked) => toggleSelection(service.name, checked)}
+                        onAction={executeSingleAction}
+                        onViewLogs={onViewLogs}
+                        onDragStart={setDraggedServiceName}
+                        onDragEnd={() => {
+                          setDraggedServiceName("");
+                          setDragOverGroup("");
+                        }}
+                      />
+                    ))}
+                  </Box>
+                ) : null}
               </Box>
             ))
           )}

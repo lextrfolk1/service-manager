@@ -5,7 +5,7 @@ import {
   Checkbox,
   Chip,
   Collapse,
-  Divider,
+  IconButton,
   Paper,
   Stack,
   Tooltip,
@@ -23,10 +23,13 @@ function ServiceCard({
   service,
   status,
   reverseDependencies = [],
+  isMoving,
   isSelected,
   onSelect,
   onAction,
   onViewLogs,
+  onDragStart,
+  onDragEnd,
 }) {
   const isBusy = ["queued", "waiting", "starting", "stopping"].includes(status.lifecycleState);
   const canStart = !isBusy && !status.running;
@@ -36,108 +39,119 @@ function ServiceCard({
   return (
     <Paper
       elevation={0}
+      draggable={!isMoving}
+      onDragStart={(event) => {
+        event.dataTransfer.setData("text/plain", service.name);
+        event.dataTransfer.effectAllowed = "move";
+        onDragStart(service.name);
+      }}
+      onDragEnd={onDragEnd}
       sx={{
         p: 1.25,
+        height: "100%",
+        cursor: isMoving ? "progress" : "grab",
+        opacity: isMoving ? 0.6 : 1,
+        "&:active": { cursor: "grabbing" },
         border: "1px solid",
         borderColor: status.error ? "error.light" : "divider",
         borderRadius: 3,
         backgroundColor: "rgba(255,255,255,0.94)",
       }}
     >
-      <Stack spacing={1}>
+      <Stack spacing={0.75} sx={{ height: "100%", minWidth: 0 }}>
         <Box
           sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              lg: "28px minmax(180px, 1.7fr) minmax(220px, 1.2fr) minmax(190px, 1fr) auto",
-            },
-            gap: 1.25,
-            alignItems: "center",
+            display: "flex",
+            gap: 0.5,
+            alignItems: "flex-start",
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", minWidth: 0 }}>
-            <Checkbox
-              checked={isSelected === true}
-              onChange={(event) => onSelect(event.target.checked)}
-              sx={{ p: 0.5, mr: 0.5 }}
-            />
-          </Box>
+          <Checkbox
+            size="small"
+            checked={isSelected === true}
+            onChange={(event) => onSelect(event.target.checked)}
+            inputProps={{ "aria-label": `Select ${service.name}` }}
+            sx={{ p: 0.25, mt: -0.25 }}
+          />
 
-          <Box sx={{ minWidth: 0 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography
+              variant="subtitle2"
+              title={service.name}
+              sx={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
               {service.name}
             </Typography>
-            <Typography variant="caption" color="text.secondary">
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.3 }}
+            >
               {service.description || "No description available"}
             </Typography>
           </Box>
-
-          <Stack direction="row" spacing={0.75} flexWrap="wrap">
-            <Chip label={service.group || "Other"} size="small" />
-            <Chip label={service.type || "Unknown"} size="small" variant="outlined" />
-            {service.port ? <Chip label={`:${service.port}`} size="small" variant="outlined" /> : null}
-            {service.hasBuild ? <Chip label="Build" size="small" color="warning" variant="outlined" /> : null}
-          </Stack>
-
-          <Stack direction="row" spacing={0.75} flexWrap="wrap">
-            <StatusChip state={status.lifecycleState} label={status.lifecycleLabel} />
-            {status.lifecycleState !== "stopped" && status.healthLabel ? (
-              <StatusChip state={status.healthState} label={status.healthLabel} />
-            ) : null}
-          </Stack>
-
-          <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent={{ xs: "flex-start", lg: "flex-end" }}>
-            <Tooltip title={canStart ? "" : isBusy ? "Service is busy" : "Service is already running"}>
-              <span>
-                <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={() => onAction(service.name, "start")} disabled={!canStart}>
-                  Start
-                </Button>
-              </span>
-            </Tooltip>
-            <Tooltip title={canStop ? "" : isBusy ? "Service is busy" : "Service is already stopped"}>
-              <span>
-                <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={() => onAction(service.name, "stop")} disabled={!canStop}>
-                  Stop
-                </Button>
-              </span>
-            </Tooltip>
-            <Tooltip title={canRestart ? "" : "Service is busy"}>
-              <span>
-                <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={() => onAction(service.name, "restart")} disabled={!canRestart}>
-                  Restart
-                </Button>
-              </span>
-            </Tooltip>
-            <Button size="small" variant="text" endIcon={<LaunchIcon />} onClick={() => onViewLogs(service.name)}>
-              Logs
-            </Button>
-          </Stack>
         </Box>
 
-        {(service.dependsOn?.length || reverseDependencies.length) ? (
-          <>
-            <Divider />
-            <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-              {service.dependsOn?.length ? (
-                <Typography variant="caption" color="text.secondary">
-                  Depends on: {service.dependsOn.join(", ")}
-                </Typography>
-              ) : null}
-              {reverseDependencies.length ? (
-                <Typography variant="caption" color="text.secondary">
-                  Required by: {reverseDependencies.join(", ")}
-                </Typography>
-              ) : null}
-            </Box>
-          </>
-        ) : null}
+        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
+          <StatusChip state={status.lifecycleState} label={status.lifecycleLabel} />
+          {status.lifecycleState !== "stopped" && status.healthLabel ? (
+            <StatusChip state={status.healthState} label={status.healthLabel} />
+          ) : null}
+          <Chip label={service.type || "Unknown"} size="small" variant="outlined" />
+          {service.port ? <Chip label={`:${service.port}`} size="small" variant="outlined" /> : null}
+          {service.hasBuild ? <Chip label="Build" size="small" color="warning" variant="outlined" /> : null}
+        </Stack>
 
-        {status.message ? (
-          <Typography variant="caption" color={status.error ? "error.main" : "text.secondary"}>
-            {status.message}
+        {(service.dependsOn?.length || reverseDependencies.length) ? (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            title={[
+              service.dependsOn?.length ? `Depends on: ${service.dependsOn.join(", ")}` : "",
+              reverseDependencies.length ? `Required by: ${reverseDependencies.join(", ")}` : "",
+            ].filter(Boolean).join(" | ")}
+            sx={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+          >
+            {[
+              service.dependsOn?.length ? `Depends on: ${service.dependsOn.join(", ")}` : "",
+              reverseDependencies.length ? `Required by: ${reverseDependencies.join(", ")}` : "",
+            ].filter(Boolean).join(" | ")}
           </Typography>
         ) : null}
+
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 0.5, mt: "auto" }}>
+          <Typography variant="caption" color={status.error ? "error.main" : "text.secondary"} noWrap>
+            {isBusy ? status.message : ""}
+          </Typography>
+          <Stack direction="row" spacing={0}>
+            <Tooltip title={canStart ? "Start" : isBusy ? "Service is busy" : "Service is already running"}>
+              <span>
+                <IconButton size="small" color="primary" aria-label={`Start ${service.name}`} onClick={() => onAction(service.name, "start")} disabled={!canStart}>
+                  <PlayArrowIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={canStop ? "Stop" : isBusy ? "Service is busy" : "Service is already stopped"}>
+              <span>
+                <IconButton size="small" color="error" aria-label={`Stop ${service.name}`} onClick={() => onAction(service.name, "stop")} disabled={!canStop}>
+                  <StopIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={canRestart ? "Restart" : "Service is busy"}>
+              <span>
+                <IconButton size="small" aria-label={`Restart ${service.name}`} onClick={() => onAction(service.name, "restart")} disabled={!canRestart}>
+                  <RefreshIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="View logs">
+              <IconButton size="small" aria-label={`View logs for ${service.name}`} onClick={() => onViewLogs(service.name)}>
+                <LaunchIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+        </Box>
 
         <Collapse in={Boolean(status.error)}>
           {status.error ? (
