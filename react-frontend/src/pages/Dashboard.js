@@ -45,11 +45,11 @@ const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
 const SERVICE_GRID_SX = {
   display: "grid",
   gridTemplateColumns: {
-    xs: "repeat(auto-fill, minmax(min(100%, 220px), 1fr))",
-    sm: "repeat(auto-fill, minmax(max(220px, calc((100% - 32px) / 5)), 1fr))",
-    lg: "repeat(auto-fill, minmax(max(220px, calc((100% - 40px) / 5)), 1fr))",
+    xs: "repeat(auto-fill, minmax(min(100%, 260px), 1fr))",
+    sm: "repeat(auto-fill, minmax(max(260px, calc((100% - 32px) / 4)), 1fr))",
+    lg: "repeat(auto-fill, minmax(max(270px, calc((100% - 48px) / 5)), 1fr))",
   },
-  gap: { xs: 0.75, sm: 1, lg: 1.25 },
+  gap: { xs: 1, sm: 1.25, lg: 1.5 },
   alignItems: "stretch",
 };
 

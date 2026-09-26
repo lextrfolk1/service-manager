@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Alert,
   Box,
-  Chip,
   CircularProgress,
   Divider,
   FormControlLabel,
@@ -25,6 +24,7 @@ import {
   Close as CloseIcon,
   CloudQueue as CloudIcon,
   Computer as ComputerIcon,
+  KeyboardArrowDown as KeyboardArrowDownIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
 } from "@mui/icons-material";
@@ -36,6 +36,7 @@ function BranchSelector({
   isRunning = false,
   isBusy = false,
   onBranchCheckout,
+  fullWidth = true,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [branchData, setBranchData] = useState(null);
@@ -152,51 +153,83 @@ function BranchSelector({
             : `Git: ${currentBranch} - Click to switch branch`
         }
       >
-        <Chip
-          size="small"
-          icon={<CallSplitIcon sx={{ fontSize: "14px !important" }} />}
-          label={
-            <Box component="span" sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
-              <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {currentBranch}
-              </span>
-              {isDirty && (
-                <Box
-                  component="span"
-                  sx={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    bgcolor: "warning.main",
-                    display: "inline-block",
-                    flexShrink: 0,
-                  }}
-                />
-              )}
-            </Box>
-          }
-          onClick={handleOpen}
-          clickable={!isBusy}
+        <Box
+          component="button"
+          type="button"
+          onClick={isBusy ? undefined : handleOpen}
           disabled={isBusy}
-          variant={isDirty ? "filled" : "outlined"}
-          color={isDirty ? "warning" : "default"}
           sx={{
-            height: 22,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 0.5,
+            width: fullWidth ? "100%" : "auto",
+            maxWidth: "100%",
+            height: 24,
+            px: 0.75,
+            py: 0,
+            borderRadius: 1.5,
             fontSize: "0.72rem",
             fontWeight: 600,
             cursor: isBusy ? "default" : "pointer",
-            borderColor: isDirty ? "warning.light" : "rgba(0, 0, 0, 0.15)",
-            backgroundColor: isDirty ? "rgba(237, 108, 2, 0.08)" : "transparent",
+            color: isDirty ? "warning.dark" : "text.secondary",
+            backgroundColor: isDirty ? "rgba(237, 108, 2, 0.08)" : "rgba(15, 23, 42, 0.04)",
+            border: "1px solid",
+            borderColor: isDirty ? "warning.light" : "rgba(148, 163, 184, 0.25)",
+            outline: "none",
+            transition: "all 0.15s ease",
             "&:hover": {
-              backgroundColor: isDirty ? "rgba(237, 108, 2, 0.16)" : "rgba(0, 0, 0, 0.06)",
+              backgroundColor: isBusy ? undefined : isDirty ? "rgba(237, 108, 2, 0.14)" : "rgba(15, 23, 42, 0.08)",
+              borderColor: isBusy ? undefined : "primary.main",
+              color: isBusy ? undefined : "text.primary",
             },
-            "& .MuiChip-label": {
-              px: 0.75,
-              display: "flex",
-              alignItems: "center",
+            "&:focus-visible": {
+              borderColor: "primary.main",
+              boxShadow: "0 0 0 2px rgba(25, 118, 210, 0.2)",
             },
           }}
-        />
+        >
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0, flex: 1 }}>
+            <CallSplitIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.75 }} />
+            <Typography
+              component="span"
+              sx={{
+                fontSize: "0.72rem",
+                fontWeight: 600,
+                color: "inherit",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                lineHeight: 1,
+              }}
+            >
+              {currentBranch}
+            </Typography>
+            {isDirty && (
+              <Box
+                component="span"
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  minWidth: 14,
+                  height: 14,
+                  px: 0.35,
+                  borderRadius: "999px",
+                  bgcolor: "warning.main",
+                  color: "#fff",
+                  fontSize: "0.6rem",
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+              >
+                {uncommittedCount > 0 ? `+${uncommittedCount}` : "●"}
+              </Box>
+            )}
+          </Box>
+          <KeyboardArrowDownIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.45 }} />
+        </Box>
       </Tooltip>
 
       <Popover
