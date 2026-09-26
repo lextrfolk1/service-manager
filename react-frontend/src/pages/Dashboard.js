@@ -45,11 +45,11 @@ const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
 const SERVICE_GRID_SX = {
   display: "grid",
   gridTemplateColumns: {
-    xs: "repeat(auto-fill, minmax(min(100%, 220px), 1fr))",
-    sm: "repeat(auto-fill, minmax(max(220px, calc((100% - 32px) / 5)), 1fr))",
-    lg: "repeat(auto-fill, minmax(max(220px, calc((100% - 40px) / 5)), 1fr))",
+    xs: "repeat(auto-fill, minmax(min(100%, 260px), 1fr))",
+    sm: "repeat(auto-fill, minmax(max(260px, calc((100% - 32px) / 4)), 1fr))",
+    lg: "repeat(auto-fill, minmax(max(270px, calc((100% - 48px) / 5)), 1fr))",
   },
-  gap: { xs: 0.75, sm: 1, lg: 1.25 },
+  gap: { xs: 1, sm: 1.25, lg: 1.5 },
   alignItems: "stretch",
 };
 
@@ -87,6 +87,7 @@ function deriveBaseState(status) {
       healthLabel: "Health unknown",
       message: "Waiting for first status poll",
       error: "",
+      git: null,
     };
   }
 
@@ -119,6 +120,7 @@ function deriveBaseState(status) {
         : "Service is running but health is unavailable"
       : "Service is stopped",
     error: "",
+    git: status.git || null,
   };
 }
 
@@ -137,6 +139,7 @@ function mergeDisplayState(baseState, uiState) {
           : uiState.healthState === "unhealthy"
             ? "Unhealthy"
             : "Health unknown",
+      git: baseState.git,
     };
   }
 
@@ -148,6 +151,7 @@ function mergeDisplayState(baseState, uiState) {
       lifecycleLabel: baseState.lifecycleLabel,
       healthState: baseState.healthState,
       healthLabel: baseState.healthLabel,
+      git: baseState.git,
     };
   }
 
@@ -165,7 +169,14 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [groupFilter, setGroupFilter] = useState("all");
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
-  const [groupedView, setGroupedView] = useState(true);
+  const [groupedView, setGroupedView] = useState(() => {
+    const saved = localStorage.getItem("struo_grouped_view");
+    return saved !== null ? saved === "true" : false;
+  });
+  const [showGitBranches, setShowGitBranches] = useState(() => {
+    const saved = localStorage.getItem("struo_show_git_branches");
+    return saved !== null ? saved === "true" : true;
+  });
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
@@ -447,6 +458,49 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
         error: err.error || err.message,
       });
       showToast(`${serviceName}: ${reason}`, "error");
+    }
+  }
+
+  async function handleBranchCheckout(serviceName, targetBranch, restart = false) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service) return;
+
+    // Immediately update local status so the card reflects the new branch instantly without delay
+    setStatuses((previous) => ({
+      ...previous,
+      [serviceName]: {
+        ...(previous[serviceName] || {}),
+        git: {
+          ...(previous[serviceName]?.git || {}),
+          currentBranch: targetBranch,
+        },
+      },
+    }));
+
+    try {
+      const result = await api.post(`/service/${serviceName}/git/checkout`, {
+        branch: targetBranch,
+        restart,
+      });
+
+      if (restart && result.restarted) {
+        setUiState(serviceName, {
+          lifecycleState: "starting",
+          message: `Restarting on branch ${targetBranch}...`,
+          error: "",
+        });
+      }
+
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+
+      showToast(result.message || `Switched ${serviceName} to branch ${targetBranch}`, "success");
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Branch switch failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
     }
   }
 
@@ -901,11 +955,29 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   <Switch
                     size="small"
                     checked={groupedView}
-                    onChange={(event) => setGroupedView(event.target.checked)}
+                    onChange={(event) => {
+                      setGroupedView(event.target.checked);
+                      localStorage.setItem("struo_grouped_view", String(event.target.checked));
+                    }}
                     inputProps={{ "aria-label": "Group services" }}
                   />
                 }
                 label="Group services"
+                sx={{ ml: 1, whiteSpace: "nowrap" }}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={showGitBranches}
+                    onChange={(event) => {
+                      setShowGitBranches(event.target.checked);
+                      localStorage.setItem("struo_show_git_branches", String(event.target.checked));
+                    }}
+                    inputProps={{ "aria-label": "Toggle Git branches on cards" }}
+                  />
+                }
+                label="Git branches"
                 sx={{ ml: 1, whiteSpace: "nowrap" }}
               />
             </Box>
@@ -996,6 +1068,8 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                         isSelected={selectedServices.includes(service.name)}
                         onSelect={(checked) => toggleSelection(service.name, checked)}
                         onAction={executeSingleAction}
+                        onBranchCheckout={handleBranchCheckout}
+                        showGitBranches={showGitBranches}
                         onViewLogs={onViewLogs}
                         onDragStart={setDraggedServiceName}
                         onDragEnd={() => {
@@ -1019,9 +1093,11 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   isMoving={movingServiceName === service.name}
                   isDraggable={false}
                   showGroup
+                  showGitBranches={showGitBranches}
                   isSelected={selectedServices.includes(service.name)}
                   onSelect={(checked) => toggleSelection(service.name, checked)}
                   onAction={executeSingleAction}
+                  onBranchCheckout={handleBranchCheckout}
                   onViewLogs={onViewLogs}
                 />
               ))}

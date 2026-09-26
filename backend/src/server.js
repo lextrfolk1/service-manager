@@ -131,7 +131,8 @@ app.get("/services", (req, res) => {
       dependsOn: meta.dependsOn || [],
       group: meta.group || null,
       hasBuild: Boolean(meta.build),
-      hasHealthCheck: Boolean(meta.healthCommand)
+      hasHealthCheck: Boolean(meta.healthCommand),
+      enableGit: meta.enableGit !== false && freshConfig.config?.enableGit !== false
     }));
     
     console.log('Returning services list:', list.map(s => s.name));
@@ -268,6 +269,45 @@ app.get("/service/:name/status", async (req, res) => {
   try {
     const freshManager = getFreshManager();
     const result = await freshManager.status(req.params.name);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Git: get lightweight git status
+app.get("/service/:name/git", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const forceFresh = req.query.fresh === "true";
+    const result = await freshManager.getGitInfo(req.params.name, forceFresh);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Git: list branches
+app.get("/service/:name/git/branches", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const shouldFetch = req.query.fetch === "true";
+    const result = await freshManager.getGitBranches(req.params.name, shouldFetch);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Git: checkout branch
+app.post("/service/:name/git/checkout", async (req, res) => {
+  try {
+    const { branch, restart } = req.body || {};
+    if (!branch) {
+      return res.status(400).json({ error: "Missing required 'branch' in request body" });
+    }
+    const freshManager = getFreshManager();
+    const result = await freshManager.checkoutBranch(req.params.name, branch, Boolean(restart));
     res.json(result);
   } catch (err) {
     sendOperationError(res, err);
