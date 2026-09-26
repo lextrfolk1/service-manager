@@ -148,8 +148,8 @@ function BranchSelector({
           size="small"
           icon={<CallSplitIcon sx={{ fontSize: "14px !important" }} />}
           label={
-            <Box component="span" sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <span style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <Box component="span" sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0 }}>
+              <span style={{ maxWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {currentBranch}
               </span>
               {isDirty && (
@@ -161,6 +161,7 @@ function BranchSelector({
                     borderRadius: "50%",
                     bgcolor: "warning.main",
                     display: "inline-block",
+                    flexShrink: 0,
                   }}
                 />
               )}

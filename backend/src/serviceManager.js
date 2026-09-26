@@ -74,6 +74,25 @@ class ServiceManager {
   }
 
   async getGitInfo(name, forceFresh = false) {
+    if (this.config.config?.enableGit === false) {
+      return {
+        isGitRepo: false,
+        currentBranch: null,
+        isDirty: false,
+        uncommittedCount: 0
+      };
+    }
+
+    const svc = this._getService(name);
+    if (svc.enableGit === false) {
+      return {
+        isGitRepo: false,
+        currentBranch: null,
+        isDirty: false,
+        uncommittedCount: 0
+      };
+    }
+
     const resolvedDir = this.getResolvedDir(name);
     if (!resolvedDir) {
       return {
@@ -96,6 +115,31 @@ class ServiceManager {
   }
 
   async getGitBranches(name, shouldFetch = false) {
+    if (this.config.config?.enableGit === false) {
+      return {
+        isGitRepo: false,
+        currentBranch: null,
+        localBranches: [],
+        remoteBranches: [],
+        remotes: [],
+        isDirty: false,
+        uncommittedCount: 0
+      };
+    }
+
+    const svc = this._getService(name);
+    if (svc.enableGit === false) {
+      return {
+        isGitRepo: false,
+        currentBranch: null,
+        localBranches: [],
+        remoteBranches: [],
+        remotes: [],
+        isDirty: false,
+        uncommittedCount: 0
+      };
+    }
+
     const resolvedDir = this.getResolvedDir(name);
     if (!resolvedDir) {
       return {

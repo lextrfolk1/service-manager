@@ -170,6 +170,10 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
   const [groupedView, setGroupedView] = useState(true);
+  const [showGitBranches, setShowGitBranches] = useState(() => {
+    const saved = localStorage.getItem("struo_show_git_branches");
+    return saved !== null ? saved === "true" : true;
+  });
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
@@ -943,6 +947,21 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 label="Group services"
                 sx={{ ml: 1, whiteSpace: "nowrap" }}
               />
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={showGitBranches}
+                    onChange={(event) => {
+                      setShowGitBranches(event.target.checked);
+                      localStorage.setItem("struo_show_git_branches", String(event.target.checked));
+                    }}
+                    inputProps={{ "aria-label": "Toggle Git branches on cards" }}
+                  />
+                }
+                label="Git branches"
+                sx={{ ml: 1, whiteSpace: "nowrap" }}
+              />
             </Box>
           </Box>
         </Box>
@@ -1032,6 +1051,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                         onSelect={(checked) => toggleSelection(service.name, checked)}
                         onAction={executeSingleAction}
                         onBranchCheckout={handleBranchCheckout}
+                        showGitBranches={showGitBranches}
                         onViewLogs={onViewLogs}
                         onDragStart={setDraggedServiceName}
                         onDragEnd={() => {
@@ -1055,6 +1075,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   isMoving={movingServiceName === service.name}
                   isDraggable={false}
                   showGroup
+                  showGitBranches={showGitBranches}
                   isSelected={selectedServices.includes(service.name)}
                   onSelect={(checked) => toggleSelection(service.name, checked)}
                   onAction={executeSingleAction}

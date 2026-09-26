@@ -27,6 +27,7 @@ function ServiceCard({
   isMoving,
   isDraggable = true,
   showGroup = false,
+  showGitBranches = true,
   isSelected,
   onSelect,
   onAction,
@@ -105,13 +106,6 @@ function ServiceCard({
           <Chip label={service.type || "Unknown"} size="small" variant="outlined" />
           {service.port ? <Chip label={`:${service.port}`} size="small" variant="outlined" /> : null}
           {service.hasBuild ? <Chip label="Build" size="small" color="warning" variant="outlined" /> : null}
-          <BranchSelector
-            serviceName={service.name}
-            gitInfo={status.git}
-            isRunning={status.running}
-            isBusy={isBusy}
-            onBranchCheckout={onBranchCheckout}
-          />
         </Stack>
 
         {(service.dependsOn?.length || reverseDependencies.length) ? (
@@ -131,11 +125,23 @@ function ServiceCard({
           </Typography>
         ) : null}
 
-        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 0.5, mt: "auto" }}>
-          <Typography variant="caption" color={status.error ? "error.main" : "text.secondary"} noWrap>
-            {isBusy ? status.message : ""}
-          </Typography>
-          <Stack direction="row" spacing={0}>
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 0.5, mt: "auto", minHeight: 28 }}>
+          <Box sx={{ minWidth: 0, flex: 1, mr: 0.5, display: "flex", alignItems: "center" }}>
+            {isBusy ? (
+              <Typography variant="caption" color={status.error ? "error.main" : "text.secondary"} noWrap>
+                {status.message}
+              </Typography>
+            ) : showGitBranches && service.enableGit !== false && status.git?.isGitRepo ? (
+              <BranchSelector
+                serviceName={service.name}
+                gitInfo={status.git}
+                isRunning={status.running}
+                isBusy={isBusy}
+                onBranchCheckout={onBranchCheckout}
+              />
+            ) : null}
+          </Box>
+          <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }}>
             <Tooltip title={canStart ? "Start" : isBusy ? "Service is busy" : "Service is already running"}>
               <span>
                 <IconButton size="small" color="primary" aria-label={`Start ${service.name}`} onClick={() => onAction(service.name, "start")} disabled={!canStart}>

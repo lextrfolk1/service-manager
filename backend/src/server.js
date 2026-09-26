@@ -131,7 +131,8 @@ app.get("/services", (req, res) => {
       dependsOn: meta.dependsOn || [],
       group: meta.group || null,
       hasBuild: Boolean(meta.build),
-      hasHealthCheck: Boolean(meta.healthCommand)
+      hasHealthCheck: Boolean(meta.healthCommand),
+      enableGit: meta.enableGit !== false && freshConfig.config?.enableGit !== false
     }));
     
     console.log('Returning services list:', list.map(s => s.name));
