@@ -65,6 +65,10 @@ function App() {
       const index = openLogServices.indexOf(serviceName);
       setActiveLogServiceTab(index);
     }
+
+    if (logsRef.current?.addService) {
+      logsRef.current.addService(serviceName);
+    }
     
     // Switch to logs tab
     setCurrentTab(1);
