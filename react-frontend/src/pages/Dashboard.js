@@ -133,6 +133,23 @@ function deriveBaseState(status) {
 function mergeDisplayState(baseState, uiState) {
   if (!uiState) return baseState;
 
+  // If the service is running according to the backend status, do not mask it with stale failed UI states
+  if (baseState.running) {
+    if (uiState.lifecycleState === "stopping" && Date.now() - uiState.updatedAt < 5000) {
+      return {
+        ...baseState,
+        ...uiState,
+        lifecycleLabel: formatLifecycleLabel("stopping"),
+        git: baseState.git,
+      };
+    }
+    return {
+      ...baseState,
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
+      git: baseState.git,
+    };
+  }
+
   const stickyStates = ["queued", "waiting", "starting", "stopping", "failed"];
   if (stickyStates.includes(uiState.lifecycleState)) {
     return {
@@ -462,13 +479,23 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       showToast(`${serviceName} ${action} completed`, "success");
     } catch (err) {
       const reason = categorizeFailure(err);
-      setUiState(serviceName, {
-        lifecycleState: "failed",
-        healthState: "unhealthy",
-        message: reason,
-        error: err.error || err.message,
-      });
-      showToast(`${serviceName}: ${reason}`, "error");
+      const latestStatus = await refreshSingleStatus(serviceName);
+      if (latestStatus?.running) {
+        setUiState(serviceName, {
+          lifecycleState: latestStatus.healthState === "healthy" ? "healthy" : "running",
+          healthState: latestStatus.healthState || "healthy",
+          message: latestStatus.healthState === "healthy" ? "Service is healthy" : "Service is running",
+          error: "",
+        });
+      } else {
+        setUiState(serviceName, {
+          lifecycleState: "failed",
+          healthState: "unhealthy",
+          message: reason,
+          error: err.error || err.message,
+        });
+        showToast(`${serviceName}: ${reason}`, "error");
+      }
     }
   }
 

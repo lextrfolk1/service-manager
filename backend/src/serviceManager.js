@@ -31,6 +31,17 @@ function isProcessAlive(pid) {
   }
 }
 
+function isDaemonService(svc) {
+  if (!svc) return false;
+  if (svc.daemon === true) return true;
+  if (svc.type === "neo4j") return true;
+  const cmd = String(svc.command || "");
+  if (cmd.includes("neo4j start") || cmd.includes("brew services start") || cmd.includes("--daemonize yes")) {
+    return true;
+  }
+  return false;
+}
+
 function createOperationError(message, options = {}) {
   const error = new Error(message);
   error.code = options.code || "operation_failed";
@@ -359,8 +370,40 @@ class ServiceManager {
       });
     }
 
-    // Ensure port is free before starting
-    if (svc.port) {
+    const isDaemon = isDaemonService(svc);
+
+    // 1. If it's a daemon service with a port, check if it's ALREADY running
+    if (isDaemon && svc.port) {
+      const alreadyListening = await isPortOpen(svc.port);
+      if (alreadyListening) {
+        const portProc = await getPortProcess(svc.port, true);
+        if (portProc?.pid) {
+          managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
+        }
+        return {
+          message: `Service ${name} is already running`,
+          pid: portProc?.pid || null,
+          logFile
+        };
+      }
+    }
+
+    // 2. For Neo4j specifically: if port is not open, check if a stale PID file exists
+    if (svc.type === "neo4j" && svc.port) {
+      await new Promise((resolve) => {
+        exec("neo4j status", { shell: true }, (err, stdout) => {
+          if (!err && stdout && stdout.includes("running")) {
+            // neo4j status reports running, but port is not open -> stale pidfile! Clear with neo4j stop
+            exec("neo4j stop", { shell: true }, () => resolve());
+          } else {
+            resolve();
+          }
+        });
+      });
+    }
+
+    // 3. For non-daemon services, ensure port is free before starting
+    if (!isDaemon && svc.port) {
       await killByPort(svc.port);
     }
 
@@ -379,13 +422,37 @@ class ServiceManager {
 
     child.on("exit", () => {
       delete this.processes[name];
-      managedProcesses.delete(name);
+      if (!isDaemon) {
+        managedProcesses.delete(name);
+      }
       invalidatePortCache();
     });
 
-    const exitPromise = new Promise((_, reject) => {
-      child.once("exit", (code, signal) => {
-        if (svc.port) {
+    const exitPromise = new Promise((resolveDaemon, reject) => {
+      child.once("exit", async (code, signal) => {
+        if (isDaemon) {
+          // Daemon launcher process (e.g. "neo4j start")
+          if (code === 0) {
+            // Launcher succeeded; background daemon is starting
+            return resolveDaemon(true);
+          }
+          // If launcher exited non-zero, verify whether port is actually open
+          if (svc.port) {
+            const portOpen = await isPortOpen(svc.port);
+            if (portOpen) {
+              return resolveDaemon(true);
+            }
+          }
+          reject(createOperationError(
+            `Service ${name} exited before becoming ready${code !== null ? ` (code ${code})` : ""}${signal ? ` (${signal})` : ""}`,
+            {
+              code: "command_failed",
+              phase: "start",
+              service: name,
+              details: `Daemon launcher process exited with code ${code}`
+            }
+          ));
+        } else if (svc.port) {
           reject(createOperationError(
             `Service ${name} exited before becoming ready${code !== null ? ` (code ${code})` : ""}${signal ? ` (${signal})` : ""}`,
             {
@@ -409,10 +476,18 @@ class ServiceManager {
 
     if (svc.port) {
       try {
-        await Promise.race([
-          waitForPort(svc.port, 60000),
-          exitPromise
-        ]);
+        if (isDaemon) {
+          // Wait for port ready while daemon finishes initializing
+          await Promise.all([
+            waitForPort(svc.port, 60000),
+            exitPromise
+          ]);
+        } else {
+          await Promise.race([
+            waitForPort(svc.port, 60000),
+            exitPromise
+          ]);
+        }
       } catch (error) {
         delete this.processes[name];
         managedProcesses.delete(name);
@@ -427,7 +502,18 @@ class ServiceManager {
     }
 
     invalidatePortCache();
-    return { message: `Service ${name} started`, pid: child.pid, logFile };
+
+    // For daemon services, lookup the actual background process PID from the listening port
+    let finalPid = child.pid;
+    if (isDaemon && svc.port) {
+      const portProc = await getPortProcess(svc.port, true);
+      if (portProc?.pid) {
+        finalPid = portProc.pid;
+        managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
+      }
+    }
+
+    return { message: `Service ${name} started`, pid: finalPid, logFile };
   }
 
   async stop(name) {
@@ -439,9 +525,22 @@ class ServiceManager {
       await new Promise((resolve, reject) => {
         exec(
           resolvedStopCommand,
-          { cwd: resolvedDir, shell: true },
+          { cwd: resolvedDir, shell: true, timeout: 30000 },
           (err) => {
             if (err) {
+              // If stopCommand returned an error, verify if port is already not in use (already stopped)
+              if (svc.port) {
+                isPortOpen(svc.port).then((open) => {
+                  if (!open) return resolve();
+                  reject(createOperationError(`stopCommand failed for ${name}: ${err.message}`, {
+                    code: "stop_command_failed",
+                    phase: "stop",
+                    service: name,
+                    details: err.message
+                  }));
+                });
+                return;
+              }
               return reject(createOperationError(`stopCommand failed for ${name}: ${err.message}`, {
                 code: "stop_command_failed",
                 phase: "stop",
@@ -493,10 +592,13 @@ class ServiceManager {
         if (isManagedAlive) {
           running = true;
           portConflict = null;
-        } else if (svc.type === "redis" || svc.type === "neo4j") {
+        } else if (svc.type === "redis" || svc.type === "neo4j" || isDaemonService(svc)) {
           // System/database services often run independently as background daemons
           running = true;
           portConflict = null;
+          if (portProc?.pid && !managedProcesses.has(name)) {
+            managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
+          }
         } else {
           // Port is in use by an external or orphaned process!
           running = false;
@@ -550,7 +652,7 @@ class ServiceManager {
       portConflict,
       type: svc.type || null,
       path: svc.path || null,
-      pid: (managedProcesses.get(name)?.pid) || this.processes[name] || null,
+      pid: (managedProcesses.get(name)?.pid) || this.processes[name] || (running && portProc?.pid ? portProc.pid : null),
       git,
     };
   }

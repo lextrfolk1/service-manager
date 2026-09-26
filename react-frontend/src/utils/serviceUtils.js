@@ -145,13 +145,13 @@ export function getServiceLinks(service) {
   const links = [];
 
   // Determine non-HTTP services
-  const isNonHttp = ["redis", "listener"].includes(service.type);
+  const isNonHttp = ["redis", "listener", "neo4j"].includes(service.type);
   if (isNonHttp) {
     return [
       {
         id: "connection",
         label: `${(service.type || "Service").toUpperCase()} Connection`,
-        url: `localhost:${port}`,
+        url: service.type === "neo4j" ? `bolt://localhost:${port}` : `localhost:${port}`,
         path: `:${port}`,
         isCopyOnly: true,
       },
