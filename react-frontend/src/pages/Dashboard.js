@@ -169,7 +169,10 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [groupFilter, setGroupFilter] = useState("all");
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
-  const [groupedView, setGroupedView] = useState(true);
+  const [groupedView, setGroupedView] = useState(() => {
+    const saved = localStorage.getItem("struo_grouped_view");
+    return saved !== null ? saved === "true" : false;
+  });
   const [showGitBranches, setShowGitBranches] = useState(() => {
     const saved = localStorage.getItem("struo_show_git_branches");
     return saved !== null ? saved === "true" : true;
@@ -952,7 +955,10 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   <Switch
                     size="small"
                     checked={groupedView}
-                    onChange={(event) => setGroupedView(event.target.checked)}
+                    onChange={(event) => {
+                      setGroupedView(event.target.checked);
+                      localStorage.setItem("struo_grouped_view", String(event.target.checked));
+                    }}
                     inputProps={{ "aria-label": "Group services" }}
                   />
                 }
