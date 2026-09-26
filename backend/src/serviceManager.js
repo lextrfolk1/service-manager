@@ -5,6 +5,10 @@ const { killByPort, waitForPort, isPortOpen } = require("./utils/portUtils");
 
 const os = require("os");
 const path = require("path");
+const gitUtils = require("./utils/gitUtils");
+
+const gitCache = new Map();
+const GIT_CACHE_TTL_MS = 10000;
 
 function createOperationError(message, options = {}) {
   const error = new Error(message);
@@ -64,6 +68,80 @@ class ServiceManager {
     return svc;
   }
 
+  getResolvedDir(name) {
+    const svc = this._getService(name);
+    return svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
+  }
+
+  async getGitInfo(name, forceFresh = false) {
+    const resolvedDir = this.getResolvedDir(name);
+    if (!resolvedDir) {
+      return {
+        isGitRepo: false,
+        currentBranch: null,
+        isDirty: false,
+        uncommittedCount: 0
+      };
+    }
+
+    const now = Date.now();
+    const cached = gitCache.get(resolvedDir);
+    if (!forceFresh && cached && (now - cached.timestamp < GIT_CACHE_TTL_MS)) {
+      return cached.data;
+    }
+
+    const data = await gitUtils.getGitInfo(resolvedDir);
+    gitCache.set(resolvedDir, { data, timestamp: now });
+    return data;
+  }
+
+  async getGitBranches(name) {
+    const resolvedDir = this.getResolvedDir(name);
+    if (!resolvedDir) {
+      return {
+        isGitRepo: false,
+        currentBranch: null,
+        localBranches: [],
+        remoteBranches: [],
+        isDirty: false,
+        uncommittedCount: 0
+      };
+    }
+    return await gitUtils.getGitBranches(resolvedDir);
+  }
+
+  async checkoutBranch(name, branchName, restart = false) {
+    const resolvedDir = this.getResolvedDir(name);
+    if (!resolvedDir) {
+      throw createOperationError(`Service ${name} does not have a configured directory path`, {
+        code: "invalid_config",
+        phase: "git_checkout",
+        service: name
+      });
+    }
+
+    const result = await gitUtils.checkoutBranch(resolvedDir, branchName);
+    gitCache.delete(resolvedDir);
+
+    const currentStatus = await this.status(name);
+    let restarted = false;
+
+    if (restart && currentStatus.running) {
+      await this.restart(name);
+      restarted = true;
+    }
+
+    return {
+      success: true,
+      service: name,
+      branch: result.currentBranch,
+      restarted,
+      message: restarted
+        ? `Switched ${name} to branch ${result.currentBranch} and restarted`
+        : `Switched ${name} to branch ${result.currentBranch}`
+    };
+  }
+
   async start(name, forceBuild = false) {
     const svc = this._getService(name);
 
@@ -100,6 +178,7 @@ class ServiceManager {
                 details: stderr || stdout || err.message
               }));
             }
+            gitCache.delete(resolvedDir);
             resolve();
           }
         );
@@ -260,6 +339,7 @@ class ServiceManager {
 
     const healthy = checkable ? (running ? true : null) : null;
     const lifecycleState = running ? "running" : "stopped";
+    const git = await this.getGitInfo(name);
 
     return {
       service: name,
@@ -271,7 +351,8 @@ class ServiceManager {
       port: svc.port || null,
       type: svc.type || null,
       path: svc.path || null,
-      pid: this.processes[name] || null
+      pid: this.processes[name] || null,
+      git
     };
   }
 

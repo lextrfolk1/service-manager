@@ -18,6 +18,7 @@ import {
   PlayArrow as PlayArrowIcon,
 } from "@mui/icons-material";
 import StatusChip from "./StatusChip";
+import BranchSelector from "./BranchSelector";
 
 function ServiceCard({
   service,
@@ -29,6 +30,7 @@ function ServiceCard({
   isSelected,
   onSelect,
   onAction,
+  onBranchCheckout,
   onViewLogs,
   onDragStart,
   onDragEnd,
@@ -103,6 +105,13 @@ function ServiceCard({
           <Chip label={service.type || "Unknown"} size="small" variant="outlined" />
           {service.port ? <Chip label={`:${service.port}`} size="small" variant="outlined" /> : null}
           {service.hasBuild ? <Chip label="Build" size="small" color="warning" variant="outlined" /> : null}
+          <BranchSelector
+            serviceName={service.name}
+            gitInfo={status.git}
+            isRunning={status.running}
+            isBusy={isBusy}
+            onBranchCheckout={onBranchCheckout}
+          />
         </Stack>
 
         {(service.dependsOn?.length || reverseDependencies.length) ? (

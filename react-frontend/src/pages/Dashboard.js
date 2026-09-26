@@ -87,6 +87,7 @@ function deriveBaseState(status) {
       healthLabel: "Health unknown",
       message: "Waiting for first status poll",
       error: "",
+      git: null,
     };
   }
 
@@ -119,6 +120,7 @@ function deriveBaseState(status) {
         : "Service is running but health is unavailable"
       : "Service is stopped",
     error: "",
+    git: status.git || null,
   };
 }
 
@@ -137,6 +139,7 @@ function mergeDisplayState(baseState, uiState) {
           : uiState.healthState === "unhealthy"
             ? "Unhealthy"
             : "Health unknown",
+      git: baseState.git,
     };
   }
 
@@ -148,6 +151,7 @@ function mergeDisplayState(baseState, uiState) {
       lifecycleLabel: baseState.lifecycleLabel,
       healthState: baseState.healthState,
       healthLabel: baseState.healthLabel,
+      git: baseState.git,
     };
   }
 
@@ -447,6 +451,37 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
         error: err.error || err.message,
       });
       showToast(`${serviceName}: ${reason}`, "error");
+    }
+  }
+
+  async function handleBranchCheckout(serviceName, targetBranch, restart = false) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service) return;
+
+    if (restart) {
+      setUiState(serviceName, {
+        lifecycleState: "starting",
+        message: `Switching to ${targetBranch} and restarting...`,
+        error: "",
+      });
+    }
+
+    try {
+      const result = await api.post(`/service/${serviceName}/git/checkout`, {
+        branch: targetBranch,
+        restart,
+      });
+
+      await sleep(300);
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+
+      showToast(result.message || `Switched ${serviceName} to branch ${targetBranch}`, "success");
+      return result;
+    } catch (err) {
+      const msg = err.details || err.message || err.error || "Branch switch failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
     }
   }
 
@@ -996,6 +1031,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                         isSelected={selectedServices.includes(service.name)}
                         onSelect={(checked) => toggleSelection(service.name, checked)}
                         onAction={executeSingleAction}
+                        onBranchCheckout={handleBranchCheckout}
                         onViewLogs={onViewLogs}
                         onDragStart={setDraggedServiceName}
                         onDragEnd={() => {
@@ -1022,6 +1058,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   isSelected={selectedServices.includes(service.name)}
                   onSelect={(checked) => toggleSelection(service.name, checked)}
                   onAction={executeSingleAction}
+                  onBranchCheckout={handleBranchCheckout}
                   onViewLogs={onViewLogs}
                 />
               ))}
