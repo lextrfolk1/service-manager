@@ -176,14 +176,30 @@ export function getServiceLinks(service) {
   // 2. API Documentation (Swagger / OpenAPI / ReDoc)
   if (service.docsPath) {
     const cleanDocs = service.docsPath.startsWith("/") ? service.docsPath : `/${service.docsPath}`;
+    const label =
+      cleanDocs.toLowerCase().includes("swagger") || service.type === "java"
+        ? "Swagger UI"
+        : service.type === "python"
+        ? "FastAPI Docs"
+        : "API Documentation";
     links.push({
       id: "docs",
-      label: "API Documentation",
+      label,
       url: `${baseUrl}${cleanDocs}`,
       path: cleanDocs,
       isDocs: true,
       isExternal: true,
     });
+    if (service.type === "java" && cleanDocs !== "/v3/api-docs") {
+      links.push({
+        id: "openapi-spec",
+        label: "OpenAPI Spec (JSON)",
+        url: `${baseUrl}/v3/api-docs`,
+        path: "/v3/api-docs",
+        isSpec: true,
+        isExternal: true,
+      });
+    }
   } else if (service.type === "java") {
     links.push({
       id: "docs",
@@ -257,5 +273,20 @@ export function getServiceLinks(service) {
   });
 
   return links;
+}
+
+export function getDocsLabel(service) {
+  if (!service) return "Docs";
+  const docsPath = (service.docsPath || "").toLowerCase();
+  if (docsPath.includes("swagger")) return "Swagger";
+  if (service.type === "java") return "Swagger";
+  return "Docs";
+}
+
+export function isFrontendService(service) {
+  if (!service) return false;
+  const name = (service.name || "").toLowerCase();
+  const type = (service.type || "").toLowerCase();
+  return type === "npm" || name.includes("frontend") || name.includes("ui");
 }
 
