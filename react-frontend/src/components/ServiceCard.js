@@ -24,6 +24,8 @@ function ServiceCard({
   status,
   reverseDependencies = [],
   isMoving,
+  isDraggable = true,
+  showGroup = false,
   isSelected,
   onSelect,
   onAction,
@@ -39,19 +41,19 @@ function ServiceCard({
   return (
     <Paper
       elevation={0}
-      draggable={!isMoving}
-      onDragStart={(event) => {
+      draggable={isDraggable && !isMoving}
+      onDragStart={isDraggable ? (event) => {
         event.dataTransfer.setData("text/plain", service.name);
         event.dataTransfer.effectAllowed = "move";
         onDragStart(service.name);
-      }}
-      onDragEnd={onDragEnd}
+      } : undefined}
+      onDragEnd={isDraggable ? onDragEnd : undefined}
       sx={{
         p: 1.25,
         height: "100%",
-        cursor: isMoving ? "progress" : "grab",
+        cursor: isMoving ? "progress" : isDraggable ? "grab" : "default",
         opacity: isMoving ? 0.6 : 1,
-        "&:active": { cursor: "grabbing" },
+        ...(isDraggable ? { "&:active": { cursor: "grabbing" } } : {}),
         border: "1px solid",
         borderColor: status.error ? "error.light" : "divider",
         borderRadius: 3,
@@ -97,6 +99,7 @@ function ServiceCard({
           {status.lifecycleState !== "stopped" && status.healthLabel ? (
             <StatusChip state={status.healthState} label={status.healthLabel} />
           ) : null}
+          {showGroup ? <Chip label={service.group || "Other"} size="small" /> : null}
           <Chip label={service.type || "Unknown"} size="small" variant="outlined" />
           {service.port ? <Chip label={`:${service.port}`} size="small" variant="outlined" /> : null}
           {service.hasBuild ? <Chip label="Build" size="small" color="warning" variant="outlined" /> : null}

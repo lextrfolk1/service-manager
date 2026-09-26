@@ -8,6 +8,7 @@ import {
   Chip,
   CircularProgress,
   FormControl,
+  FormControlLabel,
   InputAdornment,
   InputLabel,
   MenuItem,
@@ -15,6 +16,7 @@ import {
   Select,
   Snackbar,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -40,6 +42,16 @@ import {
 } from "../utils/serviceUtils";
 
 const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
+const SERVICE_GRID_SX = {
+  display: "grid",
+  gridTemplateColumns: {
+    xs: "repeat(auto-fill, minmax(min(100%, 220px), 1fr))",
+    sm: "repeat(auto-fill, minmax(max(220px, calc((100% - 32px) / 5)), 1fr))",
+    lg: "repeat(auto-fill, minmax(max(220px, calc((100% - 40px) / 5)), 1fr))",
+  },
+  gap: { xs: 0.75, sm: 1, lg: 1.25 },
+  alignItems: "stretch",
+};
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -153,6 +165,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [groupFilter, setGroupFilter] = useState("all");
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
+  const [groupedView, setGroupedView] = useState(true);
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
@@ -708,9 +721,8 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
           boxShadow: "0 14px 34px rgba(15,23,42,0.05)",
         }}
       >
-        <Stack spacing={0.75}>
-
-          <Stack direction={{ xs: "column", xl: "row" }} spacing={1} justifyContent="space-between">
+        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.75, minWidth: 0 }}>
+          <Box sx={{ display: "contents" }}>
             <Stack direction="row" spacing={1} flexWrap="wrap">
               <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={handleBulkStartAll}>
                 Start all
@@ -750,15 +762,10 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 Run preset
               </Button>
             </Stack>
-          </Stack>
+          </Box>
 
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={0.75}
-            alignItems={{ xs: "stretch", sm: "center" }}
-            sx={{ flexWrap: "wrap" }}
-          >
-            <Box sx={{ flex: "1 1 180px", minWidth: { xs: 0, sm: 180 } }}>
+          <Box sx={{ display: "contents" }}>
+            <Box sx={{ flex: "1 1 220px", minWidth: { xs: "100%", sm: 220 } }}>
               <TextField
                 fullWidth
                 size="small"
@@ -774,7 +781,57 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 }}
               />
             </Box>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 120 }, flex: { sm: "1 1 120px" } }}>
+            <Box
+              component="details"
+              sx={{
+                position: "relative",
+                flex: "0 0 auto",
+                alignSelf: { xs: "flex-start", sm: "auto" },
+                "&[open] .filter-expand": { transform: "rotate(180deg)" },
+              }}
+            >
+              <Box
+                component="summary"
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  cursor: "pointer",
+                  listStyle: "none",
+                  minHeight: 40,
+                  px: 1.25,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 1,
+                  "&::-webkit-details-marker": { display: "none" },
+                }}
+              >
+                <FilterListIcon fontSize="small" />
+                <Typography variant="body2">
+                  Filters{[statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length
+                    ? ` (${[statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length})`
+                    : ""}
+                </Typography>
+                <ExpandMoreIcon className="filter-expand" fontSize="small" sx={{ transition: "transform 160ms ease" }} />
+              </Box>
+              <Stack
+                spacing={1.25}
+                sx={{
+                  position: "absolute",
+                  zIndex: 1300,
+                  top: "calc(100% + 8px)",
+                  right: 0,
+                  width: 280,
+                  maxWidth: "calc(100vw - 32px)",
+                  p: 1.5,
+                  bgcolor: "background.paper",
+                  border: "1px solid",
+                  borderColor: "divider",
+                  borderRadius: 2,
+                  boxShadow: 4,
+                }}
+              >
+            <FormControl size="small" sx={{ width: "100%" }}>
               <InputLabel>Status</InputLabel>
               <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
                 <MenuItem value="all">All</MenuItem>
@@ -786,7 +843,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 <MenuItem value="stopped">Stopped</MenuItem>
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 120 }, flex: { sm: "1 1 120px" } }}>
+            <FormControl size="small" sx={{ width: "100%" }}>
               <InputLabel>Group</InputLabel>
               <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
                 <MenuItem value="all">All groups</MenuItem>
@@ -797,7 +854,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 ))}
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: { xs: "100%", sm: 120 }, flex: { sm: "1 1 120px" } }}>
+            <FormControl size="small" sx={{ width: "100%" }}>
               <InputLabel>Type</InputLabel>
               <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
                 <MenuItem value="all">All types</MenuItem>
@@ -821,7 +878,9 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
             >
               Clear
             </Button>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, ml: { sm: "auto" }, whiteSpace: "nowrap" }}>
+              </Stack>
+            </Box>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, ml: 0, whiteSpace: "nowrap" }}>
               <Checkbox
                 size="small"
                 checked={allFilteredSelected}
@@ -837,9 +896,21 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   Clear ({selectedServices.length})
                 </Button>
               ) : null}
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={groupedView}
+                    onChange={(event) => setGroupedView(event.target.checked)}
+                    inputProps={{ "aria-label": "Group services" }}
+                  />
+                }
+                label="Group services"
+                sx={{ ml: 1, whiteSpace: "nowrap" }}
+              />
             </Box>
-          </Stack>
-        </Stack>
+          </Box>
+        </Box>
       </Paper>
 
       <ProgressPanel summary={operationSummary} steps={operationSummary?.steps} onViewLogs={onViewLogs} />
@@ -856,9 +927,9 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
         }}
       >
         <Stack spacing={3}>
-          {groupedServices.length === 0 ? (
+          {filteredServices.length === 0 ? (
             <Alert severity="info">No services match the current filters.</Alert>
-          ) : (
+          ) : groupedView ? (
             groupedServices.map(({ group, services: groupServices }) => (
               <Box
                 key={group}
@@ -914,15 +985,7 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   />
                 </ButtonBase>
                 {collapsedGroups[group] === false ? (
-                  <Box
-                    sx={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 280px), min(100%, 310px)))",
-                      gap: 1,
-                      alignItems: "stretch",
-                      justifyContent: "start",
-                    }}
-                  >
+                  <Box sx={SERVICE_GRID_SX}>
                     {groupServices.map((service) => (
                       <ServiceCard
                         key={service.name}
@@ -945,6 +1008,24 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 ) : null}
               </Box>
             ))
+          ) : (
+            <Box sx={SERVICE_GRID_SX}>
+              {filteredServices.map((service) => (
+                <ServiceCard
+                  key={service.name}
+                  service={service}
+                  status={displayStates[service.name]}
+                  reverseDependencies={reverseDependencies[service.name] || []}
+                  isMoving={movingServiceName === service.name}
+                  isDraggable={false}
+                  showGroup
+                  isSelected={selectedServices.includes(service.name)}
+                  onSelect={(checked) => toggleSelection(service.name, checked)}
+                  onAction={executeSingleAction}
+                  onViewLogs={onViewLogs}
+                />
+              ))}
+            </Box>
           )}
         </Stack>
       </Paper>
