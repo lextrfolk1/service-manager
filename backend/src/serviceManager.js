@@ -14,6 +14,7 @@ const {
 const os = require("os");
 const path = require("path");
 const gitUtils = require("./utils/gitUtils");
+const { fetchProcessMetrics, formatUptime, formatMemory } = require("./utils/resourceUtils");
 
 const gitCache = new Map();
 const GIT_CACHE_TTL_MS = 10000;
@@ -690,6 +691,94 @@ class ServiceManager {
       freed: result.freed,
       message: result.message || `Successfully freed port ${svc.port}`,
     };
+  }
+
+  async getResourceMetrics(targetNames = null) {
+    const services = this.services;
+    const names = targetNames || Object.keys(services);
+    const servicePidMap = new Map();
+    const allPids = new Set();
+
+    // Gather all listening ports in a single cached call
+    const listeningPorts = await getAllListeningPorts();
+
+    for (const name of names) {
+      const svc = services[name];
+      if (!svc) continue;
+
+      const pids = new Set();
+
+      const managed = managedProcesses.get(name);
+      if (managed?.pid && isProcessAlive(managed.pid)) {
+        pids.add(managed.pid);
+      }
+
+      const instancePid = this.processes[name];
+      if (instancePid && isProcessAlive(instancePid)) {
+        pids.add(instancePid);
+      }
+
+      if (svc.port && listeningPorts[svc.port]?.inUse && listeningPorts[svc.port]?.pid) {
+        pids.add(listeningPorts[svc.port].pid);
+      }
+
+      if (pids.size > 0) {
+        servicePidMap.set(name, [...pids]);
+        pids.forEach((p) => allPids.add(p));
+      }
+    }
+
+    if (allPids.size === 0) {
+      return {};
+    }
+
+    const pidMetrics = await fetchProcessMetrics([...allPids]);
+    const result = {};
+
+    for (const [name, pids] of servicePidMap.entries()) {
+      let totalRssKb = 0;
+      let totalCpu = 0;
+      let maxEtimeSeconds = 0;
+      let maxEtimeStr = "";
+      let primaryPid = pids[0] || null;
+
+      for (const pid of pids) {
+        const m = pidMetrics[pid];
+        if (m) {
+          totalRssKb += m.rssKb || 0;
+          totalCpu += m.cpu || 0;
+          if ((m.etimeSeconds || 0) >= maxEtimeSeconds) {
+            maxEtimeSeconds = m.etimeSeconds || 0;
+            maxEtimeStr = m.etime || maxEtimeStr;
+          }
+        }
+      }
+
+      if (totalRssKb > 0 || maxEtimeSeconds > 0) {
+        const memoryBytes = totalRssKb * 1024;
+        const memoryFormatted = formatMemory(totalRssKb);
+        const cpuPercent = Math.round(totalCpu * 10) / 10;
+        const cpuFormatted = `${cpuPercent.toFixed(1)}% CPU`;
+        const uptimeFormatted = formatUptime(maxEtimeStr);
+        const isWarning = memoryBytes > 800 * 1024 * 1024 || cpuPercent > 60;
+        const isCritical = memoryBytes > 1.5 * 1024 * 1024 * 1024 || cpuPercent > 85;
+
+        result[name] = {
+          pid: primaryPid,
+          memoryBytes,
+          memoryFormatted,
+          cpuPercent,
+          cpuFormatted,
+          uptimeFormatted,
+          rawElapsed: maxEtimeStr,
+          isWarning,
+          isCritical,
+          combinedText: `${memoryFormatted} • ${cpuFormatted} • ${uptimeFormatted}`,
+        };
+      }
+    }
+
+    return result;
   }
 
   // Helper method to check service health using health command

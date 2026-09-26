@@ -147,6 +147,18 @@ app.get("/services", (req, res) => {
   }
 });
 
+// Get live resource metrics (CPU, RAM, Uptime) for running services
+app.get("/services/metrics", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const metrics = await freshManager.getResourceMetrics();
+    res.json({ metrics, timestamp: Date.now() });
+  } catch (error) {
+    console.error("Error in /services/metrics endpoint:", error);
+    res.status(500).json({ error: `Failed to load metrics: ${error.message}` });
+  }
+});
+
 // Get single service metadata
 app.get("/services/:name", (req, res) => {
   // Always use fresh config to catch manual edits

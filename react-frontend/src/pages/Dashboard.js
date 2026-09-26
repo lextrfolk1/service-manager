@@ -205,6 +205,11 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     const saved = localStorage.getItem("struo_show_git_branches");
     return saved !== null ? saved === "true" : true;
   });
+  const [showLiveMetrics, setShowLiveMetrics] = useState(() => {
+    const saved = localStorage.getItem("struo_show_live_metrics");
+    return saved !== null ? saved === "true" : true;
+  });
+  const [metrics, setMetrics] = useState({});
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
@@ -311,6 +316,32 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     const interval = setInterval(() => loadServiceStatuses(normalizedServices), 5000);
     return () => clearInterval(interval);
   }, [normalizedServices]);
+
+  useEffect(() => {
+    if (!showLiveMetrics) {
+      setMetrics({});
+      return undefined;
+    }
+
+    let isSubscribed = true;
+    async function fetchMetrics() {
+      try {
+        const data = await api.get("/services/metrics");
+        if (isSubscribed && data?.metrics) {
+          setMetrics(data.metrics);
+        }
+      } catch (e) {
+        // Non-blocking
+      }
+    }
+
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 3500);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [showLiveMetrics]);
 
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
@@ -1063,6 +1094,22 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                 label="Git branches"
                 sx={{ ml: 1, whiteSpace: "nowrap" }}
               />
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    color="primary"
+                    checked={showLiveMetrics}
+                    onChange={(event) => {
+                      setShowLiveMetrics(event.target.checked);
+                      localStorage.setItem("struo_show_live_metrics", String(event.target.checked));
+                    }}
+                    inputProps={{ "aria-label": "Toggle Live Resource Monitoring (CPU, RAM, Uptime)" }}
+                  />
+                }
+                label="Live Resources"
+                sx={{ ml: 1, whiteSpace: "nowrap" }}
+              />
             </Box>
           </Box>
         </Box>
@@ -1155,6 +1202,8 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                         onGitPull={handleGitPull}
                         onFreePort={handleFreePort}
                         showGitBranches={showGitBranches}
+                        showLiveMetrics={showLiveMetrics}
+                        metrics={metrics[service.name] || null}
                         onViewLogs={onViewLogs}
                         onCloneService={onCloneService}
                         onEditInAdmin={onEditInAdmin}
@@ -1181,6 +1230,8 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   isDraggable={false}
                   showGroup
                   showGitBranches={showGitBranches}
+                  showLiveMetrics={showLiveMetrics}
+                  metrics={metrics[service.name] || null}
                   isSelected={selectedServices.includes(service.name)}
                   onSelect={(checked) => toggleSelection(service.name, checked)}
                   onAction={executeSingleAction}

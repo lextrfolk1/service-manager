@@ -34,7 +34,10 @@ import {
   PlayArrowRounded as PlayArrowIcon,
   RefreshRounded as RefreshIcon,
   Settings as SettingsIcon,
+  SpeedRounded as SpeedIcon,
   StopRounded as StopIcon,
+  Memory as MemoryIcon,
+  AccessTime as AccessTimeIcon,
   WarningAmber as WarningAmberIcon,
 } from "@mui/icons-material";
 import StatusChip from "./StatusChip";
@@ -49,6 +52,8 @@ function ServiceCard({
   isDraggable = true,
   showGroup = false,
   showGitBranches = true,
+  showLiveMetrics = false,
+  metrics = null,
   isSelected,
   onSelect,
   onAction,
@@ -806,6 +811,65 @@ function ServiceCard({
           />
         ) : null}
       </Box>
+
+      {/* 3.5 Live Resource Monitoring (CPU, RAM & Uptime) */}
+      {/* 3.5 Live Resource Monitoring (CPU, RAM & Uptime) */}
+      {showLiveMetrics && status.running && metrics ? (() => {
+        const cpuVal = parseFloat(metrics.cpuPercent) || 0;
+        const memMB = (metrics.memoryBytes || 0) / (1024 * 1024);
+        const cpuColor = cpuVal > 80 ? '#ef4444' : cpuVal > 40 ? '#f59e0b' : '#10b981';
+        const memColor = memMB > 512 ? '#ef4444' : memMB > 256 ? '#f59e0b' : '#3b82f6';
+        const metricBadge = (icon, label, value, accentColor) => (
+          <Tooltip title={`${label}: ${value}`} arrow placement="top">
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.4,
+                px: 0.75,
+                py: 0.3,
+                borderRadius: '8px',
+                bgcolor: `${accentColor}0D`,
+                border: '1px solid',
+                borderColor: `${accentColor}28`,
+                transition: 'all 0.25s ease',
+                cursor: 'default',
+                '&:hover': {
+                  bgcolor: `${accentColor}1A`,
+                  borderColor: `${accentColor}40`,
+                  transform: 'translateY(-1px)',
+                  boxShadow: `0 2px 8px ${accentColor}18`,
+                },
+              }}
+            >
+              {React.cloneElement(icon, {
+                sx: { fontSize: 12, color: accentColor, flexShrink: 0, opacity: 0.85 },
+              })}
+              <Typography
+                variant="caption"
+                sx={{
+                  fontSize: '0.66rem',
+                  fontWeight: 700,
+                  color: accentColor,
+                  letterSpacing: '-0.01em',
+                  lineHeight: 1,
+                  whiteSpace: 'nowrap',
+                  fontFeatureSettings: '"tnum"',
+                }}
+              >
+                {value}
+              </Typography>
+            </Box>
+          </Tooltip>
+        );
+        return (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.75, flexWrap: 'wrap' }}>
+            {metricBadge(<MemoryIcon />, 'Memory', metrics.memoryFormatted, memColor)}
+            {metricBadge(<SpeedIcon />, 'CPU', metrics.cpuFormatted, cpuColor)}
+            {metricBadge(<AccessTimeIcon />, 'Uptime', metrics.uptimeFormatted, '#64748b')}
+          </Box>
+        );
+      })() : null}
 
       {/* 4. Git Branch Selector */}
       {showGitBranches && service.enableGit !== false && status.git?.isGitRepo ? (
