@@ -124,7 +124,7 @@
     "semantic-service": {
       "type": "java",
       "port": 8083,
-      "path": "${basePaths.java}/semantic-layer",
+      "path": "${basePaths.java}/semantic-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "description": "Semantic service"
     },
@@ -135,6 +135,21 @@
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
       "description": "analytical operation Service"
+    },
+    "intelligence-service": {
+      "type": "java",
+      "port": 8059,
+      "path": "${basePaths.lextrai}/intelligence-service",
+      "command": "mvn spring-boot:run",
+      "build": "mvn clean install -DskipTests",
+      "description": "Intelligence backend service"
+    },
+    "intelligence-ui": {
+      "type": "npm",
+      "port": 5173,
+      "path": "${basePaths.lextrai}/intelligence-ui",
+      "command": "npm run dev -- --host 0.0.0.0",
+      "description": "Intelligence UI development server"
     },
     "redis": {
       "type": "redis",
