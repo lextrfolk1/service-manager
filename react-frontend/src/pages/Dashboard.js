@@ -462,19 +462,19 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
     const service = normalizedServices.find((entry) => entry.name === serviceName);
     if (!service) return;
 
-    if (restart) {
-      setUiState(serviceName, {
-        lifecycleState: "starting",
-        message: `Switching to ${targetBranch} and restarting...`,
-        error: "",
-      });
-    }
-
     try {
       const result = await api.post(`/service/${serviceName}/git/checkout`, {
         branch: targetBranch,
         restart,
       });
+
+      if (restart && result.restarted) {
+        setUiState(serviceName, {
+          lifecycleState: "starting",
+          message: `Restarting on branch ${targetBranch}...`,
+          error: "",
+        });
+      }
 
       await sleep(300);
       await refreshSingleStatus(serviceName);

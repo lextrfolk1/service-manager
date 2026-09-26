@@ -172,8 +172,11 @@ class ServiceManager {
     let restarted = false;
 
     if (restart && currentStatus.running) {
-      await this.restart(name);
       restarted = true;
+      // Trigger restart in background so checkout response returns immediately without hanging
+      this.restart(name).catch((err) => {
+        console.error(`Failed to restart ${name} after checkout:`, err.message);
+      });
     }
 
     return {
@@ -182,7 +185,7 @@ class ServiceManager {
       branch: result.currentBranch,
       restarted,
       message: restarted
-        ? `Switched ${name} to branch ${result.currentBranch} and restarted`
+        ? `Switched ${name} to branch ${result.currentBranch} (restarting...)`
         : `Switched ${name} to branch ${result.currentBranch}`
     };
   }

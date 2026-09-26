@@ -77,8 +77,9 @@ function BranchSelector({
   }
 
   function handleClose() {
-    if (switchingBranch) return;
     setAnchorEl(null);
+    setSearch("");
+    setError("");
   }
 
   async function handleSelectBranch(branch) {
@@ -88,9 +89,10 @@ function BranchSelector({
       return;
     }
 
+    // Close the popover immediately so it never lingers or jumps position
+    handleClose();
+
     try {
-      setSwitchingBranch(branch);
-      setError("");
       if (onBranchCheckout) {
         await onBranchCheckout(serviceName, branch, restartOnSwitch);
       } else {
@@ -99,11 +101,8 @@ function BranchSelector({
           restart: restartOnSwitch,
         });
       }
-      handleClose();
     } catch (err) {
-      setError(err.details || err.message || err.error || "Failed to switch branch");
-    } finally {
-      setSwitchingBranch("");
+      // Error is caught and surfaced via toast notification
     }
   }
 
@@ -195,18 +194,19 @@ function BranchSelector({
         open={isOpen}
         anchorEl={anchorEl}
         onClose={handleClose}
+        disableRestoreFocus
         anchorOrigin={{
-          vertical: "bottom",
+          vertical: "top",
           horizontal: "left",
         }}
         transformOrigin={{
-          vertical: "top",
+          vertical: "bottom",
           horizontal: "left",
         }}
         PaperProps={{
           sx: {
-            width: 330,
-            maxHeight: 460,
+            width: 320,
+            maxHeight: 400,
             p: 1.5,
             borderRadius: 2.5,
             boxShadow: "0 10px 30px rgba(15,23,42,0.18)",
