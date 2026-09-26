@@ -5,11 +5,11 @@
       "active": "dev"
     },
     "basePaths": {
-      "java": "~/Workspace/codebase/lextr",
-      "python": "~/Workspace/codebase/lextr",
-      "npm": "~/Workspace/codebase/lextr",
-      "listener": "~/Workspace/codebase/lextr",
-      "default": "~/Workspace/codebase/lextr"
+      "java": "~/codebase/lextr",
+      "python": "~/codebase/lextr",
+      "npm": "~/codebase/lextr",
+      "listener": "~/codebase/lextr",
+      "default": "~/codebase/lextr"
     }
   },
   "services": {
