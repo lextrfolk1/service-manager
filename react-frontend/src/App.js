@@ -90,6 +90,18 @@ function App() {
     setActiveLogServiceTab(newValue);
   };
 
+  const [adminTarget, setAdminTarget] = useState(null);
+
+  const handleCloneService = (service) => {
+    setAdminTarget({ action: "clone", service });
+    setCurrentTab(2);
+  };
+
+  const handleEditInAdmin = (service) => {
+    setAdminTarget({ action: "edit", service });
+    setCurrentTab(2);
+  };
+
   const handleAddLogService = (serviceName) => {
     if (!openLogServices.includes(serviceName)) {
       const newOpenServices = [...openLogServices, serviceName];
@@ -252,7 +264,12 @@ function App() {
         }}
       >
         <TabPanel value={currentTab} index={0}>
-          <Dashboard ref={dashboardRef} onViewLogs={handleViewLogs} />
+          <Dashboard
+            ref={dashboardRef}
+            onViewLogs={handleViewLogs}
+            onCloneService={handleCloneService}
+            onEditInAdmin={handleEditInAdmin}
+          />
         </TabPanel>
         <TabPanel value={currentTab} index={1}>
           <Logs 
@@ -265,7 +282,11 @@ function App() {
           />
         </TabPanel>
         <TabPanel value={currentTab} index={2}>
-          <Admin onConfigReload={handleConfigReload} />
+          <Admin
+            onConfigReload={handleConfigReload}
+            adminTarget={adminTarget}
+            onClearAdminTarget={() => setAdminTarget(null)}
+          />
         </TabPanel>
         <TabPanel value={currentTab} index={3}>
           <Help />

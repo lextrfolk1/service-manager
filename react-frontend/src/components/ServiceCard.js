@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Alert,
   Box,
@@ -8,6 +8,10 @@ import {
   CircularProgress,
   Collapse,
   IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Paper,
   Stack,
   Tooltip,
@@ -15,10 +19,13 @@ import {
 } from "@mui/material";
 import {
   AccountTree as AccountTreeIcon,
+  ContentCopy as ContentCopyIcon,
   Launch as LaunchIcon,
+  MoreVert as MoreVertIcon,
   OpenInNew as OpenInNewIcon,
   PlayArrowRounded as PlayArrowIcon,
   RefreshRounded as RefreshIcon,
+  Settings as SettingsIcon,
   StopRounded as StopIcon,
 } from "@mui/icons-material";
 import StatusChip from "./StatusChip";
@@ -37,6 +44,8 @@ function ServiceCard({
   onAction,
   onBranchCheckout,
   onViewLogs,
+  onCloneService,
+  onEditInAdmin,
   onDragStart,
   onDragEnd,
 }) {
@@ -44,6 +53,8 @@ function ServiceCard({
   const canStart = !isBusy && !status.running;
   const canStop = !isBusy && status.running;
   const canRestart = !isBusy;
+  const [menuAnchorEl, setMenuAnchorEl] = useState(null);
+  const isMenuOpen = Boolean(menuAnchorEl);
 
   return (
     <Paper
@@ -127,14 +138,89 @@ function ServiceCard({
           </Tooltip>
         </Box>
 
-        <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
+        <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 0.25 }}>
           <StatusChip
             state={status.lifecycleState}
             label={status.lifecycleLabel}
             sx={{ height: 21, fontSize: "0.68rem", px: 0.25 }}
           />
+          <Tooltip title="Options">
+            <IconButton
+              size="small"
+              onClick={(event) => {
+                event.stopPropagation();
+                setMenuAnchorEl(event.currentTarget);
+              }}
+              aria-label={`Options for ${service.name}`}
+              sx={{
+                p: 0.25,
+                borderRadius: 1,
+                color: "text.secondary",
+                "&:hover": { color: "text.primary", bgcolor: "rgba(0,0,0,0.06)" },
+              }}
+            >
+              <MoreVertIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+          </Tooltip>
         </Box>
       </Box>
+
+      {/* 3-dots Context Menu */}
+      <Menu
+        anchorEl={menuAnchorEl}
+        open={isMenuOpen}
+        onClose={() => setMenuAnchorEl(null)}
+        onClick={(event) => event.stopPropagation()}
+        transformOrigin={{ horizontal: "right", vertical: "top" }}
+        anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
+        PaperProps={{
+          sx: {
+            minWidth: 175,
+            borderRadius: 2,
+            boxShadow: "0 10px 30px rgba(15,23,42,0.14)",
+            py: 0.5,
+          },
+        }}
+      >
+        <MenuItem
+          onClick={() => {
+            setMenuAnchorEl(null);
+            if (onCloneService) onCloneService(service);
+          }}
+          sx={{ py: 0.75 }}
+        >
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            <ContentCopyIcon fontSize="small" sx={{ fontSize: 16 }} />
+          </ListItemIcon>
+          <ListItemText primary="Clone in Admin" primaryTypographyProps={{ fontSize: "0.82rem", fontWeight: 600 }} />
+        </MenuItem>
+
+        <MenuItem
+          onClick={() => {
+            setMenuAnchorEl(null);
+            if (onEditInAdmin) onEditInAdmin(service);
+          }}
+          sx={{ py: 0.75 }}
+        >
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            <SettingsIcon fontSize="small" sx={{ fontSize: 16 }} />
+          </ListItemIcon>
+          <ListItemText primary="Configure in Admin" primaryTypographyProps={{ fontSize: "0.82rem" }} />
+        </MenuItem>
+
+        <MenuItem
+          onClick={() => {
+            setMenuAnchorEl(null);
+            if (onViewLogs) onViewLogs(service.name);
+          }}
+          sx={{ py: 0.75 }}
+        >
+          <ListItemIcon sx={{ minWidth: 28 }}>
+            <LaunchIcon fontSize="small" sx={{ fontSize: 16 }} />
+          </ListItemIcon>
+          <ListItemText primary="View Logs" primaryTypographyProps={{ fontSize: "0.82rem" }} />
+        </MenuItem>
+      </Menu>
 
       {/* 2. Description (Consistent 2-line height for grid alignment) */}
       <Tooltip title={service.description || "No description provided"} enterDelay={600}>

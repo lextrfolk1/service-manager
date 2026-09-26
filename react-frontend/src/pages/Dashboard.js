@@ -158,7 +158,7 @@ function mergeDisplayState(baseState, uiState) {
   return baseState;
 }
 
-const Dashboard = forwardRef(({ onViewLogs }, ref) => {
+const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref) => {
   const [services, setServices] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [uiStates, setUiStates] = useState({});
@@ -1071,6 +1071,8 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                         onBranchCheckout={handleBranchCheckout}
                         showGitBranches={showGitBranches}
                         onViewLogs={onViewLogs}
+                        onCloneService={onCloneService}
+                        onEditInAdmin={onEditInAdmin}
                         onDragStart={setDraggedServiceName}
                         onDragEnd={() => {
                           setDraggedServiceName("");
@@ -1099,6 +1101,8 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   onAction={executeSingleAction}
                   onBranchCheckout={handleBranchCheckout}
                   onViewLogs={onViewLogs}
+                  onCloneService={onCloneService}
+                  onEditInAdmin={onEditInAdmin}
                 />
               ))}
             </Box>

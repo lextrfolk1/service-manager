@@ -661,7 +661,31 @@ function ServiceEditor({
   );
 }
 
-const Admin = ({ onConfigReload }) => {
+function getUniqueCloneName(baseName, existingServices) {
+  let candidate = `${baseName}-clone`;
+  let counter = 1;
+  while (existingServices && existingServices[candidate]) {
+    counter += 1;
+    candidate = `${baseName}-clone-${counter}`;
+  }
+  return candidate;
+}
+
+function getSuggestedPort(originalPort, existingServices) {
+  if (!originalPort || isNaN(Number(originalPort))) return "";
+  const existingPorts = new Set(
+    Object.values(existingServices || {})
+      .map((s) => Number(s?.port))
+      .filter(Boolean)
+  );
+  let nextPort = Number(originalPort) + 1;
+  while (existingPorts.has(nextPort) && nextPort < 65535) {
+    nextPort += 1;
+  }
+  return nextPort <= 65535 ? nextPort : "";
+}
+
+const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [config, setConfig] = useState(null);
   const [rawConfig, setRawConfig] = useState("");
@@ -749,6 +773,58 @@ const Admin = ({ onConfigReload }) => {
       }
     }
   }, [onConfigReload]);
+
+  const cloneService = useCallback((serviceToClone) => {
+    if (!serviceToClone) return;
+    const baseName = typeof serviceToClone === "string" ? serviceToClone : serviceToClone.name;
+    const sourceConfig = services[baseName] || (typeof serviceToClone === "object" ? serviceToClone : {});
+    const newName = getUniqueCloneName(baseName, services);
+    const suggestedPort = getSuggestedPort(sourceConfig.port, services);
+
+    const cloned = {
+      type: sourceConfig.type || "",
+      port: suggestedPort,
+      path: sourceConfig.path || "",
+      command: sourceConfig.command || "",
+      stopCommand: sourceConfig.stopCommand || "",
+      healthCommand: sourceConfig.healthCommand || "",
+      build: sourceConfig.build || "",
+      group: sourceConfig.group || "",
+      dependsOn: Array.isArray(sourceConfig.dependsOn) ? [...sourceConfig.dependsOn] : [],
+      description: sourceConfig.description ? `${sourceConfig.description} (Clone)` : "Cloned service",
+      enableGit: sourceConfig.enableGit ?? true,
+    };
+
+    setServices((prev) => ({
+      ...prev,
+      [newName]: cloned,
+    }));
+    setCurrentTab(1);
+    setSelectedService(newName);
+    setServiceFilter("");
+    showSnackbar(`Cloned "${baseName}" as "${newName}". Review settings and click Save.`, "success");
+  }, [services, showSnackbar]);
+
+  const editServiceInAdmin = useCallback((serviceToEdit) => {
+    if (!serviceToEdit) return;
+    const serviceName = typeof serviceToEdit === "string" ? serviceToEdit : serviceToEdit.name;
+    setCurrentTab(1);
+    setSelectedService(serviceName);
+    setServiceFilter("");
+    showSnackbar(`Opened "${serviceName}" in Services configuration.`, "info");
+  }, [showSnackbar]);
+
+  useEffect(() => {
+    if (!adminTarget || loading) return;
+    if (adminTarget.action === "clone") {
+      cloneService(adminTarget.service);
+    } else if (adminTarget.action === "edit") {
+      editServiceInAdmin(adminTarget.service);
+    }
+    if (onClearAdminTarget) {
+      onClearAdminTarget();
+    }
+  }, [adminTarget, loading, cloneService, editServiceInAdmin, onClearAdminTarget]);
 
   useEffect(() => {
     loadConfig({ initial: true });
