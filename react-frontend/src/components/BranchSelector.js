@@ -47,11 +47,11 @@ function BranchSelector({
 
   const isOpen = Boolean(anchorEl);
 
-  const fetchBranches = useCallback(async () => {
+  const fetchBranches = useCallback(async (fetchRemote = false) => {
     try {
       setLoading(true);
       setError("");
-      const data = await api.get(`/service/${serviceName}/git/branches`);
+      const data = await api.get(`/service/${serviceName}/git/branches${fetchRemote ? "?fetch=true" : ""}`);
       setBranchData(data);
     } catch (err) {
       setError(err.message || "Failed to load branches");
@@ -222,9 +222,9 @@ function BranchSelector({
             </Typography>
           </Box>
           <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Tooltip title="Refresh branches">
+            <Tooltip title="Fetch latest branches from remote">
               <span>
-                <IconButton size="small" onClick={fetchBranches} disabled={loading || Boolean(switchingBranch)}>
+                <IconButton size="small" onClick={() => fetchBranches(true)} disabled={loading || Boolean(switchingBranch)}>
                   <RefreshIcon fontSize="small" />
                 </IconButton>
               </span>

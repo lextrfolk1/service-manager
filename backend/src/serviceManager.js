@@ -95,7 +95,7 @@ class ServiceManager {
     return data;
   }
 
-  async getGitBranches(name) {
+  async getGitBranches(name, shouldFetch = false) {
     const resolvedDir = this.getResolvedDir(name);
     if (!resolvedDir) {
       return {
@@ -103,11 +103,12 @@ class ServiceManager {
         currentBranch: null,
         localBranches: [],
         remoteBranches: [],
+        remotes: [],
         isDirty: false,
         uncommittedCount: 0
       };
     }
-    return await gitUtils.getGitBranches(resolvedDir);
+    return await gitUtils.getGitBranches(resolvedDir, shouldFetch);
   }
 
   async checkoutBranch(name, branchName, restart = false) {

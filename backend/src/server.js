@@ -290,7 +290,8 @@ app.get("/service/:name/git", async (req, res) => {
 app.get("/service/:name/git/branches", async (req, res) => {
   try {
     const freshManager = getFreshManager();
-    const result = await freshManager.getGitBranches(req.params.name);
+    const shouldFetch = req.query.fetch === "true";
+    const result = await freshManager.getGitBranches(req.params.name, shouldFetch);
     res.json(result);
   } catch (err) {
     sendOperationError(res, err);

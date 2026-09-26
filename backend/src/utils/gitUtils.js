@@ -69,7 +69,7 @@ async function getGitInfo(dir) {
   };
 }
 
-async function getGitBranches(dir) {
+async function getGitBranches(dir, shouldFetch = false) {
   const isRepo = await isGitRepository(dir);
   if (!isRepo) {
     return {
@@ -77,9 +77,26 @@ async function getGitBranches(dir) {
       currentBranch: null,
       localBranches: [],
       remoteBranches: [],
+      remotes: [],
       isDirty: false,
       uncommittedCount: 0
     };
+  }
+
+  let remotes = [];
+  try {
+    const rawRemotes = await runGit(["remote"], dir, 5000);
+    remotes = rawRemotes.split("\n").map((r) => r.trim()).filter(Boolean);
+  } catch {
+    // Ignore remote detection error
+  }
+
+  if (shouldFetch && remotes.length > 0) {
+    try {
+      await runGit(["fetch", "--prune"], dir, 12000);
+    } catch (e) {
+      console.warn(`Git fetch failed for ${dir}:`, e.message);
+    }
   }
 
   const info = await getGitInfo(dir);
@@ -119,6 +136,7 @@ async function getGitBranches(dir) {
     currentBranch: info.currentBranch,
     localBranches,
     remoteBranches,
+    remotes,
     isDirty: info.isDirty,
     uncommittedCount: info.uncommittedCount
   };
