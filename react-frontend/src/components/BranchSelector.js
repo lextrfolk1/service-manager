@@ -39,13 +39,20 @@ function BranchSelector({
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [branchData, setBranchData] = useState(null);
+  const [optimisticBranch, setOptimisticBranch] = useState(null);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [restartOnSwitch, setRestartOnSwitch] = useState(isRunning);
-  const [switchingBranch, setSwitchingBranch] = useState("");
   const [error, setError] = useState("");
 
   const isOpen = Boolean(anchorEl);
+
+  // Reset optimistic branch when gitInfo prop catches up
+  useEffect(() => {
+    if (gitInfo?.currentBranch && optimisticBranch === gitInfo.currentBranch) {
+      setOptimisticBranch(null);
+    }
+  }, [gitInfo?.currentBranch, optimisticBranch]);
 
   const fetchBranches = useCallback(async (fetchRemote = false) => {
     try {
@@ -67,7 +74,6 @@ function BranchSelector({
     } else {
       setSearch("");
       setError("");
-      setSwitchingBranch("");
     }
   }, [isOpen, isRunning, fetchBranches]);
 
@@ -78,18 +84,20 @@ function BranchSelector({
 
   function handleClose() {
     setAnchorEl(null);
+    setBranchData(null);
     setSearch("");
     setError("");
   }
 
   async function handleSelectBranch(branch) {
-    const currentBranch = branchData?.currentBranch || gitInfo?.currentBranch;
-    if (branch === currentBranch) {
+    const currentActive = optimisticBranch || gitInfo?.currentBranch || branchData?.currentBranch;
+    if (branch === currentActive) {
       handleClose();
       return;
     }
 
-    // Close the popover immediately so it never lingers or jumps position
+    // Immediately update UI optimistically and close the popover
+    setOptimisticBranch(branch);
     handleClose();
 
     try {
@@ -102,11 +110,12 @@ function BranchSelector({
         });
       }
     } catch (err) {
-      // Error is caught and surfaced via toast notification
+      // Revert optimistic branch if checkout failed
+      setOptimisticBranch(null);
     }
   }
 
-  const currentBranch = branchData?.currentBranch || gitInfo?.currentBranch || "detached";
+  const currentBranch = optimisticBranch || gitInfo?.currentBranch || branchData?.currentBranch || "detached";
   const isDirty = branchData?.isDirty ?? gitInfo?.isDirty ?? false;
   const uncommittedCount = branchData?.uncommittedCount ?? gitInfo?.uncommittedCount ?? 0;
 
@@ -225,12 +234,12 @@ function BranchSelector({
           <Box sx={{ display: "flex", alignItems: "center" }}>
             <Tooltip title="Fetch latest branches from remote">
               <span>
-                <IconButton size="small" onClick={() => fetchBranches(true)} disabled={loading || Boolean(switchingBranch)}>
+                <IconButton size="small" onClick={() => fetchBranches(true)} disabled={loading}>
                   <RefreshIcon fontSize="small" />
                 </IconButton>
               </span>
             </Tooltip>
-            <IconButton size="small" onClick={handleClose} disabled={Boolean(switchingBranch)}>
+            <IconButton size="small" onClick={handleClose}>
               <CloseIcon fontSize="small" />
             </IconButton>
           </Box>
@@ -316,13 +325,11 @@ function BranchSelector({
                   </ListSubheader>
                   {filteredLocalBranches.map((branch) => {
                     const isCurrent = branch === currentBranch;
-                    const isSwitching = switchingBranch === branch;
 
                     return (
                       <ListItemButton
                         key={branch}
                         onClick={() => handleSelectBranch(branch)}
-                        disabled={Boolean(switchingBranch)}
                         selected={isCurrent}
                         sx={{
                           py: 0.5,
@@ -332,9 +339,7 @@ function BranchSelector({
                         }}
                       >
                         <ListItemIcon sx={{ minWidth: 26 }}>
-                          {isSwitching ? (
-                            <CircularProgress size={14} />
-                          ) : isCurrent ? (
+                          {isCurrent ? (
                             <CheckIcon fontSize="small" color="primary" />
                           ) : (
                             <ComputerIcon fontSize="small" sx={{ color: "text.disabled", fontSize: 16 }} />
@@ -373,13 +378,10 @@ function BranchSelector({
                     REMOTE BRANCHES ({filteredRemoteBranches.length})
                   </ListSubheader>
                   {filteredRemoteBranches.map((branch) => {
-                    const isSwitching = switchingBranch === branch;
-
                     return (
                       <ListItemButton
                         key={branch}
                         onClick={() => handleSelectBranch(branch)}
-                        disabled={Boolean(switchingBranch)}
                         sx={{
                           py: 0.5,
                           px: 1,
@@ -388,11 +390,7 @@ function BranchSelector({
                         }}
                       >
                         <ListItemIcon sx={{ minWidth: 26 }}>
-                          {isSwitching ? (
-                            <CircularProgress size={14} />
-                          ) : (
-                            <CloudIcon fontSize="small" sx={{ color: "text.disabled", fontSize: 16 }} />
-                          )}
+                          <CloudIcon fontSize="small" sx={{ color: "text.disabled", fontSize: 16 }} />
                         </ListItemIcon>
                         <ListItemText
                           primary={branch}

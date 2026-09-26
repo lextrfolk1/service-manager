@@ -166,7 +166,15 @@ class ServiceManager {
     }
 
     const result = await gitUtils.checkoutBranch(resolvedDir, branchName);
-    gitCache.delete(resolvedDir);
+    gitCache.set(resolvedDir, {
+      data: {
+        isGitRepo: true,
+        currentBranch: result.currentBranch,
+        isDirty: false,
+        uncommittedCount: 0
+      },
+      timestamp: Date.now()
+    });
 
     const currentStatus = await this.status(name);
     let restarted = false;

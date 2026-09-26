@@ -462,6 +462,18 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
     const service = normalizedServices.find((entry) => entry.name === serviceName);
     if (!service) return;
 
+    // Immediately update local status so the card reflects the new branch instantly without delay
+    setStatuses((previous) => ({
+      ...previous,
+      [serviceName]: {
+        ...(previous[serviceName] || {}),
+        git: {
+          ...(previous[serviceName]?.git || {}),
+          currentBranch: targetBranch,
+        },
+      },
+    }));
+
     try {
       const result = await api.post(`/service/${serviceName}/git/checkout`, {
         branch: targetBranch,
@@ -476,13 +488,13 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
         });
       }
 
-      await sleep(300);
       await refreshSingleStatus(serviceName);
       loadServiceStatuses(normalizedServices);
 
       showToast(result.message || `Switched ${serviceName} to branch ${targetBranch}`, "success");
       return result;
     } catch (err) {
+      await refreshSingleStatus(serviceName);
       const msg = err.details || err.message || err.error || "Branch switch failed";
       showToast(`${serviceName}: ${msg}`, "error");
       throw err;
