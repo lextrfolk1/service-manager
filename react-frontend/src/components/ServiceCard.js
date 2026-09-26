@@ -20,6 +20,7 @@ import {
 import {
   AccountTree as AccountTreeIcon,
   ContentCopy as ContentCopyIcon,
+  DownloadRounded as DownloadRoundedIcon,
   Launch as LaunchIcon,
   MoreVert as MoreVertIcon,
   OpenInNew as OpenInNewIcon,
@@ -43,6 +44,7 @@ function ServiceCard({
   onSelect,
   onAction,
   onBranchCheckout,
+  onGitPull,
   onViewLogs,
   onCloneService,
   onEditInAdmin,
@@ -208,6 +210,21 @@ function ServiceCard({
           <ListItemText primary="Configure in Admin" primaryTypographyProps={{ fontSize: "0.82rem" }} />
         </MenuItem>
 
+        {service.enableGit !== false && status.git?.isGitRepo ? (
+          <MenuItem
+            onClick={() => {
+              setMenuAnchorEl(null);
+              if (onGitPull) onGitPull(service.name);
+            }}
+            sx={{ py: 0.75 }}
+          >
+            <ListItemIcon sx={{ minWidth: 28 }}>
+              <DownloadRoundedIcon fontSize="small" sx={{ fontSize: 16 }} />
+            </ListItemIcon>
+            <ListItemText primary="Git Pull" primaryTypographyProps={{ fontSize: "0.82rem" }} />
+          </MenuItem>
+        ) : null}
+
         <MenuItem
           onClick={() => {
             setMenuAnchorEl(null);
@@ -341,6 +358,7 @@ function ServiceCard({
             isRunning={status.running}
             isBusy={isBusy}
             onBranchCheckout={onBranchCheckout}
+            onGitPull={onGitPull}
             fullWidth
           />
         </Box>

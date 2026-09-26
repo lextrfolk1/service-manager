@@ -504,6 +504,36 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     }
   }
 
+  async function handleGitPull(serviceName, restart = false) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service) return;
+
+    try {
+      const result = await api.post(`/service/${serviceName}/git/pull`, {
+        restart,
+      });
+
+      if (restart && result.restarted) {
+        setUiState(serviceName, {
+          lifecycleState: "starting",
+          message: `Restarting after git pull...`,
+          error: "",
+        });
+      }
+
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+
+      showToast(result.message || `Pulled latest changes for ${serviceName}`, "success");
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Git pull failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
   function getExpandedStartTargets(initialTargets) {
     const byName = Object.fromEntries(normalizedServices.map((service) => [service.name, service]));
     const expanded = new Set();
@@ -1069,6 +1099,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                         onSelect={(checked) => toggleSelection(service.name, checked)}
                         onAction={executeSingleAction}
                         onBranchCheckout={handleBranchCheckout}
+                        onGitPull={handleGitPull}
                         showGitBranches={showGitBranches}
                         onViewLogs={onViewLogs}
                         onCloneService={onCloneService}
@@ -1100,6 +1131,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   onSelect={(checked) => toggleSelection(service.name, checked)}
                   onAction={executeSingleAction}
                   onBranchCheckout={handleBranchCheckout}
+                  onGitPull={handleGitPull}
                   onViewLogs={onViewLogs}
                   onCloneService={onCloneService}
                   onEditInAdmin={onEditInAdmin}

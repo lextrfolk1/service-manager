@@ -314,6 +314,18 @@ app.post("/service/:name/git/checkout", async (req, res) => {
   }
 });
 
+// Git: pull latest changes
+app.post("/service/:name/git/pull", async (req, res) => {
+  try {
+    const { restart } = req.body || {};
+    const freshManager = getFreshManager();
+    const result = await freshManager.pullBranch(req.params.name, Boolean(restart));
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
 // Logs: list files
 app.get("/logs/:name", (req, res) => {
   try {

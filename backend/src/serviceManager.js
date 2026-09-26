@@ -170,8 +170,12 @@ class ServiceManager {
       data: {
         isGitRepo: true,
         currentBranch: result.currentBranch,
-        isDirty: false,
-        uncommittedCount: 0
+        isDirty: result.isDirty,
+        uncommittedCount: result.uncommittedCount,
+        ahead: result.ahead,
+        behind: result.behind,
+        hasUpstream: result.hasUpstream,
+        upstreamBranch: result.upstreamBranch
       },
       timestamp: Date.now()
     });
@@ -192,9 +196,78 @@ class ServiceManager {
       service: name,
       branch: result.currentBranch,
       restarted,
+      git: {
+        isGitRepo: true,
+        currentBranch: result.currentBranch,
+        isDirty: result.isDirty,
+        uncommittedCount: result.uncommittedCount,
+        ahead: result.ahead,
+        behind: result.behind,
+        hasUpstream: result.hasUpstream,
+        upstreamBranch: result.upstreamBranch
+      },
       message: restarted
         ? `Switched ${name} to branch ${result.currentBranch} (restarting...)`
         : `Switched ${name} to branch ${result.currentBranch}`
+    };
+  }
+
+  async pullBranch(name, restart = false) {
+    const resolvedDir = this.getResolvedDir(name);
+    if (!resolvedDir) {
+      throw createOperationError(`Service ${name} does not have a configured directory path`, {
+        code: "invalid_config",
+        phase: "git_pull",
+        service: name
+      });
+    }
+
+    const result = await gitUtils.pullBranch(resolvedDir);
+    gitCache.set(resolvedDir, {
+      data: {
+        isGitRepo: true,
+        currentBranch: result.currentBranch,
+        isDirty: result.isDirty,
+        uncommittedCount: result.uncommittedCount,
+        ahead: result.ahead,
+        behind: result.behind,
+        hasUpstream: result.hasUpstream,
+        upstreamBranch: result.upstreamBranch
+      },
+      timestamp: Date.now()
+    });
+
+    const currentStatus = await this.status(name);
+    let restarted = false;
+
+    if (restart && currentStatus.running) {
+      restarted = true;
+      this.restart(name).catch((err) => {
+        console.error(`Failed to restart ${name} after pull:`, err.message);
+      });
+    }
+
+    const firstLine = (result.output || "").split("\n")[0] || "Already up to date.";
+
+    return {
+      success: true,
+      service: name,
+      branch: result.currentBranch,
+      output: result.output,
+      restarted,
+      git: {
+        isGitRepo: true,
+        currentBranch: result.currentBranch,
+        isDirty: result.isDirty,
+        uncommittedCount: result.uncommittedCount,
+        ahead: result.ahead,
+        behind: result.behind,
+        hasUpstream: result.hasUpstream,
+        upstreamBranch: result.upstreamBranch
+      },
+      message: restarted
+        ? `Pulled latest changes for ${name} (${firstLine}) - restarting...`
+        : `Pulled latest changes for ${name}: ${firstLine}`
     };
   }
 
