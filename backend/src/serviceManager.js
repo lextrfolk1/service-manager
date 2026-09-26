@@ -1,7 +1,15 @@
 const { spawn, exec } = require("child_process");
 const fs = require("fs");
 const logger = require("./logger");
-const { killByPort, waitForPort, isPortOpen } = require("./utils/portUtils");
+const {
+  killByPort,
+  waitForPort,
+  isPortOpen,
+  getPortProcess,
+  getAllListeningPorts,
+  killProcessOnPort,
+  invalidatePortCache,
+} = require("./utils/portUtils");
 
 const os = require("os");
 const path = require("path");
@@ -9,6 +17,19 @@ const gitUtils = require("./utils/gitUtils");
 
 const gitCache = new Map();
 const GIT_CACHE_TTL_MS = 10000;
+
+// Shared tracker across ServiceManager instances so PID tracking is preserved
+const managedProcesses = new Map(); // serviceName -> { pid, startedAt }
+
+function isProcessAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
 
 function createOperationError(message, options = {}) {
   const error = new Error(message);
@@ -354,6 +375,13 @@ class ServiceManager {
 
     const child = spawn(resolvedCommand, spawnOptions);
     this.processes[name] = child.pid;
+    managedProcesses.set(name, { pid: child.pid, startedAt: Date.now() });
+
+    child.on("exit", () => {
+      delete this.processes[name];
+      managedProcesses.delete(name);
+      invalidatePortCache();
+    });
 
     const exitPromise = new Promise((_, reject) => {
       child.once("exit", (code, signal) => {
@@ -386,6 +414,9 @@ class ServiceManager {
           exitPromise
         ]);
       } catch (error) {
+        delete this.processes[name];
+        managedProcesses.delete(name);
+        invalidatePortCache();
         throw createOperationError(error.message, {
           code: error.code || (String(error.message).includes("Timeout") ? "startup_timeout" : "command_failed"),
           phase: error.phase || (String(error.message).includes("Timeout") ? "health_check" : "start"),
@@ -395,6 +426,7 @@ class ServiceManager {
       }
     }
 
+    invalidatePortCache();
     return { message: `Service ${name} started`, pid: child.pid, logFile };
   }
 
@@ -428,6 +460,8 @@ class ServiceManager {
     }
 
     delete this.processes[name];
+    managedProcesses.delete(name);
+    invalidatePortCache();
     return { message: `Service ${name} stopped` };
   }
 
@@ -441,33 +475,68 @@ class ServiceManager {
     let running = false;
     let checkable = true;
     let healthState = "unknown";
+    let portConflict = null;
 
-    // For services with ports, check if port is open
+    const managed = managedProcesses.get(name);
+    const isManagedAlive = managed && isProcessAlive(managed.pid);
+    if (!isManagedAlive && managed) {
+      managedProcesses.delete(name);
+      delete this.processes[name];
+    }
+
+    // For services with ports, check if port is open and check for conflicts
     if (svc.port) {
-      running = await isPortOpen(svc.port);
+      const portProc = await getPortProcess(svc.port);
+      const isPortBound = Boolean(portProc && portProc.inUse);
+
+      if (isPortBound) {
+        if (isManagedAlive) {
+          running = true;
+          portConflict = null;
+        } else if (svc.type === "redis" || svc.type === "neo4j") {
+          // System/database services often run independently as background daemons
+          running = true;
+          portConflict = null;
+        } else {
+          // Port is in use by an external or orphaned process!
+          running = false;
+          portConflict = {
+            hasConflict: true,
+            port: svc.port,
+            pid: portProc.pid,
+            command: portProc.command || "unknown",
+            user: portProc.user || null,
+            message: `Port ${svc.port} in use by PID ${portProc.pid}${portProc.command ? ` (${portProc.command})` : ""}`,
+          };
+        }
+      } else {
+        running = false;
+        portConflict = null;
+      }
+
       healthState = svc.healthCommand
         ? (await this._checkHealthCommand(name, svc) ? "healthy" : "unhealthy")
         : (running ? "port-open" : "unknown");
-    } 
+    }
     // For services with explicit health commands, use health check
     else if (svc.healthCommand) {
       running = await this._checkHealthCommand(name, svc);
       healthState = running ? "healthy" : "unhealthy";
     }
     // For listener services without health commands, mark as not checkable
-    else if (svc.type === 'listener') {
+    else if (svc.type === "listener") {
       checkable = false;
       running = false;
       healthState = "unknown";
     }
     // For other services without ports, check if process is in our tracking
     else {
-      running = !!this.processes[name];
+      running = isManagedAlive;
       healthState = running ? "unknown" : "unknown";
     }
 
     const healthy = checkable ? (running ? true : null) : null;
-    const lifecycleState = running ? "running" : "stopped";
+    const lifecycleState = portConflict?.hasConflict ? "blocked" : (running ? "running" : "stopped");
     const git = await this.getGitInfo(name);
 
     return {
@@ -478,10 +547,46 @@ class ServiceManager {
       lifecycleState,
       healthState,
       port: svc.port || null,
+      portConflict,
       type: svc.type || null,
       path: svc.path || null,
-      pid: this.processes[name] || null,
-      git
+      pid: (managedProcesses.get(name)?.pid) || this.processes[name] || null,
+      git,
+    };
+  }
+
+  async freePort(name) {
+    const svc = this._getService(name);
+    if (!svc.port) {
+      throw createOperationError(`Service ${name} has no port configured`, {
+        code: "invalid_config",
+        phase: "validation",
+        service: name,
+      });
+    }
+
+    const result = await killProcessOnPort(svc.port, { force: true });
+    managedProcesses.delete(name);
+    delete this.processes[name];
+    invalidatePortCache();
+
+    if (!result.success) {
+      throw createOperationError(result.error || `Failed to free port ${svc.port}`, {
+        code: "port_free_failed",
+        phase: "runtime",
+        service: name,
+        details: result.error,
+      });
+    }
+
+    return {
+      success: true,
+      service: name,
+      port: svc.port,
+      killedPid: result.killedPid || null,
+      command: result.command || null,
+      freed: result.freed,
+      message: result.message || `Successfully freed port ${svc.port}`,
     };
   }
 

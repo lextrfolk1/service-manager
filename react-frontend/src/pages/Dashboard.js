@@ -73,6 +73,7 @@ function formatLifecycleLabel(state) {
     stopping: "Stopping",
     stopped: "Stopped",
     failed: "Failed",
+    blocked: "Port Blocked",
   };
   return labels[state] || "Unknown";
 }
@@ -87,11 +88,13 @@ function deriveBaseState(status) {
       healthLabel: "Health unknown",
       message: "Waiting for first status poll",
       error: "",
+      portConflict: null,
       git: null,
     };
   }
 
-  const lifecycleState = status.running ? "running" : "stopped";
+  const hasConflict = Boolean(status.portConflict?.hasConflict);
+  const lifecycleState = hasConflict ? "blocked" : (status.running ? "running" : "stopped");
   const healthState = status.healthState || "unknown";
   const checkable = status.checkable !== false;
 
@@ -107,19 +110,22 @@ function deriveBaseState(status) {
           ? "Unhealthy"
           : healthState === "port-open"
             ? "Port open"
-          : lifecycleState === "stopped"
+          : lifecycleState === "stopped" || lifecycleState === "blocked"
             ? ""
             : checkable
               ? "Health unknown"
               : "No health check",
-    message: status.running
+    message: hasConflict
+      ? status.portConflict.message
+      : status.running
       ? healthState === "healthy"
         ? "Service is healthy"
         : healthState === "port-open"
           ? "Service port is open"
         : "Service is running but health is unavailable"
       : "Service is stopped",
-    error: "",
+    error: hasConflict ? status.portConflict.message : "",
+    portConflict: status.portConflict || null,
     git: status.git || null,
   };
 }
@@ -139,6 +145,7 @@ function mergeDisplayState(baseState, uiState) {
           : uiState.healthState === "unhealthy"
             ? "Unhealthy"
             : "Health unknown",
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
       git: baseState.git,
     };
   }
@@ -151,11 +158,15 @@ function mergeDisplayState(baseState, uiState) {
       lifecycleLabel: baseState.lifecycleLabel,
       healthState: baseState.healthState,
       healthLabel: baseState.healthLabel,
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
       git: baseState.git,
     };
   }
 
-  return baseState;
+  return {
+    ...baseState,
+    portConflict: baseState.portConflict,
+  };
 }
 
 const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref) => {
@@ -529,6 +540,21 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     } catch (err) {
       await refreshSingleStatus(serviceName);
       const msg = err.details || err.message || err.error || "Git pull failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
+  async function handleFreePort(serviceName) {
+    try {
+      const result = await api.post(`/service/${serviceName}/free-port`);
+      showToast(result.message || `Port freed for ${serviceName}`, "success");
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Failed to free port";
       showToast(`${serviceName}: ${msg}`, "error");
       throw err;
     }
@@ -1100,6 +1126,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                         onAction={executeSingleAction}
                         onBranchCheckout={handleBranchCheckout}
                         onGitPull={handleGitPull}
+                        onFreePort={handleFreePort}
                         showGitBranches={showGitBranches}
                         onViewLogs={onViewLogs}
                         onCloneService={onCloneService}
@@ -1132,6 +1159,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   onAction={executeSingleAction}
                   onBranchCheckout={handleBranchCheckout}
                   onGitPull={handleGitPull}
+                  onFreePort={handleFreePort}
                   onViewLogs={onViewLogs}
                   onCloneService={onCloneService}
                   onEditInAdmin={onEditInAdmin}

@@ -8,6 +8,7 @@ const { execFile } = require("child_process");
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
 const { resolveConfigPath, getConfigMetadata } = require("./configResolver");
+const { killProcessOnPort, getPortProcess } = require("./utils/portUtils");
 let servicesConfigPath = resolveConfigPath();
 
 function resolveHomeDir(inputPath) {
@@ -326,6 +327,43 @@ app.post("/service/:name/git/pull", async (req, res) => {
     res.json(result);
   } catch (err) {
     sendOperationError(res, err);
+  }
+});
+
+// Port: Free port for service (terminate occupying process)
+app.post(["/service/:name/free-port", "/service/:name/kill-port"], async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const result = await freshManager.freePort(req.params.name);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Port: Direct port kill
+app.post("/port/:port/kill", async (req, res) => {
+  try {
+    const port = parseInt(req.params.port, 10);
+    const result = await killProcessOnPort(port, { force: true });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Port: Get process occupying port for service
+app.get("/service/:name/port-process", async (req, res) => {
+  try {
+    const freshConfig = loadConfig();
+    const svc = freshConfig.services[req.params.name];
+    if (!svc || !svc.port) {
+      return res.status(404).json({ error: "Service has no port" });
+    }
+    const proc = await getPortProcess(svc.port, true);
+    res.json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
