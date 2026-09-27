@@ -510,6 +510,18 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       showToast(`${serviceName} ${action} completed`, "success");
     } catch (err) {
       const reason = categorizeFailure(err);
+      const rawError = err.error || err.message || "";
+      // Sanitize raw proxy / network errors — don't leak to UI
+      const sanitizeError = (msg) => {
+        if (!msg) return reason;
+        if (/proxy error|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|network/i.test(msg))
+          return "Unable to reach the backend server. Is it running?";
+        if (/ENOENT|spawn/i.test(msg))
+          return "Service executable not found. Check your configuration.";
+        if (/EADDRINUSE/i.test(msg))
+          return "Port is already in use.";
+        return msg;
+      };
       const latestStatus = await refreshSingleStatus(serviceName);
       if (latestStatus?.running) {
         setUiState(serviceName, {
@@ -523,7 +535,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
           lifecycleState: "failed",
           healthState: "unhealthy",
           message: reason,
-          error: err.error || err.message,
+          error: sanitizeError(rawError),
         });
         showToast(`${serviceName}: ${reason}`, "error");
       }

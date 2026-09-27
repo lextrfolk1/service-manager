@@ -1013,20 +1013,8 @@ function ServiceCard({
             </span>
           </Tooltip>
 
-          <Tooltip title="View logs">
-            <IconButton
-              size="small"
-              aria-label={`View logs for ${service.name}`}
-              onClick={() => onViewLogs(service.name)}
-              sx={{
-                p: 0.5,
-                borderRadius: 1.5,
-                "&:hover": { bgcolor: "rgba(0, 0, 0, 0.06)" },
-              }}
-            >
-              <LaunchIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
+
+
         </Stack>
       </Box>
 
