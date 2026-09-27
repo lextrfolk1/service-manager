@@ -584,52 +584,18 @@ class ServiceManager {
       delete this.processes[name];
     }
 
-    // For services with ports, check if port is open and check for conflicts
+    // For services with ports, check if port is open
     if (svc.port) {
       const portProc = await getPortProcess(svc.port);
       const isPortBound = Boolean(portProc && portProc.inUse);
 
       if (isPortBound) {
-        if (isManagedAlive) {
-          running = true;
-          portConflict = null;
-        } else if (svc.type === "redis" || svc.type === "neo4j" || isDaemonService(svc)) {
-          // System/database services often run independently as background daemons
-          running = true;
-          portConflict = null;
-          if (portProc?.pid && !managedProcesses.has(name)) {
-            managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
-          }
-        } else {
-          // Extract meaningful tokens from the service's own command to match against the port process
-          const NOISE = new Set(["run","start","stop","bin","export","sudo","pwd","host","port","true","false","npm","mvn","dev","set"]);
-          const svcTokens = (svc.command || "")
-            .toLowerCase()
-            .split(/[\s/\\=&|;$(){}"\-]+/)
-            .filter(w => w.length > 2 && !NOISE.has(w) && !/^\d+$/.test(w));
-          const portCmdLower = (portProc.command || "").toLowerCase();
-          const isLikelyOurs = svcTokens.some(token => portCmdLower.includes(token));
-          if (isLikelyOurs) {
-            // Adopt this process — it likely belongs to this service
-            running = true;
-            portConflict = null;
-            managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
-          } else {
-            // Port is in use by an external or orphaned process!
-            running = false;
-            portConflict = {
-              hasConflict: true,
-              port: svc.port,
-              pid: portProc.pid,
-              command: portProc.command || "unknown",
-              user: portProc.user || null,
-              message: `Port ${svc.port} in use by PID ${portProc.pid}${portProc.command ? ` (${portProc.command})` : ""}`,
-            };
-          }
+        running = true;
+        if (portProc?.pid && !managedProcesses.has(name)) {
+          managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
         }
       } else {
         running = false;
-        portConflict = null;
       }
 
       healthState = svc.healthCommand
@@ -654,7 +620,7 @@ class ServiceManager {
     }
 
     const healthy = checkable ? (running ? true : null) : null;
-    const lifecycleState = portConflict?.hasConflict ? "blocked" : (running ? "running" : "stopped");
+    const lifecycleState = running ? "running" : "stopped";
     const git = await this.getGitInfo(name);
 
     return {
@@ -665,10 +631,9 @@ class ServiceManager {
       lifecycleState,
       healthState,
       port: svc.port || null,
-      portConflict,
       type: svc.type || null,
       path: svc.path || null,
-      pid: (managedProcesses.get(name)?.pid) || this.processes[name] || (running && portProc?.pid ? portProc.pid : null),
+      pid: (managedProcesses.get(name)?.pid) || this.processes[name] || null,
       git,
     };
   }

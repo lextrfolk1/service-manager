@@ -38,7 +38,6 @@ import {
   StopRounded as StopIcon,
   Memory as MemoryIcon,
   AccessTime as AccessTimeIcon,
-  WarningAmber as WarningAmberIcon,
 } from "@mui/icons-material";
 import StatusChip from "./StatusChip";
 import BranchSelector from "./BranchSelector";
@@ -73,13 +72,8 @@ function ServiceCard({
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
   const isMenuOpen = Boolean(menuAnchorEl);
   const [linksAnchorEl, setLinksAnchorEl] = useState(null);
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [isFreeingPort, setIsFreeingPort] = useState(false);
   const isLinksOpen = Boolean(linksAnchorEl);
-
-  const hasPortConflict = Boolean(status?.portConflict?.hasConflict);
-  const portConflict = status?.portConflict;
-
+  const [copiedLink, setCopiedLink] = useState(false);
   const links = useMemo(() => getServiceLinks(service), [service]);
   const primaryDocsLink = links.find((l) => l.isDocs);
   const healthLink = links.find((l) => l.isHealth);
@@ -96,20 +90,6 @@ function ServiceCard({
       navigator.clipboard.writeText(url);
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
-    }
-  };
-
-  const handleFreePort = async (event) => {
-    if (event) {
-      event.stopPropagation();
-      event.preventDefault();
-    }
-    if (!onFreePort) return;
-    setIsFreeingPort(true);
-    try {
-      await onFreePort(service.name);
-    } finally {
-      setIsFreeingPort(false);
     }
   };
 
@@ -136,28 +116,20 @@ function ServiceCard({
         opacity: isMoving ? 0.6 : 1,
         ...(isDraggable ? { "&:active": { cursor: "grabbing" } } : {}),
         border: "1px solid",
-        borderColor: hasPortConflict
-          ? "error.main"
-          : status.error
-          ? "error.light"
+        borderColor: status.error
+          ? "rgba(239, 68, 68, 0.3)"
           : status.running
           ? "rgba(34, 197, 94, 0.35)"
           : "rgba(148, 163, 184, 0.22)",
         borderRadius: 2.5,
         backgroundColor: "#ffffff",
-        boxShadow: hasPortConflict
-          ? "0 2px 10px rgba(239, 68, 68, 0.12)"
-          : status.running
+        boxShadow: status.running
           ? "0 2px 8px rgba(34, 197, 94, 0.08)"
           : "0 1px 3px rgba(15, 23, 42, 0.04)",
         transition: "all 0.18s ease-in-out",
         "&:hover": {
-          boxShadow: hasPortConflict
-            ? "0 6px 18px rgba(239, 68, 68, 0.18)"
-            : "0 6px 16px rgba(15, 23, 42, 0.08)",
-          borderColor: hasPortConflict
-            ? "error.dark"
-            : status.error
+          boxShadow: "0 6px 16px rgba(15, 23, 42, 0.08)",
+          borderColor: status.error
             ? "error.main"
             : status.running
             ? "rgba(34, 197, 94, 0.6)"
@@ -247,30 +219,7 @@ function ServiceCard({
           },
         }}
       >
-        {hasPortConflict && portConflict ? (
-          <MenuItem
-            onClick={(e) => {
-              setMenuAnchorEl(null);
-              handleFreePort(e);
-            }}
-            disabled={isFreeingPort}
-            sx={{
-              py: 0.75,
-              bgcolor: "rgba(239, 68, 68, 0.08)",
-              "&:hover": { bgcolor: "rgba(239, 68, 68, 0.16)" },
-            }}
-          >
-            <ListItemIcon sx={{ minWidth: 28, color: "error.main" }}>
-              <WarningAmberIcon fontSize="small" sx={{ fontSize: 16 }} />
-            </ListItemIcon>
-            <ListItemText
-              primary={isFreeingPort ? "Freeing port..." : `Kill & Free Port ${portConflict.port}`}
-              secondary={`Terminate PID ${portConflict.pid}${portConflict.command ? ` (${portConflict.command})` : ""}`}
-              primaryTypographyProps={{ fontSize: "0.82rem", fontWeight: 700, color: "error.main" }}
-              secondaryTypographyProps={{ fontSize: "0.68rem", color: "error.dark" }}
-            />
-          </MenuItem>
-        ) : null}
+
 
         <MenuItem
           onClick={() => {
@@ -504,66 +453,7 @@ function ServiceCard({
         })}
       </Menu>
 
-      {/* Port Conflict Warning Banner */}
-      {hasPortConflict && portConflict ? (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 0.75,
-            p: 0.6,
-            px: 1,
-            mb: 1,
-            borderRadius: 1.5,
-            bgcolor: "rgba(239, 68, 68, 0.08)",
-            border: "1px solid rgba(239, 68, 68, 0.3)",
-          }}
-        >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.6, minWidth: 0, flex: 1 }}>
-            <WarningAmberIcon sx={{ fontSize: 16, color: "error.main", flexShrink: 0 }} />
-            <Tooltip
-              title={`Port ${portConflict.port} is blocked by process PID ${portConflict.pid}${portConflict.command ? ` (${portConflict.command})` : ""}`}
-            >
-              <Typography
-                variant="caption"
-                sx={{
-                  fontSize: "0.72rem",
-                  fontWeight: 650,
-                  color: "error.dark",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                Port {portConflict.port} in use by PID {portConflict.pid}
-                {portConflict.command ? ` (${portConflict.command})` : ""}
-              </Typography>
-            </Tooltip>
-          </Box>
-          <Button
-            size="small"
-            variant="contained"
-            color="error"
-            disabled={isFreeingPort}
-            onClick={handleFreePort}
-            sx={{
-              py: 0.2,
-              px: 0.9,
-              fontSize: "0.68rem",
-              fontWeight: 700,
-              minWidth: 0,
-              textTransform: "none",
-              boxShadow: "none",
-              whiteSpace: "nowrap",
-              borderRadius: 1,
-              flexShrink: 0,
-            }}
-          >
-            {isFreeingPort ? "Freeing..." : "Kill & Free Port"}
-          </Button>
-        </Box>
-      ) : null}
+
 
       {/* 2. Description (Consistent 2-line height for grid alignment) */}
       <Tooltip title={service.description || "No description provided"} enterDelay={600}>
@@ -647,11 +537,7 @@ function ServiceCard({
             <>
               {/* Port & Direct Links Dropdown Chip */}
               <Tooltip
-                title={
-                  hasPortConflict
-                    ? `Port ${service.port} blocked by PID ${portConflict?.pid}${portConflict?.command ? ` (${portConflict.command})` : ""}`
-                    : `Open App & API Links (port ${service.port})${!status.running ? " - Service stopped" : ""}`
-                }
+                title={`Open App & API Links (port ${service.port})${!status.running ? " - Service stopped" : ""}`}
               >
                 <Chip
                   label={`:${service.port}`}
@@ -675,57 +561,29 @@ function ServiceCard({
                     fontSize: "0.68rem",
                     fontFamily: "monospace",
                     fontWeight: 600,
-                    backgroundColor: hasPortConflict
-                      ? "rgba(239, 68, 68, 0.08)"
-                      : status.running
+                    backgroundColor: status.running
                       ? "rgba(34, 197, 94, 0.1)"
                       : "rgba(15, 23, 42, 0.04)",
-                    color: hasPortConflict
-                      ? "#dc2626"
-                      : status.running
+                    color: status.running
                       ? "#166534"
                       : "text.secondary",
                     border: "1px solid",
-                    borderColor: hasPortConflict
-                      ? "#ef4444"
-                      : status.running
+                    borderColor: status.running
                       ? "rgba(34, 197, 94, 0.35)"
                       : "rgba(148, 163, 184, 0.3)",
                     "& .MuiChip-deleteIcon": { mr: 0.25 },
                     "&:hover": {
-                      backgroundColor: hasPortConflict
-                        ? "rgba(239, 68, 68, 0.16)"
-                        : status.running
+                      backgroundColor: status.running
                         ? "rgba(34, 197, 94, 0.2)"
                         : "rgba(15, 23, 42, 0.08)",
-                      borderColor: hasPortConflict ? "error.main" : status.running ? "rgba(34, 197, 94, 0.7)" : "primary.main",
-                      color: hasPortConflict ? "#b91c1c" : status.running ? "#14532d" : "text.primary",
+                      borderColor: status.running ? "rgba(34, 197, 94, 0.7)" : "primary.main",
+                      color: status.running ? "#14532d" : "text.primary",
                     },
                   }}
                 />
               </Tooltip>
 
-              {/* If Port Conflict: Quick Kill & Free Port Chip */}
-              {hasPortConflict ? (
-                <Tooltip title={`Kill process PID ${portConflict?.pid} and free port ${service.port}`}>
-                  <Chip
-                    label={isFreeingPort ? "Freeing..." : "Free Port"}
-                    size="small"
-                    color="error"
-                    clickable
-                    disabled={isFreeingPort}
-                    onClick={handleFreePort}
-                    icon={<WarningAmberIcon sx={{ fontSize: "11px !important" }} />}
-                    sx={{
-                      height: 20,
-                      fontSize: "0.68rem",
-                      fontWeight: 700,
-                      cursor: "pointer",
-                      "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
-                    }}
-                  />
-                </Tooltip>
-              ) : primaryDocsLink ? (
+              {primaryDocsLink ? (
                 /* Dedicated 1-Click Swagger / Docs Chip */
                 <Tooltip
                   title={`Open ${primaryDocsLink.label}: ${primaryDocsLink.url}${!status.running ? " (service stopped)" : ""}`}
@@ -1025,17 +883,6 @@ function ServiceCard({
             severity="error"
             action={
               <Stack direction="row" spacing={0.5} alignItems="center">
-                {hasPortConflict ? (
-                  <Button
-                    color="inherit"
-                    size="small"
-                    disabled={isFreeingPort}
-                    onClick={handleFreePort}
-                    sx={{ fontWeight: 700, textTransform: "none", fontSize: "0.68rem" }}
-                  >
-                    {isFreeingPort ? "Freeing..." : "Free Port"}
-                  </Button>
-                ) : null}
                 <Button color="inherit" size="small" onClick={() => onViewLogs(service.name)}>
                   Logs
                 </Button>
