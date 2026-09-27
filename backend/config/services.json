@@ -126,7 +126,8 @@
       "port": 8083,
       "path": "${basePaths.java}/semantic-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "description": "Semantic service"
+      "description": "Semantic service",
+      "group": "Data"
     },
     "analytics-service": {
       "type": "java",
@@ -163,7 +164,46 @@
       "port": 7687,
       "command": "neo4j start",
       "stopCommand": "neo4j stop",
-      "description": "Neo4j graph database"
+      "description": "Neo4j graph database",
+      "group": "Database"
+    },
+    "postgresql": {
+      "type": "database",
+      "port": 5433,
+      "daemon": true,
+      "command": "brew services start postgresql@17",
+      "stopCommand": "brew services stop postgresql@17",
+      "healthCommand": "pg_isready -h localhost -p 5433",
+      "description": "PostgreSQL 17 relational database",
+      "group": "Database"
+    },
+    "neo4j-augmenta": {
+      "type": "docker",
+      "port": 7476,
+      "daemon": true,
+      "command": "docker start neo4j-augmenta 2>/dev/null || docker run -d --name neo4j-augmenta --restart unless-stopped -p 7476:7474 -p 7699:7687 -e NEO4J_AUTH=neo4j/Mygooru1028$ -e NEO4J_PLUGINS=[\\\"apoc\\\"] -e NEO4J_server_config_strict__validation_enabled=false -v neo4j-augmenta-data:/data neo4j:5",
+      "stopCommand": "docker stop neo4j-augmenta",
+      "healthCommand": "curl -sf http://localhost:7476/ > /dev/null",
+      "description": "Neo4j Augmenta on Docker (Bolt: 7699)",
+      "group": "Database"
+    },
+    "clickhouse": {
+      "type": "docker",
+      "port": 8123,
+      "daemon": true,
+      "command": "docker start clickhouse 2>/dev/null || docker run -d --name clickhouse --restart unless-stopped -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_DB=default -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD= -v clickhouse-data:/var/lib/clickhouse clickhouse/clickhouse-server:24.8",
+      "stopCommand": "docker stop clickhouse",
+      "healthCommand": "curl -sf http://localhost:8123/ping > /dev/null",
+      "description": "ClickHouse analytics database on Docker (9000)"
+    },
+    "opa": {
+      "type": "docker",
+      "port": 8181,
+      "daemon": true,
+      "command": "docker start lextr-opa 2>/dev/null || docker run -d --name lextr-opa --restart unless-stopped -p 8181:8181 openpolicyagent/opa:1.4.2 run --server --addr 0.0.0.0:8181 --v0-compatible --log-level info",
+      "stopCommand": "docker stop lextr-opa",
+      "healthCommand": "curl -sf http://127.0.0.1:8181/health > /dev/null",
+      "description": "Open Policy Agent on Docker"
     }
   }
 }
