@@ -205,6 +205,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const normalizedServices = useMemo(
     () => services.map((service) => normalizeService(service)),
@@ -276,7 +277,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
   }, [filteredServices]);
 
   useEffect(() => {
-    loadServices();
+    loadServices(true);
   }, []);
 
   useEffect(() => {
@@ -316,16 +317,32 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     refreshServices: loadServices,
   }));
 
-  async function loadServices() {
+  async function loadServices(showSpinner = false) {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const data = await api.get("/services");
       setServices(data.services || []);
       setError("");
+      return data.services || [];
     } catch (err) {
       setError(`Failed to load services: ${err.message}`);
+      return [];
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
+    }
+  }
+
+  async function handleRefreshAll() {
+    setIsRefreshing(true);
+    try {
+      const latest = await loadServices(false);
+      const targets = latest.length ? latest.map(normalizeService) : normalizedServices;
+      await loadServiceStatuses(targets);
+      showToast("Service statuses refreshed", "success");
+    } catch (err) {
+      showToast(`Failed to refresh: ${err.message || "Unknown error"}`, "error");
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 400);
     }
   }
 
@@ -831,6 +848,25 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
               </Button>
               <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleBulkStopAll}>
                 Stop all
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={isRefreshing}
+                startIcon={
+                  <RefreshIcon
+                    sx={{
+                      animation: isRefreshing ? "spin 0.8s linear infinite" : "none",
+                      "@keyframes spin": {
+                        "0%": { transform: "rotate(0deg)" },
+                        "100%": { transform: "rotate(360deg)" },
+                      },
+                    }}
+                  />
+                }
+                onClick={handleRefreshAll}
+              >
+                {isRefreshing ? "Refreshing..." : "Refresh"}
               </Button>
               {selectedServices.length > 0 ? (
                 <>
