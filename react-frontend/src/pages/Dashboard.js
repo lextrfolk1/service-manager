@@ -568,16 +568,23 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
 
   async function executeStartFlow(initialTargets) {
     const targetNames = getExpandedStartTargets(initialTargets);
+    const toStartNames = targetNames.filter((name) => !displayStates[name]?.running);
+    if (!toStartNames.length) {
+      showToast("All requested services are already running", "info");
+      return;
+    }
+
+    const alreadyRunning = new Set(targetNames.filter((name) => displayStates[name]?.running));
     const orderedServices = topoSortServices(
-      normalizedServices.filter((service) => targetNames.includes(service.name))
+      normalizedServices.filter((service) => toStartNames.includes(service.name))
     );
     const pending = new Set(orderedServices.map((service) => service.name));
-    const completed = new Set();
+    const completed = new Set(alreadyRunning);
     const failed = new Set();
     const serviceMap = Object.fromEntries(normalizedServices.map((service) => [service.name, service]));
     const dependencyMap = buildDependencyMap(normalizedServices);
 
-    // Initial queued state for all targets
+    // Initial queued state only for services being started
     orderedServices.forEach((service) => {
       setUiState(service.name, {
         lifecycleState: service.dependsOn?.length ? "waiting" : "queued",
@@ -624,18 +631,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
 
       await Promise.all(
         ready.map(async (name) => {
-          const currentDisplayState = displayStates[name];
-          if (currentDisplayState?.running) {
-            setUiState(name, {
-              lifecycleState: "running",
-              message: "Already running",
-              error: "",
-            });
-            completed.add(name);
-            pending.delete(name);
-            return;
-          }
-
           setUiState(name, {
             lifecycleState: "starting",
             message: "Starting now",
@@ -671,15 +666,22 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       );
     }
 
+    const startedCount = completed.size - alreadyRunning.size;
     if (failed.size > 0) {
-      showToast(`Started ${completed.size} of ${targetNames.length} services (${failed.size} failed)`, "warning");
+      showToast(`Started ${startedCount} of ${toStartNames.length} services (${failed.size} failed)`, "warning");
     } else {
-      showToast(`Started ${completed.size} services`, "success");
+      showToast(`Started ${startedCount} service${startedCount === 1 ? "" : "s"}`, "success");
     }
   }
 
   async function executeStopFlow(targetNames) {
-    const order = topoSortServices(normalizedServices.filter((service) => targetNames.includes(service.name)))
+    const runningTargets = targetNames.filter((name) => displayStates[name]?.running);
+    if (!runningTargets.length) {
+      showToast("All selected services are already stopped", "info");
+      return;
+    }
+
+    const order = topoSortServices(normalizedServices.filter((service) => runningTargets.includes(service.name)))
       .map((service) => service.name)
       .reverse();
 
@@ -720,7 +722,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     if (failed > 0) {
       showToast(`Stopped ${order.length - failed} of ${order.length} services (${failed} failed)`, "warning");
     } else {
-      showToast(`Stopped ${order.length} services`, "success");
+      showToast(`Stopped ${order.length} service${order.length === 1 ? "" : "s"}`, "success");
     }
   }
 
