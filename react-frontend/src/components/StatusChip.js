@@ -12,6 +12,7 @@ const STATUS_STYLES = {
   stopping: { label: "Stopping", bg: "#FEE2E2", color: "#B91C1C" },
   stopped: { label: "Stopped", bg: "#F3F4F6", color: "#4B5563" },
   failed: { label: "Failed", bg: "#FEE2E2", color: "#B91C1C" },
+  blocked: { label: "Port Blocked", bg: "#FEF2F2", color: "#DC2626" },
   unknown: { label: "Unknown", bg: "#F3F4F6", color: "#4B5563" },
 };
 

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Alert,
   Box,
+  Button,
+  Chip,
   CircularProgress,
   Divider,
   FormControlLabel,
@@ -24,9 +26,11 @@ import {
   Close as CloseIcon,
   CloudQueue as CloudIcon,
   Computer as ComputerIcon,
+  DownloadRounded as DownloadRoundedIcon,
   KeyboardArrowDown as KeyboardArrowDownIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
+  WarningAmberRounded as WarningAmberIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 
@@ -36,12 +40,14 @@ function BranchSelector({
   isRunning = false,
   isBusy = false,
   onBranchCheckout,
+  onGitPull,
   fullWidth = true,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [branchData, setBranchData] = useState(null);
   const [optimisticBranch, setOptimisticBranch] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [pulling, setPulling] = useState(false);
   const [search, setSearch] = useState("");
   const [restartOnSwitch, setRestartOnSwitch] = useState(isRunning);
   const [error, setError] = useState("");
@@ -90,6 +96,34 @@ function BranchSelector({
     setError("");
   }
 
+  async function handlePull(event) {
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (isBusy || pulling) return;
+
+    try {
+      setPulling(true);
+      setError("");
+      if (onGitPull) {
+        await onGitPull(serviceName, restartOnSwitch);
+      } else {
+        await api.post(`/service/${serviceName}/git/pull`, {
+          restart: restartOnSwitch,
+        });
+      }
+      if (isOpen) {
+        await fetchBranches();
+      }
+    } catch (err) {
+      const msg = err.details || err.message || err.error || "Git pull failed";
+      setError(msg);
+    } finally {
+      setPulling(false);
+    }
+  }
+
   async function handleSelectBranch(branch) {
     const currentActive = optimisticBranch || gitInfo?.currentBranch || branchData?.currentBranch;
     if (branch === currentActive) {
@@ -119,6 +153,10 @@ function BranchSelector({
   const currentBranch = optimisticBranch || gitInfo?.currentBranch || branchData?.currentBranch || "detached";
   const isDirty = branchData?.isDirty ?? gitInfo?.isDirty ?? false;
   const uncommittedCount = branchData?.uncommittedCount ?? gitInfo?.uncommittedCount ?? 0;
+  const ahead = branchData?.ahead ?? gitInfo?.ahead ?? 0;
+  const behind = branchData?.behind ?? gitInfo?.behind ?? 0;
+  const hasUpstream = branchData?.hasUpstream ?? gitInfo?.hasUpstream ?? false;
+  const upstreamBranch = branchData?.upstreamBranch ?? gitInfo?.upstreamBranch ?? null;
 
   const normalizedSearch = search.trim().toLowerCase();
 
@@ -144,94 +182,215 @@ function BranchSelector({
     return null;
   }
 
+  const branchTooltip = [
+    `Branch: ${currentBranch}`,
+    behind > 0 ? `${behind} commit(s) behind ${upstreamBranch || "origin"}` : "",
+    ahead > 0 ? `${ahead} commit(s) ahead of ${upstreamBranch || "origin"}` : "",
+    isDirty ? `${uncommittedCount} uncommitted change(s)` : "",
+    "Click to switch branch",
+  ]
+    .filter(Boolean)
+    .join(" • ");
+
+  const pullTooltip = pulling
+    ? `Pulling latest changes for ${serviceName}...`
+    : behind > 0
+    ? `Git Pull: ${behind} new commit(s) available from ${upstreamBranch || "remote"}`
+    : `Git Pull: Fetch & merge latest commits for ${currentBranch}`;
+
   return (
     <>
-      <Tooltip
-        title={
-          isDirty
-            ? `Git: ${currentBranch} (${uncommittedCount} uncommitted changes) - Click to switch`
-            : `Git: ${currentBranch} - Click to switch branch`
-        }
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.5,
+          width: fullWidth ? "100%" : "auto",
+          minWidth: 0,
+        }}
       >
-        <Box
-          component="button"
-          type="button"
-          onClick={isBusy ? undefined : handleOpen}
-          disabled={isBusy}
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 0.5,
-            width: fullWidth ? "100%" : "auto",
-            maxWidth: "100%",
-            height: 24,
-            px: 0.75,
-            py: 0,
-            borderRadius: 1.5,
-            fontSize: "0.72rem",
-            fontWeight: 600,
-            cursor: isBusy ? "default" : "pointer",
-            color: isDirty ? "warning.dark" : "text.secondary",
-            backgroundColor: isDirty ? "rgba(237, 108, 2, 0.08)" : "rgba(15, 23, 42, 0.04)",
-            border: "1px solid",
-            borderColor: isDirty ? "warning.light" : "rgba(148, 163, 184, 0.25)",
-            outline: "none",
-            transition: "all 0.15s ease",
-            "&:hover": {
-              backgroundColor: isBusy ? undefined : isDirty ? "rgba(237, 108, 2, 0.14)" : "rgba(15, 23, 42, 0.08)",
-              borderColor: isBusy ? undefined : "primary.main",
-              color: isBusy ? undefined : "text.primary",
-            },
-            "&:focus-visible": {
-              borderColor: "primary.main",
-              boxShadow: "0 0 0 2px rgba(25, 118, 210, 0.2)",
-            },
-          }}
-        >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0, flex: 1 }}>
-            <CallSplitIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.75 }} />
-            <Typography
-              component="span"
-              sx={{
-                fontSize: "0.72rem",
-                fontWeight: 600,
-                color: "inherit",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                lineHeight: 1,
-              }}
-            >
-              {currentBranch}
-            </Typography>
-            {isDirty && (
-              <Box
+        {/* Main Branch Selector Button */}
+        <Tooltip title={branchTooltip}>
+          <Box
+            component="button"
+            type="button"
+            onClick={isBusy ? undefined : handleOpen}
+            disabled={isBusy}
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 0.5,
+              minWidth: 0,
+              flex: 1,
+              height: 24,
+              px: 0.75,
+              py: 0,
+              borderRadius: 1.5,
+              fontSize: "0.72rem",
+              fontWeight: 600,
+              cursor: isBusy ? "default" : "pointer",
+              color: isDirty ? "warning.dark" : "text.secondary",
+              backgroundColor: isDirty ? "rgba(237, 108, 2, 0.08)" : "rgba(15, 23, 42, 0.04)",
+              border: "1px solid",
+              borderColor: isDirty ? "warning.light" : "rgba(148, 163, 184, 0.25)",
+              outline: "none",
+              transition: "all 0.15s ease",
+              "&:hover": {
+                backgroundColor: isBusy ? undefined : isDirty ? "rgba(237, 108, 2, 0.14)" : "rgba(15, 23, 42, 0.08)",
+                borderColor: isBusy ? undefined : "primary.main",
+                color: isBusy ? undefined : "text.primary",
+              },
+              "&:focus-visible": {
+                borderColor: "primary.main",
+                boxShadow: "0 0 0 2px rgba(25, 118, 210, 0.2)",
+              },
+            }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0, flex: 1, overflow: "hidden" }}>
+              <CallSplitIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.75 }} />
+              <Typography
                 component="span"
                 sx={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  minWidth: 14,
-                  height: 14,
-                  px: 0.35,
-                  borderRadius: "999px",
-                  bgcolor: "warning.main",
-                  color: "#fff",
-                  fontSize: "0.6rem",
-                  fontWeight: 700,
+                  fontSize: "0.72rem",
+                  fontWeight: 600,
+                  color: "inherit",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
                   lineHeight: 1,
-                  flexShrink: 0,
+                  flex: "1 1 auto",
+                  minWidth: 0,
                 }}
               >
-                {uncommittedCount > 0 ? `+${uncommittedCount}` : "●"}
-              </Box>
-            )}
-          </Box>
-          <KeyboardArrowDownIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.45 }} />
-        </Box>
-      </Tooltip>
+                {currentBranch}
+              </Typography>
 
+              {/* Behind indicator: ↓ count */}
+              {behind > 0 && (
+                <Tooltip title={`${behind} commit(s) behind ${upstreamBranch || "origin"}`}>
+                  <Box
+                    component="span"
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: 15,
+                      px: 0.45,
+                      borderRadius: "4px",
+                      bgcolor: "rgba(2, 132, 199, 0.12)",
+                      color: "#0284c7",
+                      border: "1px solid rgba(2, 132, 199, 0.25)",
+                      fontSize: "0.62rem",
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      flexShrink: 0,
+                    }}
+                  >
+                    ↓{behind}
+                  </Box>
+                </Tooltip>
+              )}
+
+              {/* Ahead indicator: ↑ count */}
+              {ahead > 0 && (
+                <Tooltip title={`${ahead} commit(s) ahead of ${upstreamBranch || "origin"}`}>
+                  <Box
+                    component="span"
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: 15,
+                      px: 0.45,
+                      borderRadius: "4px",
+                      bgcolor: "rgba(99, 102, 241, 0.12)",
+                      color: "#4f46e5",
+                      border: "1px solid rgba(99, 102, 241, 0.25)",
+                      fontSize: "0.62rem",
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      flexShrink: 0,
+                    }}
+                  >
+                    ↑{ahead}
+                  </Box>
+                </Tooltip>
+              )}
+
+              {/* Working Tree Badge: * count */}
+              {isDirty && (
+                <Tooltip title={`Working directory has ${uncommittedCount} uncommitted change(s)`}>
+                  <Box
+                    component="span"
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      height: 15,
+                      px: 0.45,
+                      borderRadius: "4px",
+                      bgcolor: "rgba(245, 158, 11, 0.18)",
+                      color: "#b45309",
+                      border: "1px solid rgba(245, 158, 11, 0.35)",
+                      fontSize: "0.62rem",
+                      fontWeight: 700,
+                      lineHeight: 1,
+                      flexShrink: 0,
+                    }}
+                  >
+                    *{uncommittedCount}
+                  </Box>
+                </Tooltip>
+              )}
+            </Box>
+
+            <KeyboardArrowDownIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.45, ml: 0.25 }} />
+          </Box>
+        </Tooltip>
+
+        {/* Quick Git Pull Button */}
+        <Tooltip title={pullTooltip}>
+          <span>
+            <IconButton
+              size="small"
+              type="button"
+              onClick={handlePull}
+              disabled={isBusy || pulling}
+              aria-label={`Git pull for ${serviceName}`}
+              sx={{
+                width: 24,
+                height: 24,
+                minWidth: 24,
+                p: 0,
+                borderRadius: 1.5,
+                color: behind > 0 ? "#ffffff" : isDirty ? "warning.dark" : "text.secondary",
+                backgroundColor: behind > 0 ? "primary.main" : isDirty ? "rgba(237, 108, 2, 0.08)" : "rgba(15, 23, 42, 0.04)",
+                border: "1px solid",
+                borderColor: behind > 0 ? "primary.main" : isDirty ? "warning.light" : "rgba(148, 163, 184, 0.25)",
+                transition: "all 0.15s ease",
+                "&:hover": {
+                  backgroundColor: behind > 0 ? "primary.dark" : "rgba(15, 23, 42, 0.1)",
+                  borderColor: behind > 0 ? "primary.dark" : "primary.main",
+                  color: behind > 0 ? "#ffffff" : "text.primary",
+                },
+                "&:disabled": {
+                  opacity: 0.5,
+                  cursor: "not-allowed",
+                },
+              }}
+            >
+              {pulling ? (
+                <CircularProgress size={12} sx={{ color: behind > 0 ? "#ffffff" : "primary.main" }} />
+              ) : (
+                <DownloadRoundedIcon sx={{ fontSize: "14px !important" }} />
+              )}
+            </IconButton>
+          </span>
+        </Tooltip>
+      </Box>
+
+      {/* Popover */}
       <Popover
         open={isOpen}
         anchorEl={anchorEl}
@@ -247,8 +406,8 @@ function BranchSelector({
         }}
         PaperProps={{
           sx: {
-            width: 320,
-            maxHeight: 400,
+            width: 330,
+            maxHeight: 440,
             p: 1.5,
             borderRadius: 2.5,
             boxShadow: "0 10px 30px rgba(15,23,42,0.18)",
@@ -257,17 +416,18 @@ function BranchSelector({
           },
         }}
       >
+        {/* Header */}
         <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 1 }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
             <CallSplitIcon color="primary" fontSize="small" />
             <Typography variant="subtitle2" sx={{ fontWeight: 700 }} noWrap>
-              Switch Branch
+              Git Status & Branches
             </Typography>
           </Box>
           <Box sx={{ display: "flex", alignItems: "center" }}>
-            <Tooltip title="Fetch latest branches from remote">
+            <Tooltip title="Fetch latest branches & status from remote">
               <span>
-                <IconButton size="small" onClick={() => fetchBranches(true)} disabled={loading}>
+                <IconButton size="small" onClick={() => fetchBranches(true)} disabled={loading || pulling}>
                   <RefreshIcon fontSize="small" />
                 </IconButton>
               </span>
@@ -278,16 +438,135 @@ function BranchSelector({
           </Box>
         </Box>
 
-        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: "block" }}>
-          Current: <strong>{currentBranch}</strong>
-        </Typography>
+        {/* Current Branch Status Box with direct Pull button */}
+        <Box
+          sx={{
+            p: 1,
+            mb: 1,
+            borderRadius: 1.5,
+            bgcolor: "rgba(15, 23, 42, 0.03)",
+            border: "1px solid rgba(148, 163, 184, 0.18)",
+          }}
+        >
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", fontSize: "0.68rem" }}>
+                CURRENT BRANCH
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 700, fontSize: "0.82rem" }} noWrap>
+                {currentBranch}
+              </Typography>
+            </Box>
 
+            <Button
+              size="small"
+              variant={behind > 0 ? "contained" : "outlined"}
+              onClick={handlePull}
+              disabled={pulling || isBusy}
+              startIcon={
+                pulling ? (
+                  <CircularProgress size={12} color="inherit" />
+                ) : (
+                  <DownloadRoundedIcon sx={{ fontSize: "15px !important" }} />
+                )
+              }
+              sx={{
+                fontSize: "0.72rem",
+                py: 0.25,
+                px: 1,
+                height: 26,
+                textTransform: "none",
+                fontWeight: 600,
+                borderRadius: 1.5,
+                flexShrink: 0,
+              }}
+            >
+              {pulling ? "Pulling..." : behind > 0 ? `Pull (${behind})` : "Git Pull"}
+            </Button>
+          </Box>
+
+          {/* Badges row inside popover */}
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 0.75, alignItems: "center" }}>
+            {behind > 0 ? (
+              <Chip
+                size="small"
+                label={`↓ ${behind} commit${behind > 1 ? "s" : ""} behind`}
+                sx={{
+                  height: 18,
+                  fontSize: "0.65rem",
+                  fontWeight: 600,
+                  bgcolor: "rgba(2, 132, 199, 0.12)",
+                  color: "#0284c7",
+                  border: "1px solid rgba(2, 132, 199, 0.25)",
+                }}
+              />
+            ) : null}
+
+            {ahead > 0 ? (
+              <Chip
+                size="small"
+                label={`↑ ${ahead} commit${ahead > 1 ? "s" : ""} ahead`}
+                sx={{
+                  height: 18,
+                  fontSize: "0.65rem",
+                  fontWeight: 600,
+                  bgcolor: "rgba(99, 102, 241, 0.12)",
+                  color: "#4f46e5",
+                  border: "1px solid rgba(99, 102, 241, 0.25)",
+                }}
+              />
+            ) : null}
+
+            {behind === 0 && ahead === 0 && hasUpstream ? (
+              <Chip
+                size="small"
+                label="Up to date"
+                sx={{
+                  height: 18,
+                  fontSize: "0.65rem",
+                  fontWeight: 600,
+                  bgcolor: "rgba(34, 197, 94, 0.1)",
+                  color: "#166534",
+                  border: "1px solid rgba(34, 197, 94, 0.25)",
+                }}
+              />
+            ) : null}
+
+            {!hasUpstream ? (
+              <Chip
+                size="small"
+                label="No upstream"
+                sx={{
+                  height: 18,
+                  fontSize: "0.65rem",
+                  fontWeight: 500,
+                  bgcolor: "rgba(100, 116, 139, 0.1)",
+                  color: "#64748b",
+                }}
+              />
+            ) : null}
+          </Box>
+        </Box>
+
+        {/* Working Tree Warning if dirty */}
         {isDirty && (
-          <Alert severity="warning" sx={{ mb: 1, py: 0.25, px: 1, fontSize: "0.75rem", borderRadius: 1.5 }}>
-            Working directory has {uncommittedCount} uncommitted change(s).
+          <Alert
+            severity="warning"
+            icon={<WarningAmberIcon fontSize="small" />}
+            sx={{
+              mb: 1,
+              py: 0.25,
+              px: 1,
+              fontSize: "0.74rem",
+              borderRadius: 1.5,
+              "& .MuiAlert-message": { py: 0.25 },
+            }}
+          >
+            Working tree has <strong>{uncommittedCount} uncommitted change(s)</strong>. Stash or commit before switching branches.
           </Alert>
         )}
 
+        {/* Search input */}
         <TextField
           size="small"
           placeholder="Filter branches..."
@@ -305,6 +584,7 @@ function BranchSelector({
           sx={{ mb: 1 }}
         />
 
+        {/* Restart switch */}
         {isRunning && (
           <Box sx={{ mb: 1, px: 0.5 }}>
             <FormControlLabel
@@ -318,7 +598,7 @@ function BranchSelector({
               }
               label={
                 <Typography variant="caption" color="text.secondary">
-                  Restart service after checkout
+                  Restart service after checkout / pull
                 </Typography>
               }
               sx={{ m: 0 }}
@@ -334,7 +614,8 @@ function BranchSelector({
           </Alert>
         )}
 
-        <Box sx={{ overflowY: "auto", flex: 1, maxHeight: 250 }}>
+        {/* Branch List */}
+        <Box sx={{ overflowY: "auto", flex: 1, maxHeight: 230 }}>
           {loading ? (
             <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", py: 4 }}>
               <CircularProgress size={24} />

@@ -73,6 +73,7 @@ function formatLifecycleLabel(state) {
     stopping: "Stopping",
     stopped: "Stopped",
     failed: "Failed",
+    blocked: "Port Blocked",
   };
   return labels[state] || "Unknown";
 }
@@ -87,11 +88,13 @@ function deriveBaseState(status) {
       healthLabel: "Health unknown",
       message: "Waiting for first status poll",
       error: "",
+      portConflict: null,
       git: null,
     };
   }
 
-  const lifecycleState = status.running ? "running" : "stopped";
+  const hasConflict = Boolean(status.portConflict?.hasConflict);
+  const lifecycleState = hasConflict ? "blocked" : (status.running ? "running" : "stopped");
   const healthState = status.healthState || "unknown";
   const checkable = status.checkable !== false;
 
@@ -107,25 +110,45 @@ function deriveBaseState(status) {
           ? "Unhealthy"
           : healthState === "port-open"
             ? "Port open"
-          : lifecycleState === "stopped"
+          : lifecycleState === "stopped" || lifecycleState === "blocked"
             ? ""
             : checkable
               ? "Health unknown"
               : "No health check",
-    message: status.running
+    message: hasConflict
+      ? status.portConflict.message
+      : status.running
       ? healthState === "healthy"
         ? "Service is healthy"
         : healthState === "port-open"
           ? "Service port is open"
         : "Service is running but health is unavailable"
       : "Service is stopped",
-    error: "",
+    error: hasConflict ? status.portConflict.message : "",
+    portConflict: status.portConflict || null,
     git: status.git || null,
   };
 }
 
 function mergeDisplayState(baseState, uiState) {
   if (!uiState) return baseState;
+
+  // If the service is running according to the backend status, do not mask it with stale failed UI states
+  if (baseState.running) {
+    if (uiState.lifecycleState === "stopping" && Date.now() - uiState.updatedAt < 5000) {
+      return {
+        ...baseState,
+        ...uiState,
+        lifecycleLabel: formatLifecycleLabel("stopping"),
+        git: baseState.git,
+      };
+    }
+    return {
+      ...baseState,
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
+      git: baseState.git,
+    };
+  }
 
   const stickyStates = ["queued", "waiting", "starting", "stopping", "failed"];
   if (stickyStates.includes(uiState.lifecycleState)) {
@@ -139,6 +162,7 @@ function mergeDisplayState(baseState, uiState) {
           : uiState.healthState === "unhealthy"
             ? "Unhealthy"
             : "Health unknown",
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
       git: baseState.git,
     };
   }
@@ -151,14 +175,18 @@ function mergeDisplayState(baseState, uiState) {
       lifecycleLabel: baseState.lifecycleLabel,
       healthState: baseState.healthState,
       healthLabel: baseState.healthLabel,
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
       git: baseState.git,
     };
   }
 
-  return baseState;
+  return {
+    ...baseState,
+    portConflict: baseState.portConflict,
+  };
 }
 
-const Dashboard = forwardRef(({ onViewLogs }, ref) => {
+const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref) => {
   const [services, setServices] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [uiStates, setUiStates] = useState({});
@@ -177,6 +205,11 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
     const saved = localStorage.getItem("struo_show_git_branches");
     return saved !== null ? saved === "true" : true;
   });
+  const [showLiveMetrics, setShowLiveMetrics] = useState(() => {
+    const saved = localStorage.getItem("struo_show_live_metrics");
+    return saved !== null ? saved === "true" : false;
+  });
+  const [metrics, setMetrics] = useState({});
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
@@ -283,6 +316,32 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
     const interval = setInterval(() => loadServiceStatuses(normalizedServices), 5000);
     return () => clearInterval(interval);
   }, [normalizedServices]);
+
+  useEffect(() => {
+    if (!showLiveMetrics) {
+      setMetrics({});
+      return undefined;
+    }
+
+    let isSubscribed = true;
+    async function fetchMetrics() {
+      try {
+        const data = await api.get("/services/metrics");
+        if (isSubscribed && data?.metrics) {
+          setMetrics(data.metrics);
+        }
+      } catch (e) {
+        // Non-blocking
+      }
+    }
+
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 3500);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [showLiveMetrics]);
 
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
@@ -451,13 +510,35 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
       showToast(`${serviceName} ${action} completed`, "success");
     } catch (err) {
       const reason = categorizeFailure(err);
-      setUiState(serviceName, {
-        lifecycleState: "failed",
-        healthState: "unhealthy",
-        message: reason,
-        error: err.error || err.message,
-      });
-      showToast(`${serviceName}: ${reason}`, "error");
+      const rawError = err.error || err.message || "";
+      // Sanitize raw proxy / network errors — don't leak to UI
+      const sanitizeError = (msg) => {
+        if (!msg) return reason;
+        if (/proxy error|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|network/i.test(msg))
+          return "Unable to reach the backend server. Is it running?";
+        if (/ENOENT|spawn/i.test(msg))
+          return "Service executable not found. Check your configuration.";
+        if (/EADDRINUSE/i.test(msg))
+          return "Port is already in use.";
+        return msg;
+      };
+      const latestStatus = await refreshSingleStatus(serviceName);
+      if (latestStatus?.running) {
+        setUiState(serviceName, {
+          lifecycleState: latestStatus.healthState === "healthy" ? "healthy" : "running",
+          healthState: latestStatus.healthState || "healthy",
+          message: latestStatus.healthState === "healthy" ? "Service is healthy" : "Service is running",
+          error: "",
+        });
+      } else {
+        setUiState(serviceName, {
+          lifecycleState: "failed",
+          healthState: "unhealthy",
+          message: reason,
+          error: sanitizeError(rawError),
+        });
+        showToast(`${serviceName}: ${reason}`, "error");
+      }
     }
   }
 
@@ -499,6 +580,51 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
     } catch (err) {
       await refreshSingleStatus(serviceName);
       const msg = err.details || err.message || err.error || "Branch switch failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
+  async function handleGitPull(serviceName, restart = false) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service) return;
+
+    try {
+      const result = await api.post(`/service/${serviceName}/git/pull`, {
+        restart,
+      });
+
+      if (restart && result.restarted) {
+        setUiState(serviceName, {
+          lifecycleState: "starting",
+          message: `Restarting after git pull...`,
+          error: "",
+        });
+      }
+
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+
+      showToast(result.message || `Pulled latest changes for ${serviceName}`, "success");
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Git pull failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
+  async function handleFreePort(serviceName) {
+    try {
+      const result = await api.post(`/service/${serviceName}/free-port`);
+      showToast(result.message || `Port freed for ${serviceName}`, "success");
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Failed to free port";
       showToast(`${serviceName}: ${msg}`, "error");
       throw err;
     }
@@ -980,6 +1106,22 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                 label="Git branches"
                 sx={{ ml: 1, whiteSpace: "nowrap" }}
               />
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    color="primary"
+                    checked={showLiveMetrics}
+                    onChange={(event) => {
+                      setShowLiveMetrics(event.target.checked);
+                      localStorage.setItem("struo_show_live_metrics", String(event.target.checked));
+                    }}
+                    inputProps={{ "aria-label": "Toggle Live Resource Monitoring (CPU, RAM, Uptime)" }}
+                  />
+                }
+                label="Live Resources"
+                sx={{ ml: 1, whiteSpace: "nowrap" }}
+              />
             </Box>
           </Box>
         </Box>
@@ -1069,8 +1211,14 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                         onSelect={(checked) => toggleSelection(service.name, checked)}
                         onAction={executeSingleAction}
                         onBranchCheckout={handleBranchCheckout}
+                        onGitPull={handleGitPull}
+                        onFreePort={handleFreePort}
                         showGitBranches={showGitBranches}
+                        showLiveMetrics={showLiveMetrics}
+                        metrics={metrics[service.name] || null}
                         onViewLogs={onViewLogs}
+                        onCloneService={onCloneService}
+                        onEditInAdmin={onEditInAdmin}
                         onDragStart={setDraggedServiceName}
                         onDragEnd={() => {
                           setDraggedServiceName("");
@@ -1094,11 +1242,17 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   isDraggable={false}
                   showGroup
                   showGitBranches={showGitBranches}
+                  showLiveMetrics={showLiveMetrics}
+                  metrics={metrics[service.name] || null}
                   isSelected={selectedServices.includes(service.name)}
                   onSelect={(checked) => toggleSelection(service.name, checked)}
                   onAction={executeSingleAction}
                   onBranchCheckout={handleBranchCheckout}
+                  onGitPull={handleGitPull}
+                  onFreePort={handleFreePort}
                   onViewLogs={onViewLogs}
+                  onCloneService={onCloneService}
+                  onEditInAdmin={onEditInAdmin}
                 />
               ))}
             </Box>

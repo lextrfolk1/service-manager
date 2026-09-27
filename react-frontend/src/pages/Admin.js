@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -31,6 +31,7 @@ import {
   Add as AddIcon,
   AutoAwesome as AutoAwesomeIcon,
   Code as CodeIcon,
+  ContentCopy as ContentCopyIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
   FolderOpen as FolderOpenIcon,
@@ -119,7 +120,7 @@ function getServiceGroups(services) {
   return Array.from(groupMap.entries()).sort(([a], [b]) => a.localeCompare(b));
 }
 
-function ServiceListItem({ serviceName, service, isSelected, onSelect, onDelete }) {
+function ServiceListItem({ serviceName, service, isSelected, onSelect, onDelete, onClone }) {
   return (
     <Box
       onClick={onSelect}
@@ -174,18 +175,35 @@ function ServiceListItem({ serviceName, service, isSelected, onSelect, onDelete 
             </Typography>
           ) : null}
         </Box>
-        <Tooltip title="Delete service">
-          <IconButton
-            color="error"
-            size="small"
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete();
-            }}
-          >
-            <DeleteIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Tooltip title="Clone service">
+            <IconButton
+              size="small"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (onClone) onClone();
+              }}
+              sx={{
+                color: "text.secondary",
+                "&:hover": { color: "primary.main", bgcolor: "rgba(37,99,235,0.08)" },
+              }}
+            >
+              <ContentCopyIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Delete service">
+            <IconButton
+              color="error"
+              size="small"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+            >
+              <DeleteIcon sx={{ fontSize: 16 }} />
+            </IconButton>
+          </Tooltip>
+        </Stack>
       </Stack>
     </Box>
   );
@@ -238,6 +256,8 @@ function ServiceEditor({
   runtimePlatform,
   onServiceChange,
   onPickDirectory,
+  onClone,
+  onRename,
   validationIssues = [],
 }) {
   const [pathTemplateKey, setPathTemplateKey] = useState("");
@@ -327,14 +347,45 @@ function ServiceEditor({
             <Typography variant="caption" sx={{ opacity: 0.75, letterSpacing: 0.4 }}>
               SERVICE EDITOR
             </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 800, mt: 0.25 }}>
-              {serviceName}
-            </Typography>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="h5" sx={{ fontWeight: 800, mt: 0.25 }}>
+                {serviceName}
+              </Typography>
+              {onRename && (
+                <Tooltip title="Rename service">
+                  <IconButton
+                    size="small"
+                    onClick={onRename}
+                    sx={{ color: "rgba(255,255,255,0.72)", "&:hover": { color: "white", bgcolor: "rgba(255,255,255,0.1)" }, mt: 0.25 }}
+                  >
+                    <EditIcon sx={{ fontSize: 18 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Stack>
             <Typography variant="body2" sx={{ opacity: 0.82, mt: 0.5 }}>
               Keep the same service features, but edit them in a denser layout with stronger guidance.
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+            {onClone && (
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<ContentCopyIcon fontSize="small" />}
+                onClick={onClone}
+                sx={{
+                  color: "white",
+                  borderColor: "rgba(255,255,255,0.35)",
+                  "&:hover": {
+                    borderColor: "white",
+                    backgroundColor: "rgba(255,255,255,0.12)",
+                  },
+                }}
+              >
+                Clone
+              </Button>
+            )}
             <Chip size="small" label={service.type || "type missing"} sx={{ backgroundColor: "rgba(255,255,255,0.12)", color: "white" }} />
             {service.group ? <Chip size="small" label={service.group} sx={{ backgroundColor: "rgba(255,255,255,0.12)", color: "white" }} /> : null}
             {service.port ? <Chip size="small" label={`Port ${service.port}`} sx={{ backgroundColor: "rgba(255,255,255,0.12)", color: "white" }} /> : null}
@@ -401,6 +452,28 @@ function ServiceEditor({
                       multiline
                       minRows={2}
                       placeholder="Short operational note for teammates."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="API Docs Path (Swagger / OpenAPI)"
+                      value={service.docsPath || ""}
+                      onChange={(event) => onServiceChange(serviceName, "docsPath", event.target.value)}
+                      placeholder="/swagger-ui/index.html or /docs"
+                      helperText="Optional custom path. Auto-detected by service type if empty."
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Health Check Path"
+                      value={service.healthPath || ""}
+                      onChange={(event) => onServiceChange(serviceName, "healthPath", event.target.value)}
+                      placeholder="/actuator/health or /health"
+                      helperText="Optional custom path. Auto-detected from health command or type if empty."
                       sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
                     />
                   </Grid>
@@ -661,7 +734,32 @@ function ServiceEditor({
   );
 }
 
-const Admin = ({ onConfigReload }) => {
+function getUniqueCloneName(baseName, existingServices) {
+  const cleanBase = String(baseName || "service").replace(/-clone(-\d+)?$/, "");
+  let candidate = `${cleanBase}-clone`;
+  let counter = 1;
+  while (existingServices && existingServices[candidate]) {
+    counter += 1;
+    candidate = `${cleanBase}-clone-${counter}`;
+  }
+  return candidate;
+}
+
+function getSuggestedPort(originalPort, existingServices) {
+  if (!originalPort || isNaN(Number(originalPort))) return "";
+  const existingPorts = new Set(
+    Object.values(existingServices || {})
+      .map((s) => Number(s?.port))
+      .filter(Boolean)
+  );
+  let nextPort = Number(originalPort) + 1;
+  while (existingPorts.has(nextPort) && nextPort < 65535) {
+    nextPort += 1;
+  }
+  return nextPort <= 65535 ? nextPort : "";
+}
+
+const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [config, setConfig] = useState(null);
   const [rawConfig, setRawConfig] = useState("");
@@ -679,6 +777,9 @@ const Admin = ({ onConfigReload }) => {
   const [addPathDialog, setAddPathDialog] = useState(false);
   const [addServiceDialog, setAddServiceDialog] = useState(false);
   const [editJsonDialog, setEditJsonDialog] = useState(false);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [serviceToRename, setServiceToRename] = useState("");
+  const [newRenamedName, setNewRenamedName] = useState("");
   const [newPathKey, setNewPathKey] = useState("");
   const [newPathValue, setNewPathValue] = useState("");
   const [newPathMode, setNewPathMode] = useState("browse");
@@ -687,6 +788,8 @@ const Admin = ({ onConfigReload }) => {
   const [newServiceName, setNewServiceName] = useState("");
   const [isJsonReadOnly, setIsJsonReadOnly] = useState(true);
   const [pickerBusy, setPickerBusy] = useState(false);
+
+  const processedTargetIdRef = useRef(null);
 
   const validationResult = useMemo(
     () => validateConfiguration({ config: { basePaths }, services }),
@@ -711,8 +814,6 @@ const Admin = ({ onConfigReload }) => {
         .some((value) => String(value).toLowerCase().includes(term));
     });
   }, [serviceFilter, services]);
-
-  const filteredServiceNames = useMemo(() => new Set(filteredServices.map(([serviceName]) => serviceName)), [filteredServices]);
 
   const showSnackbar = useCallback((message, severity = "info") => {
     setSnackbarMessage(message);
@@ -750,17 +851,185 @@ const Admin = ({ onConfigReload }) => {
     }
   }, [onConfigReload]);
 
-  useEffect(() => {
-    loadConfig({ initial: true });
-  }, [loadConfig]);
+  const cloneService = useCallback(
+    async (serviceToClone) => {
+      if (!serviceToClone) return;
+      const baseName = typeof serviceToClone === "string" ? serviceToClone : serviceToClone.name;
+      if (!baseName) return;
 
-  useEffect(() => {
-    if (selectedService && services[selectedService]) {
+      let currentServices = services;
+      let currentConfig = config;
+      if (!currentServices || Object.keys(currentServices).length === 0) {
+        try {
+          const res = await api.get("/config");
+          const payload = toConfigPayload(res);
+          currentServices = payload.services || {};
+          currentConfig = payload;
+          setConfig(payload);
+          setBasePaths(payload.config?.basePaths || {});
+          setServices(currentServices);
+          setRawConfig(JSON.stringify(payload, null, 2));
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      const sourceConfig =
+        currentServices[baseName] ||
+        (typeof serviceToClone === "object" ? serviceToClone : {});
+
+      const newName = getUniqueCloneName(baseName, currentServices);
+      const suggestedPort = getSuggestedPort(sourceConfig.port, currentServices);
+
+      const cloned = {
+        type: sourceConfig.type || "",
+        port: suggestedPort,
+        path: sourceConfig.path || "",
+        command: sourceConfig.command || "",
+        stopCommand: sourceConfig.stopCommand || "",
+        healthCommand: sourceConfig.healthCommand || "",
+        build: sourceConfig.build || "",
+        group: sourceConfig.group || "",
+        dependsOn: Array.isArray(sourceConfig.dependsOn) ? [...sourceConfig.dependsOn] : [],
+        description: sourceConfig.description
+          ? `${sourceConfig.description} (Clone)`
+          : "Cloned service",
+        enableGit: sourceConfig.enableGit ?? true,
+      };
+
+      const updatedServices = {
+        ...currentServices,
+        [newName]: cloned,
+      };
+
+      setServices(updatedServices);
+      setCurrentTab(1);
+      setSelectedService(newName);
+      setServiceFilter("");
+
+      try {
+        const payloadToSave = {
+          ...(currentConfig || { config: { basePaths } }),
+          services: updatedServices,
+        };
+        await api.put("/config", payloadToSave);
+        setConfig(payloadToSave);
+        setRawConfig(JSON.stringify(payloadToSave, null, 2));
+        if (onConfigReload) {
+          onConfigReload();
+        }
+        showSnackbar(
+          `Cloned "${baseName}" as "${newName}" (Port: ${suggestedPort || "none"}). Saved to configuration.`,
+          "success"
+        );
+      } catch (err) {
+        showSnackbar(
+          `Cloned "${baseName}" as "${newName}". Review settings and click Save.`,
+          "info"
+        );
+      }
+    },
+    [services, config, basePaths, onConfigReload, showSnackbar]
+  );
+
+  const editServiceInAdmin = useCallback(
+    (serviceToEdit) => {
+      if (!serviceToEdit) return;
+      const serviceName = typeof serviceToEdit === "string" ? serviceToEdit : serviceToEdit.name;
+      setCurrentTab(1);
+      setSelectedService(serviceName);
+      setServiceFilter("");
+      showSnackbar(`Opened "${serviceName}" in Services configuration.`, "info");
+    },
+    [showSnackbar]
+  );
+
+  const handleOpenRename = (serviceName) => {
+    setServiceToRename(serviceName);
+    setNewRenamedName(serviceName);
+    setRenameDialogOpen(true);
+  };
+
+  const handleConfirmRename = async () => {
+    const trimmed = newRenamedName.trim();
+    if (!trimmed || trimmed === serviceToRename) {
+      setRenameDialogOpen(false);
       return;
     }
+    if (services[trimmed]) {
+      showSnackbar(`Service "${trimmed}" already exists`, "error");
+      return;
+    }
+    const updatedServices = {};
+    Object.entries(services).forEach(([k, v]) => {
+      if (k === serviceToRename) {
+        updatedServices[trimmed] = v;
+      } else {
+        const updatedDeps = Array.isArray(v.dependsOn)
+          ? v.dependsOn.map((dep) => (dep === serviceToRename ? trimmed : dep))
+          : v.dependsOn;
+        updatedServices[k] = { ...v, dependsOn: updatedDeps };
+      }
+    });
+    setServices(updatedServices);
+    setSelectedService(trimmed);
+    setRenameDialogOpen(false);
+
+    try {
+      const updatedConfig = { ...config, services: updatedServices };
+      await api.put("/config", updatedConfig);
+      setConfig(updatedConfig);
+      setRawConfig(JSON.stringify(updatedConfig, null, 2));
+      if (onConfigReload) {
+        onConfigReload();
+      }
+      showSnackbar(`Renamed "${serviceToRename}" to "${trimmed}" and saved.`, "success");
+    } catch (err) {
+      showSnackbar(`Renamed "${serviceToRename}" to "${trimmed}". Review and click Save.`, "info");
+    }
+  };
+
+  useEffect(() => {
+    if (!adminTarget || loading) return;
+    if (adminTarget.id && processedTargetIdRef.current === adminTarget.id) return;
+    if (adminTarget.id) {
+      processedTargetIdRef.current = adminTarget.id;
+    }
+
+    if (adminTarget.action === "clone") {
+      cloneService(adminTarget.service);
+    } else if (adminTarget.action === "edit") {
+      editServiceInAdmin(adminTarget.service);
+    }
+
+    const timer = setTimeout(() => {
+      if (onClearAdminTarget) {
+        onClearAdminTarget();
+      }
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [adminTarget, loading, cloneService, editServiceInAdmin, onClearAdminTarget]);
+
+  useEffect(() => {
+    loadConfig({ initial: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    if (selectedService) {
+      if (services[selectedService]) {
+        return;
+      }
+      if (Object.keys(services).length === 0) {
+        return;
+      }
+    }
     const firstVisible = filteredServices[0]?.[0] || Object.keys(services)[0] || null;
-    setSelectedService(firstVisible);
-  }, [filteredServices, selectedService, services]);
+    if (firstVisible && firstVisible !== selectedService) {
+      setSelectedService(firstVisible);
+    }
+  }, [filteredServices, selectedService, services, loading]);
 
   const savePaths = async () => {
     if (validationResult.hasErrors) {
@@ -780,6 +1049,9 @@ const Admin = ({ onConfigReload }) => {
       setConfig(updatedConfig);
       setRuntimeInfo((prev) => prev || null);
       setRawConfig(JSON.stringify(updatedConfig, null, 2));
+      if (onConfigReload) {
+        onConfigReload();
+      }
       showSnackbar("Base paths saved successfully", "success");
     } catch (error) {
       showSnackbar(`Failed to save base paths: ${error.message}`, "error");
@@ -803,6 +1075,9 @@ const Admin = ({ onConfigReload }) => {
       setConfig(updatedConfig);
       setRuntimeInfo((prev) => prev || null);
       setRawConfig(JSON.stringify(updatedConfig, null, 2));
+      if (onConfigReload) {
+        onConfigReload();
+      }
       showSnackbar("Services saved successfully", "success");
     } catch (error) {
       showSnackbar(`Failed to save services: ${error.message}`, "error");
@@ -835,6 +1110,9 @@ const Admin = ({ onConfigReload }) => {
       setBasePaths(parsedConfig.config?.basePaths || {});
       setServices(parsedConfig.services || {});
       setRuntimeInfo((prev) => prev || null);
+      if (onConfigReload) {
+        onConfigReload();
+      }
       showSnackbar("Configuration saved successfully", "success");
     } catch (error) {
       showSnackbar(`Failed to save raw config: ${error.message}`, "error");
@@ -1268,6 +1546,7 @@ const Admin = ({ onConfigReload }) => {
                           isSelected={selectedService === serviceName}
                           onSelect={() => setSelectedService(serviceName)}
                           onDelete={() => removeService(serviceName)}
+                          onClone={() => cloneService(serviceName)}
                         />
                       ))
                     )}
@@ -1277,7 +1556,7 @@ const Admin = ({ onConfigReload }) => {
 
                 <Grid item xs={12} xl={8.5} sx={{ minHeight: 0, minWidth: 0, display: "flex", height: "100%" }}>
                   <Paper sx={{ ...panelSx, height: "100%", width: "100%", overflow: "hidden", minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
-                  {selectedService && filteredServiceNames.has(selectedService) ? (
+                  {selectedService && services[selectedService] ? (
                     <ServiceEditor
                       serviceName={selectedService}
                       service={services[selectedService]}
@@ -1286,6 +1565,8 @@ const Admin = ({ onConfigReload }) => {
                       runtimePlatform={runtimePlatform}
                       onServiceChange={handleServiceChange}
                       onPickDirectory={pickDirectory}
+                      onClone={() => cloneService(selectedService)}
+                      onRename={() => handleOpenRename(selectedService)}
                       validationIssues={validationResult.issues}
                     />
                   ) : (
@@ -1628,6 +1909,34 @@ const Admin = ({ onConfigReload }) => {
           <Button onClick={() => setEditJsonDialog(false)}>Cancel</Button>
           <Button variant="contained" color="warning" startIcon={<EditIcon />} onClick={confirmJsonEditing}>
             I Understand
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={renameDialogOpen} onClose={() => setRenameDialogOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Rename Service</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Renaming <strong>{serviceToRename}</strong> will update the service key and its dependency references.
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            label="New Service Name"
+            value={newRenamedName}
+            onChange={(e) => setNewRenamedName(e.target.value.replace(/\s+/g, "-"))}
+            placeholder="e.g. auth-service-v2"
+            sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
+          />
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setRenameDialogOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleConfirmRename}
+            disabled={!newRenamedName.trim() || newRenamedName.trim() === serviceToRename}
+          >
+            Rename
           </Button>
         </DialogActions>
       </Dialog>

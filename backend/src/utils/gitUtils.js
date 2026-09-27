@@ -33,7 +33,11 @@ async function getGitInfo(dir) {
       isGitRepo: false,
       currentBranch: null,
       isDirty: false,
-      uncommittedCount: 0
+      uncommittedCount: 0,
+      ahead: 0,
+      behind: 0,
+      hasUpstream: false,
+      upstreamBranch: null
     };
   }
 
@@ -61,11 +65,33 @@ async function getGitInfo(dir) {
     // Ignore error reading porcelain status
   }
 
+  let ahead = 0;
+  let behind = 0;
+  let hasUpstream = false;
+  let upstreamBranch = null;
+  try {
+    const upstreamOut = await runGit(["rev-parse", "--abbrev-ref", "@{upstream}"], dir, 3000);
+    if (upstreamOut && !upstreamOut.includes("fatal:")) {
+      hasUpstream = true;
+      upstreamBranch = upstreamOut;
+      const countOut = await runGit(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], dir, 3000);
+      const [left, right] = countOut.split(/\s+/).map((n) => parseInt(n, 10) || 0);
+      ahead = left || 0;
+      behind = right || 0;
+    }
+  } catch {
+    // No upstream configured, detached HEAD, or network/remote unavailable
+  }
+
   return {
     isGitRepo: true,
     currentBranch,
     isDirty,
-    uncommittedCount
+    uncommittedCount,
+    ahead,
+    behind,
+    hasUpstream,
+    upstreamBranch
   };
 }
 
@@ -79,7 +105,11 @@ async function getGitBranches(dir, shouldFetch = false) {
       remoteBranches: [],
       remotes: [],
       isDirty: false,
-      uncommittedCount: 0
+      uncommittedCount: 0,
+      ahead: 0,
+      behind: 0,
+      hasUpstream: false,
+      upstreamBranch: null
     };
   }
 
@@ -138,7 +168,11 @@ async function getGitBranches(dir, shouldFetch = false) {
     remoteBranches,
     remotes,
     isDirty: info.isDirty,
-    uncommittedCount: info.uncommittedCount
+    uncommittedCount: info.uncommittedCount,
+    ahead: info.ahead,
+    behind: info.behind,
+    hasUpstream: info.hasUpstream,
+    upstreamBranch: info.upstreamBranch
   };
 }
 
@@ -168,7 +202,8 @@ async function checkoutBranch(dir, branchName) {
     return {
       success: true,
       currentBranch: info.currentBranch,
-      output
+      output,
+      ...info
     };
   } catch (err) {
     const stderr = err.stderr || err.message || "";
@@ -179,10 +214,43 @@ async function checkoutBranch(dir, branchName) {
   }
 }
 
+async function pullBranch(dir) {
+  const isRepo = await isGitRepository(dir);
+  if (!isRepo) {
+    throw new Error(`Directory ${dir} is not a git repository`);
+  }
+
+  try {
+    const output = await runGit(["pull"], dir, 30000);
+    const info = await getGitInfo(dir);
+    return {
+      success: true,
+      output,
+      ...info
+    };
+  } catch (err) {
+    const stderr = err.stderr || err.message || "";
+    if (
+      stderr.includes("Please commit your changes") ||
+      stderr.includes("overwritten by merge") ||
+      stderr.includes("local changes")
+    ) {
+      throw new Error(
+        "Cannot pull: working directory has uncommitted changes that would be overwritten by merge. Please commit or stash your changes."
+      );
+    }
+    if (stderr.includes("There is no tracking information") || stderr.includes("no tracking info")) {
+      throw new Error("No upstream tracking branch configured for this branch. Run 'git push -u origin <branch>' first.");
+    }
+    throw new Error(`Git pull failed: ${stderr || err.message}`);
+  }
+}
+
 module.exports = {
   runGit,
   isGitRepository,
   getGitInfo,
   getGitBranches,
-  checkoutBranch
+  checkoutBranch,
+  pullBranch
 };

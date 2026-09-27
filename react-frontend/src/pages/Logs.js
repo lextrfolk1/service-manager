@@ -188,7 +188,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const logContentRef = useRef(null);
 
   const activeServiceFromTabs = openServices[activeServiceTab] || "";
-  const currentService = selectedServiceName || activeServiceFromTabs || services[0]?.name || "";
+  const currentService = activeServiceFromTabs || selectedServiceName || services[0]?.name || "";
   const isArchivedSelection = archivedLogFiles.includes(selectedLogFile);
   const isActiveSelection = activeLogFiles.includes(selectedLogFile);
   const liveFile = activeLogFiles[0] || "";
@@ -338,19 +338,20 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   }, [loadServices]);
 
   useEffect(() => {
-    if (!selectedServiceName && activeServiceFromTabs) {
+    if (activeServiceFromTabs) {
       setSelectedServiceName(activeServiceFromTabs);
     }
-  }, [activeServiceFromTabs, selectedServiceName]);
+  }, [activeServiceFromTabs]);
 
   useEffect(() => {
-    if (!selectedServiceName && services[0]?.name) {
+    if (!activeServiceFromTabs && !selectedServiceName && services[0]?.name) {
       setSelectedServiceName(services[0].name);
     }
-  }, [selectedServiceName, services]);
+  }, [activeServiceFromTabs, selectedServiceName, services]);
 
   useEffect(() => {
     if (!currentService) return;
+    setSelectedLogFile("");
     loadLogFiles(currentService);
     return stopStreaming;
   }, [currentService, loadLogFiles, stopStreaming]);
@@ -693,12 +694,17 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     <Paper
       sx={{
         ...shellCardSx,
-        p: maximized ? 0 : 2.25,
+        p: maximized ? 0 : 2,
         borderRadius: maximized ? 0 : shellCardSx.borderRadius,
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        overflow: "hidden",
       }}
     >
       {!maximized ? (
-        <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} justifyContent="space-between" sx={{ mb: 2 }}>
+        <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} justifyContent="space-between" sx={{ mb: 1.5, flexShrink: 0 }}>
           <Box>
             <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700, letterSpacing: 0.4 }}>
               LOG EXPLORER
@@ -706,11 +712,11 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             <Typography variant="h5" sx={{ fontWeight: 800, mt: 0.25 }}>
               Service Logs
             </Typography>
-            <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.75, maxWidth: 760 }}>
+            <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5, maxWidth: 760 }}>
               Open a service once and its latest active log appears immediately. Only the current active file streams live; older files stay as static snapshots.
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
             <Chip label={`${services.length} services`} variant="outlined" />
             <Chip label={`${activeLogFiles.length + archivedLogFiles.length} files`} variant="outlined" />
             <Chip label={streamChip.label} color={streamChip.color} variant={streamChip.color === "default" ? "outlined" : "filled"} />
@@ -720,14 +726,16 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
 
       <Box
         sx={{
-          height: maximized ? "100%" : "calc(100% - 104px)",
+          flex: 1,
+          minHeight: 0,
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            xl: maximized ? "1fr" : explorerCollapsed ? "56px minmax(0, 1fr)" : "320px minmax(0, 1fr)",
+            md: maximized ? "1fr" : explorerCollapsed ? "56px minmax(0, 1fr)" : "280px minmax(0, 1fr)",
+            lg: maximized ? "1fr" : explorerCollapsed ? "56px minmax(0, 1fr)" : "320px minmax(0, 1fr)",
           },
           gap: 2,
-          minHeight: 0,
+          overflow: "hidden",
         }}
       >
         {!maximized && (
@@ -1009,6 +1017,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                 ref={logContentRef}
                 sx={{
                   flexGrow: 1,
+                  minHeight: 0,
                   overflow: "auto",
                   m: 0,
                   p: 2,
