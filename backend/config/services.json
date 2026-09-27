@@ -96,13 +96,13 @@
       "type": "python",
       "port": 5002,
       "path": "${basePaths.python}/execution-service",
-      "command": "$(pwd)/ib-venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
       "description": "Service to handle code execution tasks"
     },
     "execution-service-listener": {
       "type": "listener",
       "path": "${basePaths.listener}/execution-service",
-      "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/ib-venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
+      "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
       "stopCommand": "pkill -f pg_sync_worker.py",
       "healthCommand": "pgrep -f pg_sync_worker.py > /dev/null",
       "description": "Execution Service listener"
@@ -111,14 +111,14 @@
       "type": "python",
       "port": 5005,
       "path": "${basePaths.python}/data-service",
-      "command": "$(pwd)/ib-venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005",
+      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005",
       "description": "Service to manage data operations"
     },
     "lexie-ai": {
       "type": "python",
       "port": 8004,
       "path": "${basePaths.python}/lexie-ai",
-      "command": "$(pwd)/ib-venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004",
+      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004",
       "description": "AI-powered assistant service"
     },
     "semantic-service": {
