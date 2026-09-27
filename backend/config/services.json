@@ -191,7 +191,7 @@
       "type": "docker",
       "port": 8123,
       "daemon": true,
-      "command": "docker start clickhouse 2>/dev/null || docker run -d --name clickhouse --restart unless-stopped -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_DB=default -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD= -v clickhouse-data:/var/lib/clickhouse clickhouse/clickhouse-server:24.8",
+      "command": "docker start clickhouse 2>/dev/null || docker run -d --name clickhouse -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_DB=data -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=clickhouse -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 clickhouse/clickhouse-server",
       "stopCommand": "docker stop clickhouse",
       "healthCommand": "curl -sf http://localhost:8123/ping > /dev/null",
       "description": "ClickHouse analytics database on Docker (9000)"
