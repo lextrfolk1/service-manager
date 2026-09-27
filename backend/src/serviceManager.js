@@ -601,16 +601,31 @@ class ServiceManager {
             managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
           }
         } else {
-          // Port is in use by an external or orphaned process!
-          running = false;
-          portConflict = {
-            hasConflict: true,
-            port: svc.port,
-            pid: portProc.pid,
-            command: portProc.command || "unknown",
-            user: portProc.user || null,
-            message: `Port ${svc.port} in use by PID ${portProc.pid}${portProc.command ? ` (${portProc.command})` : ""}`,
-          };
+          // Extract meaningful tokens from the service's own command to match against the port process
+          const NOISE = new Set(["run","start","stop","bin","export","sudo","pwd","host","port","true","false","npm","mvn","dev","set"]);
+          const svcTokens = (svc.command || "")
+            .toLowerCase()
+            .split(/[\s/\\=&|;$(){}"\-]+/)
+            .filter(w => w.length > 2 && !NOISE.has(w) && !/^\d+$/.test(w));
+          const portCmdLower = (portProc.command || "").toLowerCase();
+          const isLikelyOurs = svcTokens.some(token => portCmdLower.includes(token));
+          if (isLikelyOurs) {
+            // Adopt this process — it likely belongs to this service
+            running = true;
+            portConflict = null;
+            managedProcesses.set(name, { pid: portProc.pid, startedAt: Date.now() });
+          } else {
+            // Port is in use by an external or orphaned process!
+            running = false;
+            portConflict = {
+              hasConflict: true,
+              port: svc.port,
+              pid: portProc.pid,
+              command: portProc.command || "unknown",
+              user: portProc.user || null,
+              message: `Port ${svc.port} in use by PID ${portProc.pid}${portProc.command ? ` (${portProc.command})` : ""}`,
+            };
+          }
         }
       } else {
         running = false;
