@@ -16,7 +16,7 @@ REACT_FRONTEND_PORT=4005
 BACKEND_PORT=4000
 
 # Commands
-BACKEND_CMD="npm start"
+BACKEND_CMD="node src/server.js"
 REACT_FRONTEND_CMD="npm start"
 
 # Logs location

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { Box, Tabs, Tab, AppBar, Toolbar, Typography, Container } from "@mui/material";
 import {
   Dashboard as DashboardIcon,
@@ -65,6 +65,10 @@ function App() {
       const index = openLogServices.indexOf(serviceName);
       setActiveLogServiceTab(index);
     }
+
+    if (logsRef.current?.addService) {
+      logsRef.current.addService(serviceName);
+    }
     
     // Switch to logs tab
     setCurrentTab(1);
@@ -86,6 +90,18 @@ function App() {
     setActiveLogServiceTab(newValue);
   };
 
+  const [adminTarget, setAdminTarget] = useState(null);
+
+  const handleCloneService = (service) => {
+    setAdminTarget({ action: "clone", service, id: Date.now() });
+    setCurrentTab(2);
+  };
+
+  const handleEditInAdmin = (service) => {
+    setAdminTarget({ action: "edit", service, id: Date.now() });
+    setCurrentTab(2);
+  };
+
   const handleAddLogService = (serviceName) => {
     if (!openLogServices.includes(serviceName)) {
       const newOpenServices = [...openLogServices, serviceName];
@@ -94,12 +110,12 @@ function App() {
     }
   };
 
-  const handleConfigReload = () => {
+  const handleConfigReload = useCallback(() => {
     // Refresh dashboard data when config is reloaded
     if (dashboardRef.current) {
       dashboardRef.current.refreshServices();
     }
-  };
+  }, []);
 
   const getPageTitle = () => {
     switch (currentTab) {
@@ -248,7 +264,12 @@ function App() {
         }}
       >
         <TabPanel value={currentTab} index={0}>
-          <Dashboard ref={dashboardRef} onViewLogs={handleViewLogs} />
+          <Dashboard
+            ref={dashboardRef}
+            onViewLogs={handleViewLogs}
+            onCloneService={handleCloneService}
+            onEditInAdmin={handleEditInAdmin}
+          />
         </TabPanel>
         <TabPanel value={currentTab} index={1}>
           <Logs 
@@ -261,7 +282,11 @@ function App() {
           />
         </TabPanel>
         <TabPanel value={currentTab} index={2}>
-          <Admin onConfigReload={handleConfigReload} />
+          <Admin
+            onConfigReload={handleConfigReload}
+            adminTarget={adminTarget}
+            onClearAdminTarget={() => setAdminTarget(null)}
+          />
         </TabPanel>
         <TabPanel value={currentTab} index={3}>
           <Help />

@@ -8,6 +8,7 @@ const { execFile } = require("child_process");
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
 const { resolveConfigPath, getConfigMetadata } = require("./configResolver");
+const { killProcessOnPort, getPortProcess } = require("./utils/portUtils");
 let servicesConfigPath = resolveConfigPath();
 
 function resolveHomeDir(inputPath) {
@@ -131,7 +132,11 @@ app.get("/services", (req, res) => {
       dependsOn: meta.dependsOn || [],
       group: meta.group || null,
       hasBuild: Boolean(meta.build),
-      hasHealthCheck: Boolean(meta.healthCommand)
+      hasHealthCheck: Boolean(meta.healthCommand),
+      healthCommand: meta.healthCommand || null,
+      docsPath: meta.docsPath || null,
+      healthPath: meta.healthPath || null,
+      enableGit: meta.enableGit !== false && freshConfig.config?.enableGit !== false
     }));
     
     console.log('Returning services list:', list.map(s => s.name));
@@ -139,6 +144,18 @@ app.get("/services", (req, res) => {
   } catch (error) {
     console.error('Error in /services endpoint:', error);
     res.status(500).json({ error: `Failed to load services: ${error.message}` });
+  }
+});
+
+// Get live resource metrics (CPU, RAM, Uptime) for running services
+app.get("/services/metrics", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const metrics = await freshManager.getResourceMetrics();
+    res.json({ metrics, timestamp: Date.now() });
+  } catch (error) {
+    console.error("Error in /services/metrics endpoint:", error);
+    res.status(500).json({ error: `Failed to load metrics: ${error.message}` });
   }
 });
 
@@ -271,6 +288,94 @@ app.get("/service/:name/status", async (req, res) => {
     res.json(result);
   } catch (err) {
     sendOperationError(res, err);
+  }
+});
+
+// Git: get lightweight git status
+app.get("/service/:name/git", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const forceFresh = req.query.fresh === "true";
+    const result = await freshManager.getGitInfo(req.params.name, forceFresh);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Git: list branches
+app.get("/service/:name/git/branches", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const shouldFetch = req.query.fetch === "true";
+    const result = await freshManager.getGitBranches(req.params.name, shouldFetch);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Git: checkout branch
+app.post("/service/:name/git/checkout", async (req, res) => {
+  try {
+    const { branch, restart } = req.body || {};
+    if (!branch) {
+      return res.status(400).json({ error: "Missing required 'branch' in request body" });
+    }
+    const freshManager = getFreshManager();
+    const result = await freshManager.checkoutBranch(req.params.name, branch, Boolean(restart));
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Git: pull latest changes
+app.post("/service/:name/git/pull", async (req, res) => {
+  try {
+    const { restart } = req.body || {};
+    const freshManager = getFreshManager();
+    const result = await freshManager.pullBranch(req.params.name, Boolean(restart));
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Port: Free port for service (terminate occupying process)
+app.post(["/service/:name/free-port", "/service/:name/kill-port"], async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const result = await freshManager.freePort(req.params.name);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
+// Port: Direct port kill
+app.post("/port/:port/kill", async (req, res) => {
+  try {
+    const port = parseInt(req.params.port, 10);
+    const result = await killProcessOnPort(port, { force: true });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Port: Get process occupying port for service
+app.get("/service/:name/port-process", async (req, res) => {
+  try {
+    const freshConfig = loadConfig();
+    const svc = freshConfig.services[req.params.name];
+    if (!svc || !svc.port) {
+      return res.status(404).json({ error: "Service has no port" });
+    }
+    const proc = await getPortProcess(svc.port, true);
+    res.json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 

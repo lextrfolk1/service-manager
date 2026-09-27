@@ -90,19 +90,20 @@
       "path": "${basePaths.java}/gateway-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "API Gateway Service"
+      "description": "API Gateway Service",
+      "docsPath": "/swagger-ui.html"
     },
     "execution-service": {
       "type": "python",
       "port": 5002,
       "path": "${basePaths.python}/execution-service",
-      "command": "$(pwd)/ib-venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
       "description": "Service to handle code execution tasks"
     },
     "execution-service-listener": {
       "type": "listener",
       "path": "${basePaths.listener}/execution-service",
-      "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/ib-venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
+      "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
       "stopCommand": "pkill -f pg_sync_worker.py",
       "healthCommand": "pgrep -f pg_sync_worker.py > /dev/null",
       "description": "Execution Service listener"
@@ -111,14 +112,14 @@
       "type": "python",
       "port": 5005,
       "path": "${basePaths.python}/data-service",
-      "command": "$(pwd)/ib-venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005",
+      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005",
       "description": "Service to manage data operations"
     },
     "lexie-ai": {
       "type": "python",
-      "port": 8004,
+      "port": 5003,
       "path": "${basePaths.python}/lexie-ai",
-      "command": "$(pwd)/ib-venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004",
+      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5003",
       "description": "AI-powered assistant service"
     },
     "semantic-service": {
@@ -126,7 +127,8 @@
       "port": 8083,
       "path": "${basePaths.java}/semantic-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "description": "Semantic service"
+      "description": "Semantic service",
+      "group": "Data"
     },
     "analytics-service": {
       "type": "java",
@@ -163,7 +165,46 @@
       "port": 7687,
       "command": "neo4j start",
       "stopCommand": "neo4j stop",
-      "description": "Neo4j graph database"
+      "description": "Neo4j graph database",
+      "group": "Database"
+    },
+    "postgresql": {
+      "type": "database",
+      "port": 5433,
+      "daemon": true,
+      "command": "brew services start postgresql@17",
+      "stopCommand": "brew services stop postgresql@17",
+      "healthCommand": "pg_isready -h localhost -p 5433",
+      "description": "PostgreSQL 17 relational database",
+      "group": "Database"
+    },
+    "neo4j-augmenta": {
+      "type": "docker",
+      "port": 7476,
+      "daemon": true,
+      "command": "docker start neo4j-augmenta 2>/dev/null || docker run -d --name neo4j-augmenta --restart unless-stopped -p 7476:7474 -p 7699:7687 -e NEO4J_AUTH=neo4j/Mygooru1028$ -e NEO4J_PLUGINS=[\\\"apoc\\\"] -e NEO4J_server_config_strict__validation_enabled=false -v neo4j-augmenta-data:/data neo4j:5",
+      "stopCommand": "docker stop neo4j-augmenta",
+      "healthCommand": "curl -sf http://localhost:7476/ > /dev/null",
+      "description": "Neo4j Augmenta on Docker (Bolt: 7699)",
+      "group": "Database"
+    },
+    "clickhouse": {
+      "type": "docker",
+      "port": 8123,
+      "daemon": true,
+      "command": "docker start clickhouse 2>/dev/null || docker run -d --name clickhouse -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_DB=data -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=clickhouse -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 clickhouse/clickhouse-server",
+      "stopCommand": "docker stop clickhouse",
+      "healthCommand": "curl -sf http://localhost:8123/ping > /dev/null",
+      "description": "ClickHouse analytics database on Docker (9000)"
+    },
+    "opa": {
+      "type": "docker",
+      "port": 8181,
+      "daemon": true,
+      "command": "docker start lextr-opa 2>/dev/null || docker run -d --name lextr-opa --restart unless-stopped -p 8181:8181 openpolicyagent/opa:1.4.2 run --server --addr 0.0.0.0:8181 --v0-compatible --log-level info",
+      "stopCommand": "docker stop lextr-opa",
+      "healthCommand": "curl -sf http://127.0.0.1:8181/health > /dev/null",
+      "description": "Open Policy Agent on Docker"
     }
   }
 }

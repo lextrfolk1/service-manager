@@ -45,11 +45,11 @@ const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
 const SERVICE_GRID_SX = {
   display: "grid",
   gridTemplateColumns: {
-    xs: "repeat(auto-fill, minmax(min(100%, 220px), 1fr))",
-    sm: "repeat(auto-fill, minmax(max(220px, calc((100% - 32px) / 5)), 1fr))",
-    lg: "repeat(auto-fill, minmax(max(220px, calc((100% - 40px) / 5)), 1fr))",
+    xs: "repeat(auto-fill, minmax(min(100%, 260px), 1fr))",
+    sm: "repeat(auto-fill, minmax(max(260px, calc((100% - 32px) / 4)), 1fr))",
+    lg: "repeat(auto-fill, minmax(max(270px, calc((100% - 48px) / 5)), 1fr))",
   },
-  gap: { xs: 0.75, sm: 1, lg: 1.25 },
+  gap: { xs: 1, sm: 1.25, lg: 1.5 },
   alignItems: "stretch",
 };
 
@@ -73,6 +73,7 @@ function formatLifecycleLabel(state) {
     stopping: "Stopping",
     stopped: "Stopped",
     failed: "Failed",
+    blocked: "Port Blocked",
   };
   return labels[state] || "Unknown";
 }
@@ -87,10 +88,13 @@ function deriveBaseState(status) {
       healthLabel: "Health unknown",
       message: "Waiting for first status poll",
       error: "",
+      portConflict: null,
+      git: null,
     };
   }
 
-  const lifecycleState = status.running ? "running" : "stopped";
+  const hasConflict = Boolean(status.portConflict?.hasConflict);
+  const lifecycleState = hasConflict ? "blocked" : (status.running ? "running" : "stopped");
   const healthState = status.healthState || "unknown";
   const checkable = status.checkable !== false;
 
@@ -106,24 +110,45 @@ function deriveBaseState(status) {
           ? "Unhealthy"
           : healthState === "port-open"
             ? "Port open"
-          : lifecycleState === "stopped"
+          : lifecycleState === "stopped" || lifecycleState === "blocked"
             ? ""
             : checkable
               ? "Health unknown"
               : "No health check",
-    message: status.running
+    message: hasConflict
+      ? status.portConflict.message
+      : status.running
       ? healthState === "healthy"
         ? "Service is healthy"
         : healthState === "port-open"
           ? "Service port is open"
         : "Service is running but health is unavailable"
       : "Service is stopped",
-    error: "",
+    error: hasConflict ? status.portConflict.message : "",
+    portConflict: status.portConflict || null,
+    git: status.git || null,
   };
 }
 
 function mergeDisplayState(baseState, uiState) {
   if (!uiState) return baseState;
+
+  // If the service is running according to the backend status, do not mask it with stale failed UI states
+  if (baseState.running) {
+    if (uiState.lifecycleState === "stopping" && Date.now() - uiState.updatedAt < 5000) {
+      return {
+        ...baseState,
+        ...uiState,
+        lifecycleLabel: formatLifecycleLabel("stopping"),
+        git: baseState.git,
+      };
+    }
+    return {
+      ...baseState,
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
+      git: baseState.git,
+    };
+  }
 
   const stickyStates = ["queued", "waiting", "starting", "stopping", "failed"];
   if (stickyStates.includes(uiState.lifecycleState)) {
@@ -137,6 +162,8 @@ function mergeDisplayState(baseState, uiState) {
           : uiState.healthState === "unhealthy"
             ? "Unhealthy"
             : "Health unknown",
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
+      git: baseState.git,
     };
   }
 
@@ -148,13 +175,18 @@ function mergeDisplayState(baseState, uiState) {
       lifecycleLabel: baseState.lifecycleLabel,
       healthState: baseState.healthState,
       healthLabel: baseState.healthLabel,
+      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
+      git: baseState.git,
     };
   }
 
-  return baseState;
+  return {
+    ...baseState,
+    portConflict: baseState.portConflict,
+  };
 }
 
-const Dashboard = forwardRef(({ onViewLogs }, ref) => {
+const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref) => {
   const [services, setServices] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [uiStates, setUiStates] = useState({});
@@ -165,7 +197,19 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
   const [groupFilter, setGroupFilter] = useState("all");
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
-  const [groupedView, setGroupedView] = useState(true);
+  const [groupedView, setGroupedView] = useState(() => {
+    const saved = localStorage.getItem("struo_grouped_view");
+    return saved !== null ? saved === "true" : false;
+  });
+  const [showGitBranches, setShowGitBranches] = useState(() => {
+    const saved = localStorage.getItem("struo_show_git_branches");
+    return saved !== null ? saved === "true" : true;
+  });
+  const [showLiveMetrics, setShowLiveMetrics] = useState(() => {
+    const saved = localStorage.getItem("struo_show_live_metrics");
+    return saved !== null ? saved === "true" : false;
+  });
+  const [metrics, setMetrics] = useState({});
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
@@ -272,6 +316,32 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
     const interval = setInterval(() => loadServiceStatuses(normalizedServices), 5000);
     return () => clearInterval(interval);
   }, [normalizedServices]);
+
+  useEffect(() => {
+    if (!showLiveMetrics) {
+      setMetrics({});
+      return undefined;
+    }
+
+    let isSubscribed = true;
+    async function fetchMetrics() {
+      try {
+        const data = await api.get("/services/metrics");
+        if (isSubscribed && data?.metrics) {
+          setMetrics(data.metrics);
+        }
+      } catch (e) {
+        // Non-blocking
+      }
+    }
+
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 3500);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [showLiveMetrics]);
 
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
@@ -440,13 +510,123 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
       showToast(`${serviceName} ${action} completed`, "success");
     } catch (err) {
       const reason = categorizeFailure(err);
-      setUiState(serviceName, {
-        lifecycleState: "failed",
-        healthState: "unhealthy",
-        message: reason,
-        error: err.error || err.message,
+      const rawError = err.error || err.message || "";
+      // Sanitize raw proxy / network errors — don't leak to UI
+      const sanitizeError = (msg) => {
+        if (!msg) return reason;
+        if (/proxy error|ECONNREFUSED|ECONNRESET|ETIMEDOUT|fetch failed|network/i.test(msg))
+          return "Unable to reach the backend server. Is it running?";
+        if (/ENOENT|spawn/i.test(msg))
+          return "Service executable not found. Check your configuration.";
+        if (/EADDRINUSE/i.test(msg))
+          return "Port is already in use.";
+        return msg;
+      };
+      const latestStatus = await refreshSingleStatus(serviceName);
+      if (latestStatus?.running) {
+        setUiState(serviceName, {
+          lifecycleState: latestStatus.healthState === "healthy" ? "healthy" : "running",
+          healthState: latestStatus.healthState || "healthy",
+          message: latestStatus.healthState === "healthy" ? "Service is healthy" : "Service is running",
+          error: "",
+        });
+      } else {
+        setUiState(serviceName, {
+          lifecycleState: "failed",
+          healthState: "unhealthy",
+          message: reason,
+          error: sanitizeError(rawError),
+        });
+        showToast(`${serviceName}: ${reason}`, "error");
+      }
+    }
+  }
+
+  async function handleBranchCheckout(serviceName, targetBranch, restart = false) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service) return;
+
+    // Immediately update local status so the card reflects the new branch instantly without delay
+    setStatuses((previous) => ({
+      ...previous,
+      [serviceName]: {
+        ...(previous[serviceName] || {}),
+        git: {
+          ...(previous[serviceName]?.git || {}),
+          currentBranch: targetBranch,
+        },
+      },
+    }));
+
+    try {
+      const result = await api.post(`/service/${serviceName}/git/checkout`, {
+        branch: targetBranch,
+        restart,
       });
-      showToast(`${serviceName}: ${reason}`, "error");
+
+      if (restart && result.restarted) {
+        setUiState(serviceName, {
+          lifecycleState: "starting",
+          message: `Restarting on branch ${targetBranch}...`,
+          error: "",
+        });
+      }
+
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+
+      showToast(result.message || `Switched ${serviceName} to branch ${targetBranch}`, "success");
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Branch switch failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
+  async function handleGitPull(serviceName, restart = false) {
+    const service = normalizedServices.find((entry) => entry.name === serviceName);
+    if (!service) return;
+
+    try {
+      const result = await api.post(`/service/${serviceName}/git/pull`, {
+        restart,
+      });
+
+      if (restart && result.restarted) {
+        setUiState(serviceName, {
+          lifecycleState: "starting",
+          message: `Restarting after git pull...`,
+          error: "",
+        });
+      }
+
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+
+      showToast(result.message || `Pulled latest changes for ${serviceName}`, "success");
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Git pull failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
+  async function handleFreePort(serviceName) {
+    try {
+      const result = await api.post(`/service/${serviceName}/free-port`);
+      showToast(result.message || `Port freed for ${serviceName}`, "success");
+      await refreshSingleStatus(serviceName);
+      loadServiceStatuses(normalizedServices);
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Failed to free port";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
     }
   }
 
@@ -901,11 +1081,45 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   <Switch
                     size="small"
                     checked={groupedView}
-                    onChange={(event) => setGroupedView(event.target.checked)}
+                    onChange={(event) => {
+                      setGroupedView(event.target.checked);
+                      localStorage.setItem("struo_grouped_view", String(event.target.checked));
+                    }}
                     inputProps={{ "aria-label": "Group services" }}
                   />
                 }
                 label="Group services"
+                sx={{ ml: 1, whiteSpace: "nowrap" }}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={showGitBranches}
+                    onChange={(event) => {
+                      setShowGitBranches(event.target.checked);
+                      localStorage.setItem("struo_show_git_branches", String(event.target.checked));
+                    }}
+                    inputProps={{ "aria-label": "Toggle Git branches on cards" }}
+                  />
+                }
+                label="Git branches"
+                sx={{ ml: 1, whiteSpace: "nowrap" }}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    color="primary"
+                    checked={showLiveMetrics}
+                    onChange={(event) => {
+                      setShowLiveMetrics(event.target.checked);
+                      localStorage.setItem("struo_show_live_metrics", String(event.target.checked));
+                    }}
+                    inputProps={{ "aria-label": "Toggle Live Resource Monitoring (CPU, RAM, Uptime)" }}
+                  />
+                }
+                label="Live Resources"
                 sx={{ ml: 1, whiteSpace: "nowrap" }}
               />
             </Box>
@@ -996,7 +1210,15 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                         isSelected={selectedServices.includes(service.name)}
                         onSelect={(checked) => toggleSelection(service.name, checked)}
                         onAction={executeSingleAction}
+                        onBranchCheckout={handleBranchCheckout}
+                        onGitPull={handleGitPull}
+                        onFreePort={handleFreePort}
+                        showGitBranches={showGitBranches}
+                        showLiveMetrics={showLiveMetrics}
+                        metrics={metrics[service.name] || null}
                         onViewLogs={onViewLogs}
+                        onCloneService={onCloneService}
+                        onEditInAdmin={onEditInAdmin}
                         onDragStart={setDraggedServiceName}
                         onDragEnd={() => {
                           setDraggedServiceName("");
@@ -1019,10 +1241,18 @@ const Dashboard = forwardRef(({ onViewLogs }, ref) => {
                   isMoving={movingServiceName === service.name}
                   isDraggable={false}
                   showGroup
+                  showGitBranches={showGitBranches}
+                  showLiveMetrics={showLiveMetrics}
+                  metrics={metrics[service.name] || null}
                   isSelected={selectedServices.includes(service.name)}
                   onSelect={(checked) => toggleSelection(service.name, checked)}
                   onAction={executeSingleAction}
+                  onBranchCheckout={handleBranchCheckout}
+                  onGitPull={handleGitPull}
+                  onFreePort={handleFreePort}
                   onViewLogs={onViewLogs}
+                  onCloneService={onCloneService}
+                  onEditInAdmin={onEditInAdmin}
                 />
               ))}
             </Box>
