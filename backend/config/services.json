@@ -90,7 +90,8 @@
       "path": "${basePaths.java}/gateway-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "API Gateway Service"
+      "description": "API Gateway Service",
+      "docsPath": "/swagger-ui.html"
     },
     "execution-service": {
       "type": "python",
@@ -116,9 +117,9 @@
     },
     "lexie-ai": {
       "type": "python",
-      "port": 8004,
+      "port": 5003,
       "path": "${basePaths.python}/lexie-ai",
-      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8004",
+      "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5003",
       "description": "AI-powered assistant service"
     },
     "semantic-service": {
