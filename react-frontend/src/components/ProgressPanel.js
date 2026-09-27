@@ -1,14 +1,16 @@
 import {
   Alert,
   Box,
+  IconButton,
   LinearProgress,
   Paper,
   Stack,
   Typography,
 } from "@mui/material";
+import { Close as CloseIcon } from "@mui/icons-material";
 import StatusChip from "./StatusChip";
 
-function ProgressPanel({ summary, steps, onViewLogs }) {
+function ProgressPanel({ summary, steps, onViewLogs, onDismiss }) {
   if (!summary || !steps?.length) return null;
 
   const percent = summary.total ? Math.round((summary.completed / summary.total) * 100) : 0;
@@ -25,7 +27,7 @@ function ProgressPanel({ summary, steps, onViewLogs }) {
       }}
     >
       <Stack spacing={2}>
-        <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", justifyContent: "space-between", gap: 2, flexWrap: "wrap", alignItems: "flex-start" }}>
           <Box>
             <Typography variant="overline" color="text.secondary">
               Operation Progress
@@ -37,10 +39,15 @@ function ProgressPanel({ summary, steps, onViewLogs }) {
               {summary.completed} of {summary.total} services completed
             </Typography>
           </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap">
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
             <StatusChip state="healthy" label={`${summary.succeeded} healthy`} />
             <StatusChip state="waiting" label={`${summary.waiting} waiting`} />
             <StatusChip state="failed" label={`${summary.failed} failed`} />
+            {onDismiss && summary.completed >= summary.total ? (
+              <IconButton size="small" onClick={onDismiss} aria-label="Dismiss" sx={{ ml: 0.5 }}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            ) : null}
           </Stack>
         </Box>
 

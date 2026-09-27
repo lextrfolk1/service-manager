@@ -29,7 +29,6 @@ import {
   Stop as StopIcon,
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
-import ProgressPanel from "../components/ProgressPanel";
 import api from "../services/api";
 import {
   DEFAULT_GROUPS,
@@ -88,13 +87,11 @@ function deriveBaseState(status) {
       healthLabel: "Health unknown",
       message: "Waiting for first status poll",
       error: "",
-      portConflict: null,
       git: null,
     };
   }
 
-  const hasConflict = Boolean(status.portConflict?.hasConflict);
-  const lifecycleState = hasConflict ? "blocked" : (status.running ? "running" : "stopped");
+  const lifecycleState = status.running ? "running" : "stopped";
   const healthState = status.healthState || "unknown";
   const checkable = status.checkable !== false;
 
@@ -110,22 +107,19 @@ function deriveBaseState(status) {
           ? "Unhealthy"
           : healthState === "port-open"
             ? "Port open"
-          : lifecycleState === "stopped" || lifecycleState === "blocked"
+          : lifecycleState === "stopped"
             ? ""
             : checkable
               ? "Health unknown"
               : "No health check",
-    message: hasConflict
-      ? status.portConflict.message
-      : status.running
+    message: status.running
       ? healthState === "healthy"
         ? "Service is healthy"
         : healthState === "port-open"
           ? "Service port is open"
         : "Service is running but health is unavailable"
       : "Service is stopped",
-    error: hasConflict ? status.portConflict.message : "",
-    portConflict: status.portConflict || null,
+    error: "",
     git: status.git || null,
   };
 }
@@ -145,7 +139,6 @@ function mergeDisplayState(baseState, uiState) {
     }
     return {
       ...baseState,
-      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
       git: baseState.git,
     };
   }
@@ -162,7 +155,6 @@ function mergeDisplayState(baseState, uiState) {
           : uiState.healthState === "unhealthy"
             ? "Unhealthy"
             : "Health unknown",
-      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
       git: baseState.git,
     };
   }
@@ -175,15 +167,11 @@ function mergeDisplayState(baseState, uiState) {
       lifecycleLabel: baseState.lifecycleLabel,
       healthState: baseState.healthState,
       healthLabel: baseState.healthLabel,
-      portConflict: uiState.portConflict !== undefined ? uiState.portConflict : baseState.portConflict,
       git: baseState.git,
     };
   }
 
-  return {
-    ...baseState,
-    portConflict: baseState.portConflict,
-  };
+  return baseState;
 }
 
 const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref) => {
@@ -217,7 +205,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
-  const [operationState, setOperationState] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const normalizedServices = useMemo(
     () => services.map((service) => normalizeService(service)),
@@ -288,26 +276,8 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       .filter((entry) => entry.services.length > 0);
   }, [filteredServices]);
 
-  const operationSummary = useMemo(() => {
-    if (!operationState?.order?.length) return null;
-    const steps = operationState.order.map((name) => ({
-      name,
-      ...(operationState.items[name] || { state: "queued", message: "Queued" }),
-    }));
-    const completed = steps.filter((step) => ["healthy", "running", "failed", "stopped"].includes(step.state)).length;
-    return {
-      label: operationState.label,
-      total: steps.length,
-      completed,
-      waiting: steps.filter((step) => step.state === "waiting").length,
-      succeeded: steps.filter((step) => ["healthy", "running", "stopped"].includes(step.state)).length,
-      failed: steps.filter((step) => step.state === "failed").length,
-      steps,
-    };
-  }, [operationState]);
-
   useEffect(() => {
-    loadServices();
+    loadServices(true);
   }, []);
 
   useEffect(() => {
@@ -347,16 +317,32 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     refreshServices: loadServices,
   }));
 
-  async function loadServices() {
+  async function loadServices(showSpinner = false) {
     try {
-      setLoading(true);
+      if (showSpinner) setLoading(true);
       const data = await api.get("/services");
       setServices(data.services || []);
       setError("");
+      return data.services || [];
     } catch (err) {
       setError(`Failed to load services: ${err.message}`);
+      return [];
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
+    }
+  }
+
+  async function handleRefreshAll() {
+    setIsRefreshing(true);
+    try {
+      const latest = await loadServices(false);
+      const targets = latest.length ? latest.map(normalizeService) : normalizedServices;
+      await loadServiceStatuses(targets);
+      showToast("Service statuses refreshed", "success");
+    } catch (err) {
+      showToast(`Failed to refresh: ${err.message || "Unknown error"}`, "error");
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 400);
     }
   }
 
@@ -432,41 +418,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     }));
   }
 
-  function updateOperationItem(name, patch) {
-    setOperationState((previous) => {
-      if (!previous) return previous;
-      return {
-        ...previous,
-        items: {
-          ...previous.items,
-          [name]: {
-            ...(previous.items[name] || {}),
-            ...patch,
-          },
-        },
-      };
-    });
-  }
 
-  function startOperation(label, order) {
-    setOperationState({
-      label,
-      order,
-      items: order.reduce((accumulator, name) => {
-        accumulator[name] = { state: "queued", message: "Queued for action", error: "" };
-        return accumulator;
-      }, {}),
-    });
-  }
-
-  function clearOperationIfFinished() {
-    setOperationState((previous) => {
-      if (!previous) return previous;
-      const items = Object.values(previous.items);
-      const allFinished = items.every((item) => ["healthy", "running", "failed", "stopped"].includes(item.state));
-      return allFinished ? previous : previous;
-    });
-  }
 
   async function executeSingleAction(serviceName, action) {
     const service = normalizedServices.find((entry) => entry.name === serviceName);
@@ -615,20 +567,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     }
   }
 
-  async function handleFreePort(serviceName) {
-    try {
-      const result = await api.post(`/service/${serviceName}/free-port`);
-      showToast(result.message || `Port freed for ${serviceName}`, "success");
-      await refreshSingleStatus(serviceName);
-      loadServiceStatuses(normalizedServices);
-      return result;
-    } catch (err) {
-      await refreshSingleStatus(serviceName);
-      const msg = err.details || err.message || err.error || "Failed to free port";
-      showToast(`${serviceName}: ${msg}`, "error");
-      throw err;
-    }
-  }
+
 
   function getExpandedStartTargets(initialTargets) {
     const byName = Object.fromEntries(normalizedServices.map((service) => [service.name, service]));
@@ -644,18 +583,34 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     return [...expanded];
   }
 
-  async function executeStartFlow(initialTargets, label) {
+  async function executeStartFlow(initialTargets) {
     const targetNames = getExpandedStartTargets(initialTargets);
+    const toStartNames = targetNames.filter((name) => !displayStates[name]?.running);
+    if (!toStartNames.length) {
+      showToast("All requested services are already running", "info");
+      return;
+    }
+
+    const alreadyRunning = new Set(targetNames.filter((name) => displayStates[name]?.running));
     const orderedServices = topoSortServices(
-      normalizedServices.filter((service) => targetNames.includes(service.name))
+      normalizedServices.filter((service) => toStartNames.includes(service.name))
     );
     const pending = new Set(orderedServices.map((service) => service.name));
-    const completed = new Set();
+    const completed = new Set(alreadyRunning);
     const failed = new Set();
     const serviceMap = Object.fromEntries(normalizedServices.map((service) => [service.name, service]));
     const dependencyMap = buildDependencyMap(normalizedServices);
 
-    startOperation(label, orderedServices.map((service) => service.name));
+    // Initial queued state only for services being started
+    orderedServices.forEach((service) => {
+      setUiState(service.name, {
+        lifecycleState: service.dependsOn?.length ? "waiting" : "queued",
+        message: service.dependsOn?.length
+          ? `Waiting for ${service.dependsOn.join(", ")}`
+          : "Queued for startup",
+        error: "",
+      });
+    });
 
     while (pending.size > 0) {
       const ready = [...pending].filter((name) => {
@@ -668,11 +623,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
 
       if (!ready.length) {
         [...pending].forEach((name) => {
-          updateOperationItem(name, {
-            state: "failed",
-            message: "Blocked by dependency failure",
-            error: "A required dependency failed to start",
-          });
           setUiState(name, {
             lifecycleState: "failed",
             healthState: "unhealthy",
@@ -686,13 +636,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       }
 
       ready.forEach((name) => {
-        updateOperationItem(name, {
-          state: "waiting",
-          message:
-            (serviceMap[name].dependsOn || []).length > 0
-              ? `Waiting for ${serviceMap[name].dependsOn.join(", ")}`
-              : "Ready to start",
-        });
         setUiState(name, {
           lifecycleState: serviceMap[name].dependsOn?.length ? "waiting" : "queued",
           message:
@@ -705,20 +648,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
 
       await Promise.all(
         ready.map(async (name) => {
-          const currentDisplayState = displayStates[name];
-          if (currentDisplayState?.running) {
-            updateOperationItem(name, { state: "healthy", message: "Already running" });
-            setUiState(name, {
-              lifecycleState: "running",
-              message: "Already running",
-              error: "",
-            });
-            completed.add(name);
-            pending.delete(name);
-            return;
-          }
-
-          updateOperationItem(name, { state: "starting", message: "Starting now" });
           setUiState(name, {
             lifecycleState: "starting",
             message: "Starting now",
@@ -732,10 +661,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
             await sleep(500);
             const latestStatus = await refreshSingleStatus(name);
             const nextState = latestStatus?.healthState === "healthy" ? "healthy" : latestStatus?.running ? "running" : "starting";
-            updateOperationItem(name, {
-              state: nextState,
-              message: nextState === "healthy" ? "Healthy" : "Running",
-            });
             setUiState(name, {
               lifecycleState: nextState,
               message: nextState === "healthy" ? "Healthy" : "Running",
@@ -744,11 +669,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
             completed.add(name);
           } catch (err) {
             const reason = categorizeFailure(err);
-            updateOperationItem(name, {
-              state: "failed",
-              message: reason,
-              error: err.error || err.message,
-            });
             setUiState(name, {
               lifecycleState: "failed",
               healthState: "unhealthy",
@@ -763,44 +683,63 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       );
     }
 
-    clearOperationIfFinished();
+    const startedCount = completed.size - alreadyRunning.size;
+    if (failed.size > 0) {
+      showToast(`Started ${startedCount} of ${toStartNames.length} services (${failed.size} failed)`, "warning");
+    } else {
+      showToast(`Started ${startedCount} service${startedCount === 1 ? "" : "s"}`, "success");
+    }
   }
 
-  async function executeStopFlow(targetNames, label) {
-    const order = topoSortServices(normalizedServices.filter((service) => targetNames.includes(service.name)))
+  async function executeStopFlow(targetNames) {
+    const runningTargets = targetNames.filter((name) => displayStates[name]?.running);
+    if (!runningTargets.length) {
+      showToast("All selected services are already stopped", "info");
+      return;
+    }
+
+    const order = topoSortServices(normalizedServices.filter((service) => runningTargets.includes(service.name)))
       .map((service) => service.name)
       .reverse();
 
-    startOperation(label, order);
-
-    for (const name of order) {
-      updateOperationItem(name, { state: "stopping", message: "Stopping service" });
+    // Mark all as stopping on the cards — no progress panel needed
+    order.forEach((name) => {
       setUiState(name, {
         lifecycleState: "stopping",
         message: "Stopping service",
         error: "",
       });
+    });
 
-      try {
-        await api.post(`/service/${name}/stop`);
-        await sleep(300);
-        await refreshSingleStatus(name);
-        updateOperationItem(name, { state: "stopped", message: "Stopped" });
-        setUiState(name, {
-          lifecycleState: "stopped",
-          message: "Stopped",
-          error: "",
-        });
-      } catch (err) {
-        const reason = categorizeFailure(err);
-        updateOperationItem(name, { state: "failed", message: reason, error: err.error || err.message });
-        setUiState(name, {
-          lifecycleState: "failed",
-          healthState: "unhealthy",
-          message: reason,
-          error: err.error || err.message,
-        });
-      }
+    const results = await Promise.allSettled(
+      order.map(async (name) => {
+        try {
+          await api.post(`/service/${name}/stop`);
+          await sleep(300);
+          await refreshSingleStatus(name);
+          setUiState(name, {
+            lifecycleState: "stopped",
+            message: "Stopped",
+            error: "",
+          });
+        } catch (err) {
+          const reason = categorizeFailure(err);
+          setUiState(name, {
+            lifecycleState: "failed",
+            healthState: "unhealthy",
+            message: reason,
+            error: err.error || err.message,
+          });
+          throw err;
+        }
+      })
+    );
+
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      showToast(`Stopped ${order.length - failed} of ${order.length} services (${failed} failed)`, "warning");
+    } else {
+      showToast(`Stopped ${order.length} service${order.length === 1 ? "" : "s"}`, "success");
     }
   }
 
@@ -909,6 +848,25 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
               </Button>
               <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleBulkStopAll}>
                 Stop all
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={isRefreshing}
+                startIcon={
+                  <RefreshIcon
+                    sx={{
+                      animation: isRefreshing ? "spin 0.8s linear infinite" : "none",
+                      "@keyframes spin": {
+                        "0%": { transform: "rotate(0deg)" },
+                        "100%": { transform: "rotate(360deg)" },
+                      },
+                    }}
+                  />
+                }
+                onClick={handleRefreshAll}
+              >
+                {isRefreshing ? "Refreshing..." : "Refresh"}
               </Button>
               {selectedServices.length > 0 ? (
                 <>
@@ -1127,8 +1085,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
         </Box>
       </Paper>
 
-      <ProgressPanel summary={operationSummary} steps={operationSummary?.steps} onViewLogs={onViewLogs} />
-
       <Paper
         elevation={0}
         sx={{
@@ -1212,7 +1168,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                         onAction={executeSingleAction}
                         onBranchCheckout={handleBranchCheckout}
                         onGitPull={handleGitPull}
-                        onFreePort={handleFreePort}
                         showGitBranches={showGitBranches}
                         showLiveMetrics={showLiveMetrics}
                         metrics={metrics[service.name] || null}
@@ -1249,7 +1204,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   onAction={executeSingleAction}
                   onBranchCheckout={handleBranchCheckout}
                   onGitPull={handleGitPull}
-                  onFreePort={handleFreePort}
                   onViewLogs={onViewLogs}
                   onCloneService={onCloneService}
                   onEditInAdmin={onEditInAdmin}
