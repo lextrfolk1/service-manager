@@ -197,7 +197,8 @@ app.put("/config", (req, res) => {
 
 // Get base paths configuration
 app.get("/config/basepaths", (req, res) => {
-  res.json({ basePaths: config.config.basePaths });
+  const freshConfig = loadConfig();
+  res.json({ basePaths: freshConfig.config.basePaths });
 });
 
 // Update base paths configuration

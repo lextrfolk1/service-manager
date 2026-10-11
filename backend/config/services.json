@@ -18,7 +18,8 @@
       "port": 3000,
       "path": "${basePaths.npm}/frontend-service",
       "command": "npm run dev",
-      "description": "React Frontend Service"
+      "description": "React Frontend Service",
+      "build": "npm install"
     },
     "config-service": {
       "type": "java",
@@ -98,12 +99,14 @@
       "port": 5002,
       "path": "${basePaths.python}/execution-service",
       "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "build": "$(pwd)/venv/bin/pip install -r requirements.txt",
       "description": "Service to handle code execution tasks"
     },
     "execution-service-listener": {
       "type": "listener",
       "path": "${basePaths.listener}/execution-service",
       "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
+      "build": "$(pwd)/venv/bin/pip install -r requirements.txt",
       "stopCommand": "pkill -f pg_sync_worker.py",
       "healthCommand": "pgrep -f pg_sync_worker.py > /dev/null",
       "description": "Execution Service listener"
@@ -113,6 +116,7 @@
       "port": 5005,
       "path": "${basePaths.python}/data-service",
       "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5005",
+      "build": "$(pwd)/venv/bin/pip install -r requirements.txt",
       "description": "Service to manage data operations"
     },
     "lexie-ai": {
@@ -120,6 +124,7 @@
       "port": 5003,
       "path": "${basePaths.python}/lexie-ai",
       "command": "$(pwd)/venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 5003",
+      "build": "$(pwd)/venv/bin/pip install -r requirements.txt",
       "description": "AI-powered assistant service"
     },
     "semantic-service": {
@@ -127,6 +132,7 @@
       "port": 8083,
       "path": "${basePaths.java}/semantic-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
       "description": "Semantic service",
       "group": "Data"
     },
@@ -141,17 +147,18 @@
     "intelligence-service": {
       "type": "java",
       "port": 8059,
-      "path": "${basePaths.lextrai}/intelligence-service",
-      "command": "mvn spring-boot:run",
+      "path": "${basePaths.java}/intelligence-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
       "description": "Intelligence backend service"
     },
-    "intelligence-ui": {
+    "lextr-frontend": {
       "type": "npm",
       "port": 5173,
-      "path": "${basePaths.lextrai}/intelligence-ui",
+      "path": "${basePaths.npm}/lextr-frontend",
       "command": "npm run dev -- --host 0.0.0.0",
-      "description": "Intelligence UI development server"
+      "build": "npm install",
+      "description": "Lextr Frontend development server"
     },
     "redis": {
       "type": "redis",
