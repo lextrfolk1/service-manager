@@ -155,10 +155,10 @@
     "lextr-frontend": {
       "type": "npm",
       "port": 5173,
-      "path": "${basePaths.npm}/lextr-frontend",
+      "path": "${basePaths.npm}/lexie-frontend",
       "command": "npm run dev -- --host 0.0.0.0",
       "build": "npm install",
-      "description": "Lextr Frontend development server"
+      "description": "Lexie Frontend development server"
     },
     "redis": {
       "type": "redis",
