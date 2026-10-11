@@ -152,7 +152,7 @@
       "build": "mvn clean install -DskipTests",
       "description": "Intelligence backend service"
     },
-    "lextr-frontend": {
+    "lexie-frontend": {
       "type": "npm",
       "port": 5173,
       "path": "${basePaths.npm}/lexie-frontend",
