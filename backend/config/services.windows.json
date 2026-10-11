@@ -18,7 +18,8 @@
       "port": 3000,
       "path": "${basePaths.npm}/frontend-service",
       "command": "npm run dev",
-      "description": "React Frontend Service"
+      "description": "React Frontend Service",
+      "build": "npm install"
     },
     "config-service": {
       "type": "java",
@@ -27,6 +28,14 @@
       "command": "mvn spring-boot:run",
       "build": "mvn clean install -DskipTests",
       "description": "Spring Cloud Config Server"
+    },
+    "auth-service": {
+      "type": "java",
+      "port": 8057,
+      "path": "${basePaths.java}/auth-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Authentication and Authorization Service"
     },
     "generic-service": {
       "type": "java",
@@ -82,36 +91,74 @@
       "path": "${basePaths.java}/gateway-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "API Gateway Service"
-    },
-    "auth-service": {
-      "type": "java",
-      "port": 8057,
-      "path": "${basePaths.java}/auth-service",
-      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
-      "build": "mvn clean install -DskipTests",
-      "description": "Authentication and Authorization Service"
+      "description": "API Gateway Service",
+      "docsPath": "/swagger-ui.html"
     },
     "execution-service": {
       "type": "python",
       "port": 5002,
       "path": "${basePaths.python}/execution-service",
       "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5002",
+      "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
       "description": "Service to handle code execution tasks"
+    },
+    "execution-service-listener": {
+      "type": "listener",
+      "path": "${basePaths.listener}/execution-service",
+      "command": "set \"PYTHONPATH=${basePaths.python}/execution-service\" && .venv\\Scripts\\python.exe ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
+      "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
+      "stopCommand": "powershell -NoProfile -Command \"Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*pg_sync_worker.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\"",
+      "healthCommand": "powershell -NoProfile -Command \"if (Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*pg_sync_worker.py*' }) { exit 0 } else { exit 1 }\"",
+      "description": "Execution Service listener"
     },
     "data-service": {
       "type": "python",
       "port": 5005,
       "path": "${basePaths.python}/data-service",
       "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5005",
+      "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
       "description": "Service to manage data operations"
     },
     "lexie-ai": {
       "type": "python",
-      "port": 8004,
+      "port": 5003,
       "path": "${basePaths.python}/lexie-ai",
-      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 8004",
+      "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5003",
+      "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
       "description": "AI-powered assistant service"
+    },
+    "semantic-service": {
+      "type": "java",
+      "port": 8083,
+      "path": "${basePaths.java}/semantic-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Semantic service",
+      "group": "Data"
+    },
+    "analytics-service": {
+      "type": "java",
+      "port": 8055,
+      "path": "${basePaths.java}/analytics-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "analytical operation Service"
+    },
+    "intelligence-service": {
+      "type": "java",
+      "port": 8059,
+      "path": "${basePaths.java}/intelligence-service",
+      "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
+      "build": "mvn clean install -DskipTests",
+      "description": "Intelligence backend service"
+    },
+    "lextr-frontend": {
+      "type": "npm",
+      "port": 5173,
+      "path": "${basePaths.npm}/lextr-frontend",
+      "command": "npm run dev -- --host 0.0.0.0",
+      "build": "npm install",
+      "description": "Lextr Frontend development server"
     },
     "redis": {
       "type": "redis",
@@ -125,15 +172,46 @@
       "port": 7687,
       "command": "neo4j start",
       "stopCommand": "neo4j stop",
-      "description": "Neo4j graph database"
+      "description": "Neo4j graph database",
+      "group": "Database"
     },
-    "execution-service-listener": {
-      "type": "listener",
-      "path": "${basePaths.listener}/execution-service",
-      "command": "set PYTHONPATH=${basePaths.python}\\execution-service && .venv\\Scripts\\python.exe ${basePaths.python}\\execution-service\\utils\\pg_sync_worker.py",
-      "stopCommand": "taskkill /f /im python.exe /fi \"WINDOWTITLE eq pg_sync_worker.py*\"",
-      "healthCommand": "tasklist /fi \"IMAGENAME eq python.exe\" | findstr python.exe",
-      "description": "Execution Service listener"
+    "postgresql": {
+      "type": "database",
+      "port": 5433,
+      "daemon": true,
+      "command": "net start postgresql-x64-17",
+      "stopCommand": "net stop postgresql-x64-17",
+      "healthCommand": "pg_isready -h localhost -p 5433",
+      "description": "PostgreSQL 17 relational database",
+      "group": "Database"
+    },
+    "neo4j-augmenta": {
+      "type": "docker",
+      "port": 7476,
+      "daemon": true,
+      "command": "docker start neo4j-augmenta 2>NUL || docker run -d --name neo4j-augmenta --restart unless-stopped -p 7476:7474 -p 7699:7687 -e NEO4J_AUTH=neo4j/Mygooru1028$ -e NEO4J_PLUGINS=[\\\"apoc\\\"] -e NEO4J_server_config_strict__validation_enabled=false -v neo4j-augmenta-data:/data neo4j:5",
+      "stopCommand": "docker stop neo4j-augmenta",
+      "healthCommand": "curl -sf http://localhost:7476/ > NUL",
+      "description": "Neo4j Augmenta on Docker (Bolt: 7699)",
+      "group": "Database"
+    },
+    "clickhouse": {
+      "type": "docker",
+      "port": 8123,
+      "daemon": true,
+      "command": "docker start clickhouse 2>NUL || docker run -d --name clickhouse -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_DB=data -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=clickhouse -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 clickhouse/clickhouse-server",
+      "stopCommand": "docker stop clickhouse",
+      "healthCommand": "curl -sf http://localhost:8123/ping > NUL",
+      "description": "ClickHouse analytics database on Docker (9000)"
+    },
+    "opa": {
+      "type": "docker",
+      "port": 8181,
+      "daemon": true,
+      "command": "docker start lextr-opa 2>NUL || docker run -d --name lextr-opa --restart unless-stopped -p 8181:8181 openpolicyagent/opa:1.4.2 run --server --addr 0.0.0.0:8181 --v0-compatible --log-level info",
+      "stopCommand": "docker stop lextr-opa",
+      "healthCommand": "curl -sf http://127.0.0.1:8181/health > NUL",
+      "description": "Open Policy Agent on Docker"
     }
   }
 }
