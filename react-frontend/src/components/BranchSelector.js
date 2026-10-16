@@ -15,6 +15,7 @@ import {
   ListItemText,
   ListSubheader,
   Popover,
+  Stack,
   Switch,
   TextField,
   Tooltip,
@@ -25,10 +26,13 @@ import {
   Check as CheckIcon,
   Close as CloseIcon,
   CloudQueue as CloudIcon,
+  CloudDownloadRounded as CloudDownloadIcon,
+  CloudOffRounded as CloudOffIcon,
+  CloudUploadRounded as CloudUploadIcon,
   Computer as ComputerIcon,
-  DownloadRounded as DownloadRoundedIcon,
+  EditRounded as EditIcon,
   KeyboardArrowDown as KeyboardArrowDownIcon,
-  Refresh as RefreshIcon,
+  SyncRounded as SyncIcon,
   Search as SearchIcon,
   WarningAmberRounded as WarningAmberIcon,
 } from "@mui/icons-material";
@@ -41,6 +45,7 @@ function BranchSelector({
   isBusy = false,
   onBranchCheckout,
   onGitPull,
+  onGitPush,
   fullWidth = true,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
@@ -48,6 +53,7 @@ function BranchSelector({
   const [optimisticBranch, setOptimisticBranch] = useState(null);
   const [loading, setLoading] = useState(false);
   const [pulling, setPulling] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const [search, setSearch] = useState("");
   const [restartOnSwitch, setRestartOnSwitch] = useState(isRunning);
   const [error, setError] = useState("");
@@ -96,7 +102,33 @@ function BranchSelector({
     setError("");
   }
 
-  async function handlePull(event) {
+  async function handlePush(event) {
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (isBusy || pushing) return;
+
+    try {
+      setPushing(true);
+      setError("");
+      if (onGitPush) {
+        await onGitPush(serviceName);
+      } else {
+        await api.post(`/service/${serviceName}/git/push`, {});
+      }
+      if (isOpen) {
+        await fetchBranches();
+      }
+    } catch (err) {
+      const msg = err.details || err.message || err.error || "Git push failed";
+      setError(msg);
+    } finally {
+      setPushing(false);
+    }
+  }
+
+  async function handlePull(event, restart = false) {
     if (event) {
       event.stopPropagation();
       event.preventDefault();
@@ -107,10 +139,10 @@ function BranchSelector({
       setPulling(true);
       setError("");
       if (onGitPull) {
-        await onGitPull(serviceName, restartOnSwitch);
+        await onGitPull(serviceName, restart);
       } else {
         await api.post(`/service/${serviceName}/git/pull`, {
-          restart: restartOnSwitch,
+          restart,
         });
       }
       if (isOpen) {
@@ -184,6 +216,7 @@ function BranchSelector({
 
   const branchTooltip = [
     `Branch: ${currentBranch}`,
+    !hasUpstream ? "Local branch: not pushed to remote (git pull is skipped on start)" : "",
     behind > 0 ? `${behind} commit(s) behind ${upstreamBranch || "origin"}` : "",
     ahead > 0 ? `${ahead} commit(s) ahead of ${upstreamBranch || "origin"}` : "",
     isDirty ? `${uncommittedCount} uncommitted change(s)` : "",
@@ -192,11 +225,31 @@ function BranchSelector({
     .filter(Boolean)
     .join(" • ");
 
+  const isLocalOnly = !hasUpstream;
+  const nothingToPush = hasUpstream && ahead === 0;
+  const pushTooltip = pushing
+    ? `Pushing ${currentBranch} to remote...`
+    : nothingToPush
+    ? "Nothing to push"
+    : isLocalOnly
+    ? `Git Push: Publish local branch ${currentBranch} to remote (sets upstream)`
+    : `Git Push: ${ahead} commit(s) to ${upstreamBranch || "remote"}`;
+
   const pullTooltip = pulling
     ? `Pulling latest changes for ${serviceName}...`
     : behind > 0
     ? `Git Pull: ${behind} new commit(s) available from ${upstreamBranch || "remote"}`
     : `Git Pull: Fetch & merge latest commits for ${currentBranch}`;
+  const railPullTooltip = pulling ? pullTooltip : `${pullTooltip} (service is not restarted)`;
+
+  const changeSummary = [
+    isDirty ? `${uncommittedCount || "Some"} uncommitted change(s)` : "",
+    behind > 0 ? `${behind} commit(s) behind ${upstreamBranch || "origin"}` : "",
+    ahead > 0 ? `${ahead} commit(s) ahead of ${upstreamBranch || "origin"}` : "",
+    isLocalOnly ? "Local branch: not pushed to remote" : "",
+  ]
+    .filter(Boolean)
+    .join(" • ");
 
   return (
     <>
@@ -204,190 +257,197 @@ function BranchSelector({
         sx={{
           display: "flex",
           alignItems: "center",
+          justifyContent: "space-between",
           gap: 0.5,
           width: fullWidth ? "100%" : "auto",
           minWidth: 0,
+          py: 0.25,
+          px: 0.6,
+          borderRadius: "6px",
+          bgcolor: "var(--c-bg-0f172a-0025)",
+          border: "1px solid var(--c-border-94a3b8-016)",
+          transition: "all 0.15s ease",
+          "&:hover": {
+            bgcolor: "var(--c-bg-0f172a-0045)",
+            borderColor: "var(--c-border-94a3b8-03)",
+          },
         }}
       >
-        {/* Main Branch Selector Button */}
-        <Tooltip title={branchTooltip}>
-          <Box
-            component="button"
-            type="button"
-            onClick={isBusy ? undefined : handleOpen}
-            disabled={isBusy}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 0.5,
-              minWidth: 0,
-              flex: 1,
-              height: 24,
-              px: 0.75,
-              py: 0,
-              borderRadius: 1.5,
-              fontSize: "0.72rem",
-              fontWeight: 600,
-              cursor: isBusy ? "default" : "pointer",
-              color: isDirty ? "warning.dark" : "text.secondary",
-              backgroundColor: isDirty ? "rgba(237, 108, 2, 0.08)" : "rgba(15, 23, 42, 0.04)",
-              border: "1px solid",
-              borderColor: isDirty ? "warning.light" : "rgba(148, 163, 184, 0.25)",
-              outline: "none",
-              transition: "all 0.15s ease",
-              "&:hover": {
-                backgroundColor: isBusy ? undefined : isDirty ? "rgba(237, 108, 2, 0.14)" : "rgba(15, 23, 42, 0.08)",
-                borderColor: isBusy ? undefined : "primary.main",
-                color: isBusy ? undefined : "text.primary",
-              },
-              "&:focus-visible": {
-                borderColor: "primary.main",
-                boxShadow: "0 0 0 2px rgba(25, 118, 210, 0.2)",
-              },
-            }}
-          >
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, minWidth: 0, flex: 1, overflow: "hidden" }}>
-              <CallSplitIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.75 }} />
+        {/* Left Side: [Git icon] [Branch name ▼] [Change indicators] */}
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            minWidth: 0,
+            flex: "1 1 auto",
+            overflow: "hidden",
+          }}
+        >
+          {/* [Git icon] + [Branch name ▼] */}
+          <Tooltip title={branchTooltip} placement="top" arrow disableInteractive>
+            <Box
+              component="button"
+              type="button"
+              onClick={isBusy ? undefined : handleOpen}
+              disabled={isBusy}
+              aria-label={`Current branch: ${currentBranch}. Click to switch branch.`}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.4,
+                minWidth: 0,
+                flex: "1 1 auto",
+                p: 0,
+                border: "none",
+                bgcolor: "transparent",
+                cursor: isBusy ? "default" : "pointer",
+                color: "var(--c-text-101828)",
+                outline: "none",
+                borderRadius: "4px",
+                "&:hover": {
+                  color: "primary.main",
+                },
+                "&:focus-visible": {
+                  boxShadow: "0 0 0 2px color-mix(in srgb, var(--sm-accent) 30%, transparent)",
+                },
+              }}
+            >
+              <CallSplitIcon sx={{ fontSize: "15px !important", flexShrink: 0, color: "var(--c-text-64748b)" }} />
               <Typography
                 component="span"
                 sx={{
-                  fontSize: "0.72rem",
+                  fontSize: "0.8rem",
                   fontWeight: 600,
                   color: "inherit",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
-                  lineHeight: 1,
-                  flex: "1 1 auto",
+                  lineHeight: 1.2,
                   minWidth: 0,
                 }}
               >
                 {currentBranch}
               </Typography>
+              <KeyboardArrowDownIcon sx={{ fontSize: "14px !important", flexShrink: 0, color: "var(--c-text-94a3b8)" }} />
+            </Box>
+          </Tooltip>
 
-              {/* Behind indicator: ↓ count */}
-              {behind > 0 && (
-                <Tooltip title={`${behind} commit(s) behind ${upstreamBranch || "origin"}`}>
-                  <Box
-                    component="span"
-                    sx={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      height: 15,
-                      px: 0.45,
-                      borderRadius: "4px",
-                      bgcolor: "rgba(2, 132, 199, 0.12)",
-                      color: "#0284c7",
-                      border: "1px solid rgba(2, 132, 199, 0.25)",
-                      fontSize: "0.62rem",
-                      fontWeight: 700,
-                      lineHeight: 1,
-                      flexShrink: 0,
-                    }}
-                  >
+          {/* [Change indicators] — one compact cluster: ✎modified ↓behind ↑ahead, not-pushed icon */}
+          {changeSummary ? (
+            <Tooltip title={changeSummary} placement="top" arrow disableInteractive>
+              <Box
+                component="span"
+                aria-label={changeSummary}
+                sx={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 0.5,
+                  flexShrink: 0,
+                  fontSize: "0.68rem",
+                  fontWeight: 700,
+                  lineHeight: 1,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isDirty ? (
+                  <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.2, color: "var(--c-text-475569)" }}>
+                    <EditIcon sx={{ fontSize: "11px !important" }} />
+                    {uncommittedCount || ""}
+                  </Box>
+                ) : null}
+                {behind > 0 ? (
+                  <Box component="span" sx={{ color: "var(--c-text-0284c7)" }}>
                     ↓{behind}
                   </Box>
-                </Tooltip>
-              )}
-
-              {/* Ahead indicator: ↑ count */}
-              {ahead > 0 && (
-                <Tooltip title={`${ahead} commit(s) ahead of ${upstreamBranch || "origin"}`}>
-                  <Box
-                    component="span"
-                    sx={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      height: 15,
-                      px: 0.45,
-                      borderRadius: "4px",
-                      bgcolor: "rgba(99, 102, 241, 0.12)",
-                      color: "#4f46e5",
-                      border: "1px solid rgba(99, 102, 241, 0.25)",
-                      fontSize: "0.62rem",
-                      fontWeight: 700,
-                      lineHeight: 1,
-                      flexShrink: 0,
-                    }}
-                  >
+                ) : null}
+                {ahead > 0 ? (
+                  <Box component="span" sx={{ color: "var(--c-text-4f46e5)" }}>
                     ↑{ahead}
                   </Box>
-                </Tooltip>
-              )}
+                ) : null}
+                {isLocalOnly ? <CloudOffIcon sx={{ fontSize: "12px !important", color: "var(--c-text-4f46e5)" }} /> : null}
+              </Box>
+            </Tooltip>
+          ) : null}
+        </Box>
 
-              {/* Working Tree Badge: * count */}
-              {isDirty && (
-                <Tooltip title={`Working directory has ${uncommittedCount} uncommitted change(s)`}>
-                  <Box
-                    component="span"
-                    sx={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      height: 15,
-                      px: 0.45,
-                      borderRadius: "4px",
-                      bgcolor: "rgba(245, 158, 11, 0.18)",
-                      color: "#b45309",
-                      border: "1px solid rgba(245, 158, 11, 0.35)",
-                      fontSize: "0.62rem",
-                      fontWeight: 700,
-                      lineHeight: 1,
-                      flexShrink: 0,
-                    }}
-                  >
-                    *{uncommittedCount}
-                  </Box>
-                </Tooltip>
-              )}
-            </Box>
+        {/* Right Side: [Pull] [Push] — hidden while the service is busy (nothing can run) */}
+        {!isBusy ? (
+          <Stack direction="row" spacing={0.25} alignItems="center" sx={{ flexShrink: 0 }}>
+            {/* [Pull] button */}
+            <Tooltip title={isLocalOnly ? "Git pull unavailable (local branch not pushed to remote)" : railPullTooltip} placement="top" arrow disableInteractive>
+              <span>
+                <IconButton
+                  size="small"
+                  type="button"
+                  onClick={(e) => handlePull(e, false)}
+                  disabled={isBusy || pulling || isLocalOnly}
+                  aria-label={`Git pull for ${serviceName}`}
+                  sx={{
+                    width: 24,
+                    height: 24,
+                    p: 0,
+                    borderRadius: "4px",
+                    color: behind > 0 ? "var(--c-text-0284c7)" : "var(--c-text-64748b)",
+                    bgcolor: behind > 0 ? "var(--c-bg-0284c7-01)" : "transparent",
+                    transition: "all 0.15s ease",
+                    "&:hover": {
+                      bgcolor: "var(--c-bg-0f172a-008)",
+                      color: behind > 0 ? "var(--c-text-0284c7)" : "var(--c-text-0f172a)",
+                    },
+                    "&:disabled": {
+                      opacity: 0.45,
+                      cursor: "not-allowed",
+                    },
+                  }}
+                >
+                  {pulling ? (
+                    <CircularProgress size={12} color="inherit" />
+                  ) : (
+                    <CloudDownloadIcon sx={{ fontSize: "14px !important" }} />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
 
-            <KeyboardArrowDownIcon sx={{ fontSize: "14px !important", flexShrink: 0, opacity: 0.45, ml: 0.25 }} />
-          </Box>
-        </Tooltip>
-
-        {/* Quick Git Pull Button */}
-        <Tooltip title={pullTooltip}>
-          <span>
-            <IconButton
-              size="small"
-              type="button"
-              onClick={handlePull}
-              disabled={isBusy || pulling}
-              aria-label={`Git pull for ${serviceName}`}
-              sx={{
-                width: 24,
-                height: 24,
-                minWidth: 24,
-                p: 0,
-                borderRadius: 1.5,
-                color: behind > 0 ? "#ffffff" : isDirty ? "warning.dark" : "text.secondary",
-                backgroundColor: behind > 0 ? "primary.main" : isDirty ? "rgba(237, 108, 2, 0.08)" : "rgba(15, 23, 42, 0.04)",
-                border: "1px solid",
-                borderColor: behind > 0 ? "primary.main" : isDirty ? "warning.light" : "rgba(148, 163, 184, 0.25)",
-                transition: "all 0.15s ease",
-                "&:hover": {
-                  backgroundColor: behind > 0 ? "primary.dark" : "rgba(15, 23, 42, 0.1)",
-                  borderColor: behind > 0 ? "primary.dark" : "primary.main",
-                  color: behind > 0 ? "#ffffff" : "text.primary",
-                },
-                "&:disabled": {
-                  opacity: 0.5,
-                  cursor: "not-allowed",
-                },
-              }}
-            >
-              {pulling ? (
-                <CircularProgress size={12} sx={{ color: behind > 0 ? "#ffffff" : "primary.main" }} />
-              ) : (
-                <DownloadRoundedIcon sx={{ fontSize: "14px !important" }} />
-              )}
-            </IconButton>
-          </span>
-        </Tooltip>
+            {/* [Push] button */}
+            <Tooltip title={pushTooltip} placement="top" arrow disableInteractive>
+              <span>
+                <IconButton
+                  size="small"
+                  type="button"
+                  onClick={handlePush}
+                  disabled={isBusy || pushing || nothingToPush}
+                  aria-label={`Git push for ${serviceName}`}
+                  sx={{
+                    width: 24,
+                    height: 24,
+                    p: 0,
+                    borderRadius: "4px",
+                    color: ahead > 0 || isLocalOnly ? "var(--c-text-4f46e5)" : "var(--c-text-64748b)",
+                    bgcolor: ahead > 0 || isLocalOnly ? "var(--c-bg-6366f1-01)" : "transparent",
+                    transition: "all 0.15s ease",
+                    "&:hover": {
+                      bgcolor: "var(--c-bg-0f172a-008)",
+                      color: ahead > 0 || isLocalOnly ? "var(--c-text-4f46e5)" : "var(--c-text-0f172a)",
+                    },
+                    "&:disabled": {
+                      opacity: 0.45,
+                      cursor: "not-allowed",
+                    },
+                  }}
+                >
+                  {pushing ? (
+                    <CircularProgress size={12} sx={{ color: "var(--c-text-4f46e5)" }} />
+                  ) : (
+                    <CloudUploadIcon sx={{ fontSize: "14px !important" }} />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+        ) : null}
       </Box>
 
       {/* Popover */}
@@ -395,7 +455,6 @@ function BranchSelector({
         open={isOpen}
         anchorEl={anchorEl}
         onClose={handleClose}
-        disableRestoreFocus
         anchorOrigin={{
           vertical: "top",
           horizontal: "left",
@@ -410,7 +469,7 @@ function BranchSelector({
             maxHeight: 440,
             p: 1.5,
             borderRadius: 2.5,
-            boxShadow: "0 10px 30px rgba(15,23,42,0.18)",
+            boxShadow: "0 10px 30px var(--c-shadow-0f172a-018)",
             display: "flex",
             flexDirection: "column",
           },
@@ -428,7 +487,7 @@ function BranchSelector({
             <Tooltip title="Fetch latest branches & status from remote">
               <span>
                 <IconButton size="small" onClick={() => fetchBranches(true)} disabled={loading || pulling}>
-                  <RefreshIcon fontSize="small" />
+                  <SyncIcon fontSize="small" />
                 </IconButton>
               </span>
             </Tooltip>
@@ -444,8 +503,8 @@ function BranchSelector({
             p: 1,
             mb: 1,
             borderRadius: 1.5,
-            bgcolor: "rgba(15, 23, 42, 0.03)",
-            border: "1px solid rgba(148, 163, 184, 0.18)",
+            bgcolor: "var(--c-bg-0f172a-003)",
+            border: "1px solid var(--c-border-94a3b8-018)",
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
@@ -461,13 +520,13 @@ function BranchSelector({
             <Button
               size="small"
               variant={behind > 0 ? "contained" : "outlined"}
-              onClick={handlePull}
-              disabled={pulling || isBusy}
+              onClick={(e) => handlePull(e, restartOnSwitch)}
+              disabled={pulling || isBusy || isLocalOnly}
               startIcon={
                 pulling ? (
                   <CircularProgress size={12} color="inherit" />
                 ) : (
-                  <DownloadRoundedIcon sx={{ fontSize: "15px !important" }} />
+                  <CloudDownloadIcon sx={{ fontSize: "15px !important" }} />
                 )
               }
               sx={{
@@ -495,9 +554,9 @@ function BranchSelector({
                   height: 18,
                   fontSize: "0.65rem",
                   fontWeight: 600,
-                  bgcolor: "rgba(2, 132, 199, 0.12)",
-                  color: "#0284c7",
-                  border: "1px solid rgba(2, 132, 199, 0.25)",
+                  bgcolor: "var(--c-bg-0284c7-012)",
+                  color: "var(--c-text-0284c7)",
+                  border: "1px solid var(--c-border-0284c7-025)",
                 }}
               />
             ) : null}
@@ -510,9 +569,9 @@ function BranchSelector({
                   height: 18,
                   fontSize: "0.65rem",
                   fontWeight: 600,
-                  bgcolor: "rgba(99, 102, 241, 0.12)",
-                  color: "#4f46e5",
-                  border: "1px solid rgba(99, 102, 241, 0.25)",
+                  bgcolor: "var(--c-bg-6366f1-012)",
+                  color: "var(--c-text-4f46e5)",
+                  border: "1px solid var(--c-border-6366f1-025)",
                 }}
               />
             ) : null}
@@ -522,12 +581,11 @@ function BranchSelector({
                 size="small"
                 label="Up to date"
                 sx={{
-                  height: 18,
                   fontSize: "0.65rem",
                   fontWeight: 600,
-                  bgcolor: "rgba(34, 197, 94, 0.1)",
-                  color: "#166534",
-                  border: "1px solid rgba(34, 197, 94, 0.25)",
+                  bgcolor: "var(--c-bg-22c55e-01)",
+                  color: "var(--c-text-166534)",
+                  border: "1px solid var(--c-border-22c55e-025)",
                 }}
               />
             ) : null}
@@ -537,11 +595,10 @@ function BranchSelector({
                 size="small"
                 label="No upstream"
                 sx={{
-                  height: 18,
                   fontSize: "0.65rem",
                   fontWeight: 500,
-                  bgcolor: "rgba(100, 116, 139, 0.1)",
-                  color: "#64748b",
+                  bgcolor: "var(--c-bg-64748b-01)",
+                  color: "var(--c-text-64748b)",
                 }}
               />
             ) : null}
@@ -562,7 +619,7 @@ function BranchSelector({
               "& .MuiAlert-message": { py: 0.25 },
             }}
           >
-            Working tree has <strong>{uncommittedCount} uncommitted change(s)</strong>. Stash or commit before switching branches.
+            Working tree has <strong>{uncommittedCount} uncommitted change(s)</strong>. Commit or stash first — checkout may fail or carry these changes to the new branch.
           </Alert>
         )}
 

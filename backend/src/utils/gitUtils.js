@@ -214,6 +214,17 @@ async function checkoutBranch(dir, branchName) {
   }
 }
 
+// True when the current branch tracks an upstream that still exists locally
+// (false for local-only branches or upstreams that are gone from the remote).
+async function hasUpstream(dir) {
+  try {
+    await runGit(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], dir, 3000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function pullBranch(dir) {
   const isRepo = await isGitRepository(dir);
   if (!isRepo) {
@@ -246,11 +257,46 @@ async function pullBranch(dir) {
   }
 }
 
+// Publish the current local branch to the remote and set it as upstream.
+async function pushBranch(dir) {
+  const isRepo = await isGitRepository(dir);
+  if (!isRepo) {
+    throw new Error(`Directory ${dir} is not a git repository`);
+  }
+
+  const branch = await runGit(["rev-parse", "--abbrev-ref", "HEAD"], dir, 3000);
+  if (!branch || branch === "HEAD") {
+    throw new Error("Cannot push: HEAD is detached. Check out a branch first.");
+  }
+
+  const remotes = (await runGit(["remote"], dir, 5000)).split("\n").map((r) => r.trim()).filter(Boolean);
+  if (remotes.length === 0) {
+    throw new Error("Cannot push: no git remote is configured for this repository.");
+  }
+  const remote = remotes.includes("origin") ? "origin" : remotes[0];
+
+  try {
+    const output = await runGit(["push", "-u", remote, branch], dir, 60000);
+    const info = await getGitInfo(dir);
+    return {
+      success: true,
+      remote,
+      output,
+      ...info
+    };
+  } catch (err) {
+    const stderr = err.stderr || err.message || "";
+    throw new Error(`Git push failed: ${stderr || err.message}`);
+  }
+}
+
 module.exports = {
   runGit,
   isGitRepository,
   getGitInfo,
   getGitBranches,
   checkoutBranch,
-  pullBranch
+  pullBranch,
+  hasUpstream,
+  pushBranch
 };

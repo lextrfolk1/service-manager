@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Box, Tabs, Tab, AppBar, Toolbar, Typography, Container } from "@mui/material";
 import {
   Dashboard as DashboardIcon,
@@ -11,6 +11,15 @@ import Logs from "./pages/Logs";
 import Admin from "./pages/Admin";
 import Help from "./pages/Help";
 
+const HEADER_HEIGHT = 64;
+// The selected page lives in the URL hash so refresh, Back and links keep it.
+const TAB_HASHES = ["dashboard", "logs", "admin", "help"];
+
+function tabFromHash() {
+  const index = TAB_HASHES.indexOf(window.location.hash.replace(/^#\/?/, ""));
+  return index === -1 ? 0 : index;
+}
+
 function TabPanel({ children, value, index, ...other }) {
   return (
     <div
@@ -20,7 +29,7 @@ function TabPanel({ children, value, index, ...other }) {
       aria-labelledby={`tab-${index}`}
       {...other}
       style={{
-        height: "calc(100vh - 88px)",
+        height: `calc(100vh - ${HEADER_HEIGHT}px)`,
         overflow: "hidden",
         display: value === index ? "flex" : "none",
       }}
@@ -44,7 +53,22 @@ function TabPanel({ children, value, index, ...other }) {
 }
 
 function App() {
-  const [currentTab, setCurrentTab] = useState(0);
+  const [currentTab, setCurrentTabState] = useState(tabFromHash);
+  const setCurrentTab = useCallback((index) => {
+    setCurrentTabState(index);
+    const hash = `#${TAB_HASHES[index]}`;
+    if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => setCurrentTabState(tabFromHash());
+    window.addEventListener("popstate", onPopState);
+    window.addEventListener("hashchange", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("hashchange", onPopState);
+    };
+  }, []);
   const [openLogServices, setOpenLogServices] = useState([]);
   const [activeLogServiceTab, setActiveLogServiceTab] = useState(0);
   const logsRef = useRef();
@@ -91,6 +115,13 @@ function App() {
   };
 
   const [adminTarget, setAdminTarget] = useState(null);
+  const [helpTarget, setHelpTarget] = useState(null);
+
+  // Open the Help tab on a specific tab/section, e.g. { tab: "troubleshooting", section: "port" }.
+  const handleOpenHelp = useCallback((target) => {
+    setHelpTarget({ ...target, id: Date.now() });
+    setCurrentTab(3);
+  }, [setCurrentTab]);
 
   const handleCloneService = (service) => {
     setAdminTarget({ action: "clone", service, id: Date.now() });
@@ -117,22 +148,11 @@ function App() {
     }
   }, []);
 
-  const getPageTitle = () => {
-    switch (currentTab) {
-      case 0: return "Dashboard";
-      case 1: return "Logs";
-      case 2: return "Configuration";
-      case 3: return "Help";
-      default: return "";
-    }
-  };
-
   return (
     <Box
       sx={{
         minHeight: "100vh",
-        background:
-          "radial-gradient(circle at top left, rgba(37,99,235,0.16), transparent 24%), radial-gradient(circle at top right, rgba(124,58,237,0.14), transparent 26%), linear-gradient(180deg, #f8fbff 0%, #eef2ff 42%, #f8fafc 100%)",
+        background: "var(--sm-app-bg)",  // per theme (ThemeController)
         display: "flex",
         flexDirection: "column",
       }}
@@ -141,21 +161,21 @@ function App() {
         position="fixed" 
         elevation={0}
         sx={{
-          background: "rgba(255, 255, 255, 0.72)",
+          background: "var(--sm-header-bg)",
           backdropFilter: "blur(22px)",
-          borderBottom: "1px solid rgba(148, 163, 184, 0.16)",
+          borderBottom: "1px solid var(--c-border-94a3b8-016)",
           color: "text.primary",
         }}
       >
-        <Toolbar sx={{ justifyContent: "space-between", py: 1, minHeight: 88 }}>
+        <Toolbar sx={{ justifyContent: "space-between", py: 0.5, minHeight: HEADER_HEIGHT }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
             <Box
               sx={{
-                width: 44,
-                height: 44,
+                width: 36,
+                height: 36,
                 borderRadius: 3,
-                background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
-                boxShadow: "0 14px 28px rgba(37,99,235,0.22)",
+                background: "linear-gradient(135deg, var(--sm-accent) 0%, var(--c-bg-7c3aed) 100%)",
+                boxShadow: "0 14px 28px color-mix(in srgb, var(--sm-accent) 22%, transparent)",
               }}
             />
             <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
@@ -175,7 +195,7 @@ function App() {
                 sx={{ 
                   width: 72, 
                   height: "2px", 
-                  background: "linear-gradient(90deg, #38BDF8 0%, #7c3aed 100%)",
+                  background: "linear-gradient(90deg, var(--c-bg-38bdf8) 0%, var(--c-bg-7c3aed) 100%)",
                   borderRadius: "1px",
                   my: 0.25
                 }} 
@@ -193,30 +213,6 @@ function App() {
                 Service Manager
               </Typography>
             </Box>
-            
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                backgroundColor: "rgba(255,255,255,0.82)",
-                borderRadius: 999,
-                px: 1.75,
-                py: 0.5,
-                border: "1px solid rgba(148,163,184,0.18)",
-                ml: 2
-              }}
-            >
-              <Typography 
-                variant="body1" 
-                sx={{ 
-                  fontWeight: 600,
-                  color: "text.primary",
-                  fontSize: "0.92rem"
-                }}
-              >
-                {getPageTitle()}
-              </Typography>
-            </Box>
           </Box>
           
           <Tabs
@@ -224,19 +220,20 @@ function App() {
             onChange={handleTabChange}
             sx={{
               "& .MuiTab-root": {
-                color: "rgba(15,23,42,0.72)",
+                color: "var(--c-text-0f172a-072)",
                 fontWeight: 600,
                 fontSize: "0.92rem",
-                minWidth: 120,
+                minWidth: 110,
+                minHeight: 44,
                 textTransform: "none",
                 "&.Mui-selected": {
-                  color: "#0f172a",
-                  backgroundColor: "rgba(255,255,255,0.86)",
-                  boxShadow: "0 10px 24px rgba(15,23,42,0.08)",
+                  color: "var(--c-text-0f172a)",
+                  backgroundColor: "var(--c-bg-ffffff-086)",
+                  boxShadow: "0 10px 24px var(--c-shadow-0f172a-008)",
                   borderRadius: 999,
                 },
                 "&:hover": {
-                  backgroundColor: "rgba(255,255,255,0.62)",
+                  backgroundColor: "var(--c-bg-ffffff-062)",
                   borderRadius: 999,
                 }
               },
@@ -245,10 +242,10 @@ function App() {
               },
             }}
           >
-            <Tab icon={<DashboardIcon />} label="Dashboard" />
-            <Tab icon={<LogsIcon />} label="Logs" />
-            <Tab icon={<AdminIcon />} label="Admin" />
-            <Tab icon={<HelpIcon />} label="Help" />
+            <Tab icon={<DashboardIcon fontSize="small" />} iconPosition="start" label="Dashboard" />
+            <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Logs" />
+            <Tab icon={<AdminIcon fontSize="small" />} iconPosition="start" label="Admin" />
+            <Tab icon={<HelpIcon fontSize="small" />} iconPosition="start" label="Help" />
           </Tabs>
         </Toolbar>
       </AppBar>
@@ -257,8 +254,8 @@ function App() {
       <Box 
         sx={{ 
           flexGrow: 1, 
-          mt: "88px",
-          height: "calc(100vh - 88px)",
+          mt: `${HEADER_HEIGHT}px`,
+          height: `calc(100vh - ${HEADER_HEIGHT}px)`,
           minHeight: 0,
           overflow: "hidden"
         }}
@@ -267,6 +264,7 @@ function App() {
           <Dashboard
             ref={dashboardRef}
             onViewLogs={handleViewLogs}
+            onOpenHelp={handleOpenHelp}
             onCloneService={handleCloneService}
             onEditInAdmin={handleEditInAdmin}
           />
@@ -279,6 +277,7 @@ function App() {
             onCloseService={handleCloseLogService}
             onServiceTabChange={handleLogServiceTabChange}
             onAddService={handleAddLogService}
+            isActive={currentTab === 1}
           />
         </TabPanel>
         <TabPanel value={currentTab} index={2}>
@@ -286,10 +285,11 @@ function App() {
             onConfigReload={handleConfigReload}
             adminTarget={adminTarget}
             onClearAdminTarget={() => setAdminTarget(null)}
+            isActive={currentTab === 2}
           />
         </TabPanel>
         <TabPanel value={currentTab} index={3}>
-          <Help />
+          <Help target={helpTarget} />
         </TabPanel>
       </Box>
     </Box>

@@ -7,6 +7,7 @@ const { execFile } = require("child_process");
 
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
+const runConfig = require("./runConfig");
 const { resolveConfigPath, getConfigMetadata } = require("./configResolver");
 const { killProcessOnPort, getPortProcess } = require("./utils/portUtils");
 let servicesConfigPath = resolveConfigPath();
@@ -343,6 +344,17 @@ app.post("/service/:name/git/pull", async (req, res) => {
   }
 });
 
+// Git: push current local branch to remote and set upstream
+app.post("/service/:name/git/push", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const result = await freshManager.pushBranch(req.params.name);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
 // Port: Free port for service (terminate occupying process)
 app.post(["/service/:name/free-port", "/service/:name/kill-port"], async (req, res) => {
   try {
@@ -375,6 +387,42 @@ app.get("/service/:name/port-process", async (req, res) => {
     }
     const proc = await getPortProcess(svc.port, true);
     res.json(proc);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Run configuration: per-machine extra parameters (env vars, JVM args, program args), not committed
+app.get("/run-config", (req, res) => {
+  try {
+    res.json(runConfig.read());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/run-config", (req, res) => {
+  try {
+    res.json(runConfig.write(req.body || {}));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Logs: retention settings in effect and size of stored previous runs
+app.get("/log-archive/stats", (req, res) => {
+  try {
+    res.json({ settings: logger.getLogSettings(), ...logger.getArchiveStats() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Logs: permanently delete all previous runs (current runs are kept)
+app.post("/log-archive/clear", (req, res) => {
+  try {
+    const deleted = logger.clearArchives();
+    res.json({ success: true, deleted });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

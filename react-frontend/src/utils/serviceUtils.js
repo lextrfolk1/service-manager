@@ -8,40 +8,32 @@ export const DEFAULT_GROUPS = [
   "Other",
 ];
 
+// Dashboard group: the service's configured group, or a fallback based only on its type.
 export function inferGroup(service) {
-  if (service.group) return service.group;
+  if (service.group && String(service.group).trim()) return service.group;
 
-  const name = (service.name || "").toLowerCase();
   const type = (service.type || "").toLowerCase();
-
-  if (type === "redis" || type === "neo4j") return "Database";
+  if (["redis", "neo4j", "database", "postgres", "postgresql", "mysql", "mongodb"].includes(type)) return "Database";
   if (type === "listener") return "Background";
-  if (name.includes("front")) return "Frontend";
-  if (name.includes("ai") || name.includes("semantic") || name.includes("lexie")) return "AI";
-  if (name.includes("data") || name.includes("analytics")) return "Data";
-  if (
-    name.includes("config") ||
-    name.includes("gateway") ||
-    name.includes("auth") ||
-    name.includes("workflow") ||
-    name.includes("rules") ||
-    name.includes("generic") ||
-    name.includes("workbench")
-  ) {
-    return "Core";
-  }
-
   if (type === "npm") return "Frontend";
   if (type === "python") return "Data";
   if (type === "java") return "Core";
-
   return "Other";
+}
+
+// Services that must be running before this one starts, from its dependsOn in the configuration.
+export function getStartupDependencies(service) {
+  if (Array.isArray(service.dependsOn)) return service.dependsOn.filter(Boolean);
+  if (typeof service.dependsOn === "string") {
+    return service.dependsOn.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
 }
 
 export function normalizeService(service) {
   return {
     ...service,
-    dependsOn: Array.isArray(service.dependsOn) ? service.dependsOn : [],
+    dependsOn: getStartupDependencies(service),
     group: inferGroup(service),
   };
 }
@@ -95,29 +87,44 @@ export function topoSortServices(services) {
   return order.filter(Boolean);
 }
 
+// Built-in presets are layers of the dependency map, each adding to the previous one. They are computed from
+// the current services, so they stay correct when services are added or changed.
+const INFRASTRUCTURE_TYPES = ["redis", "neo4j", "database", "docker", "postgres", "postgresql", "mysql", "mongodb", "kafka"];
+const isClone = (name) => /-clone(-\d+)?$/.test(name);
+const isInfrastructure = (service) => INFRASTRUCTURE_TYPES.includes(String(service.type || "").toLowerCase());
+const isFrontend = (service) => String(service.type || "").toLowerCase() === "npm";
+
+const BUILT_IN_PRESETS = {
+  // Databases and containers everything else builds on.
+  "Infrastructure only": (services) => services.filter(isInfrastructure),
+  // Plus every service that other services need running before they can start (e.g. config-service).
+  "Infrastructure + shared services": (services) => {
+    const neededByOthers = new Set(services.flatMap((service) => getStartupDependencies(service)));
+    return services.filter((service) => isInfrastructure(service) || (neededByOthers.has(service.name) && !isFrontend(service)));
+  },
+  // Everything except the web frontends.
+  "All backend services": (services) => services.filter((service) => !isFrontend(service)),
+  // Everything.
+  "Full stack": (services) => services,
+};
+export const DEFAULT_PRESET_NAMES = Object.keys(BUILT_IN_PRESETS);
+
+// Presets from config.presets ({ name: [serviceNames] }), or the built-in presets when none are configured.
+// services: array of { name, ... } (normalized or raw).
+export function getEffectivePresets(services, configuredPresets) {
+  if (configuredPresets && typeof configuredPresets === "object" && Object.keys(configuredPresets).length) {
+    return Object.fromEntries(
+      Object.entries(configuredPresets).map(([name, list]) => [name, Array.isArray(list) ? list : []])
+    );
+  }
+  return Object.fromEntries(DEFAULT_PRESET_NAMES.map((name) => [name, getPresetServices(services, name)]));
+}
+
+// Built-in presets (used when config.presets is not set). Cloned services are left out.
 export function getPresetServices(services, presetName) {
-  const normalized = services.map(normalizeService);
-  const byGroup = (groupName) => normalized.filter((service) => service.group === groupName).map((service) => service.name);
-
-  const presets = {
-    Minimal: [
-      ...byGroup("Database"),
-      ...normalized
-        .filter((service) => ["config-service", "gateway-service", "frontend-service"].includes(service.name))
-        .map((service) => service.name),
-    ],
-    Core: [
-      ...byGroup("Database"),
-      ...byGroup("Core"),
-      ...normalized.filter((service) => service.group === "Frontend").slice(0, 1).map((service) => service.name),
-    ],
-    "Backend Only": normalized
-      .filter((service) => service.group !== "Frontend")
-      .map((service) => service.name),
-    "Full Stack": normalized.map((service) => service.name),
-  };
-
-  return [...new Set(presets[presetName] || [])];
+  const build = BUILT_IN_PRESETS[presetName];
+  if (!build) return [];
+  return build(services.filter((service) => !isClone(service.name))).map((service) => service.name);
 }
 
 export function categorizeFailure(error) {
@@ -125,6 +132,8 @@ export function categorizeFailure(error) {
   const phase = error?.phase || "";
   const message = error?.message || error?.error || "";
 
+  if (code === "dependency_not_running") return "Dependency not running";
+  if (code === "dependency_not_ready") return "Dependency not ready";
   if (code === "build_failed" || phase === "build") return "Build failed";
   if (code === "git_pull_failed") return "Git pull failed";
   if (code === "startup_timeout") return "Startup timed out";
@@ -135,6 +144,17 @@ export function categorizeFailure(error) {
   if (/dependency/i.test(message)) return "Dependency blocked";
   if (/port/i.test(message)) return "Port issue";
   return "Operation failed";
+}
+
+// Maps a card failure (reason from categorizeFailure + error text) to a Help troubleshooting topic id.
+export function getHelpTopicForFailure(reason = "", errorText = "") {
+  const text = `${reason} ${errorText}`;
+  if (/^start .+ first$/i.test(String(errorText).trim()) || /depends on .+ not running/i.test(text)) return "dependencies";
+  if (/git pull/i.test(text)) return "git-pull";
+  if (/timed out|timeout/i.test(text)) return "timeout";
+  if (/port|EADDRINUSE/i.test(text)) return "port";
+  if (/health/i.test(text)) return "health";
+  return "wont-start";
 }
 
 export function getServiceLinks(service) {
@@ -150,7 +170,7 @@ export function getServiceLinks(service) {
     return [
       {
         id: "connection",
-        label: `${(service.type || "Service").toUpperCase()} Connection`,
+        label: `${{ redis: "Redis", neo4j: "Neo4j", listener: "Listener" }[service.type] || "Service"} connection`,
         url: service.type === "neo4j" ? `bolt://localhost:${port}` : `localhost:${port}`,
         path: `:${port}`,
         isCopyOnly: true,

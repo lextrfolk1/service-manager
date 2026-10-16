@@ -1,6 +1,8 @@
 const { spawn, exec } = require("child_process");
+const http = require("http");
 const fs = require("fs");
 const logger = require("./logger");
+const runConfig = require("./runConfig");
 const {
   killByPort,
   waitForPort,
@@ -21,6 +23,27 @@ const GIT_CACHE_TTL_MS = 10000;
 
 // Shared tracker across ServiceManager instances so PID tracking is preserved
 const managedProcesses = new Map(); // serviceName -> { pid, startedAt }
+
+const DEPENDENCY_WAIT_MS = 120000;
+const DEPENDENCY_POLL_MS = 2000;
+
+// HTTP 2xx/3xx from a health endpoint (e.g. /actuator/health) means ready.
+function httpOk(url, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    const request = http.get(url, { timeout: timeoutMs }, (response) => {
+      response.resume();
+      resolve(response.statusCode >= 200 && response.statusCode < 400);
+    });
+    request.on("timeout", () => request.destroy());
+    request.on("error", () => resolve(false));
+  });
+}
+
+function dependencyList(svc) {
+  if (Array.isArray(svc.dependsOn)) return svc.dependsOn.filter(Boolean);
+  if (typeof svc.dependsOn === "string") return svc.dependsOn.split(",").map((item) => item.trim()).filter(Boolean);
+  return [];
+}
 
 function isProcessAlive(pid) {
   if (!pid) return false;
@@ -304,8 +327,102 @@ class ServiceManager {
     };
   }
 
+  async pushBranch(name) {
+    const resolvedDir = this.getResolvedDir(name);
+    if (!resolvedDir) {
+      throw createOperationError(`Service ${name} does not have a configured directory path`, {
+        code: "invalid_config",
+        phase: "git_push",
+        service: name
+      });
+    }
+
+    let result;
+    try {
+      result = await gitUtils.pushBranch(resolvedDir);
+    } catch (err) {
+      throw createOperationError(err.message, {
+        code: "git_push_failed",
+        phase: "git_push",
+        service: name
+      });
+    }
+    gitCache.delete(resolvedDir);
+
+    return {
+      success: true,
+      service: name,
+      branch: result.currentBranch,
+      output: result.output,
+      git: {
+        isGitRepo: true,
+        currentBranch: result.currentBranch,
+        isDirty: result.isDirty,
+        uncommittedCount: result.uncommittedCount,
+        ahead: result.ahead,
+        behind: result.behind,
+        hasUpstream: result.hasUpstream,
+        upstreamBranch: result.upstreamBranch
+      },
+      message: `Pushed ${result.currentBranch} to ${result.remote}`
+    };
+  }
+
+  // Readiness of a dependency: "ready" (running, health command passing, health endpoint OK when configured;
+  // or not checkable at all), "starting" (process launched by Struo but not ready yet) or "stopped".
+  async _dependencyState(depName) {
+    const dep = this.services[depName];
+    // Nothing to check (no port, health command or health endpoint): don't block services that depend on it.
+    if (!dep.port && !dep.healthCommand && !dep.healthPath) return "ready";
+    const status = await this.status(depName);
+    if (!status.running) {
+      const managed = managedProcesses.get(depName);
+      return managed && isProcessAlive(managed.pid) ? "starting" : "stopped";
+    }
+    if (status.healthState === "unhealthy") return "starting";
+    if (dep.healthPath && dep.port) {
+      const healthPath = dep.healthPath.startsWith("/") ? dep.healthPath : `/${dep.healthPath}`;
+      if (!(await httpOk(`http://localhost:${dep.port}${healthPath}`))) return "starting";
+    }
+    return "ready";
+  }
+
+  // Refuses to start a service while a dependency is stopped; waits (up to 120s) for dependencies that are
+  // still starting. Applies to every start path (card, bulk start, API).
+  async _ensureDependenciesReady(name, svc) {
+    if (this.config.config?.dependencyCheck === false) return; // turned off in Admin
+    const deps = dependencyList(svc).filter((dep) => this.services[dep] && dep !== name);
+    if (!deps.length) return;
+
+    const deadline = Date.now() + DEPENDENCY_WAIT_MS;
+    for (;;) {
+      const states = await Promise.all(deps.map(async (dep) => [dep, await this._dependencyState(dep)]));
+      const stopped = states.filter(([, state]) => state === "stopped").map(([dep]) => dep);
+      if (stopped.length) {
+        throw createOperationError(`Start ${stopped.join(", ")} first`, {
+          code: "dependency_not_running",
+          phase: "dependencies",
+          service: name,
+          details: `${name} depends on ${stopped.join(", ")}, which ${stopped.length === 1 ? "is" : "are"} not running.`
+        });
+      }
+      const waiting = states.filter(([, state]) => state === "starting").map(([dep]) => dep);
+      if (!waiting.length) return;
+      if (Date.now() >= deadline) {
+        throw createOperationError(`${waiting.join(", ")} not ready after ${DEPENDENCY_WAIT_MS / 1000}s`, {
+          code: "dependency_not_ready",
+          phase: "dependencies",
+          service: name,
+          details: `${name} waited for ${waiting.join(", ")} to become ready.`
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, DEPENDENCY_POLL_MS));
+    }
+  }
+
   async start(name, forceBuild = false) {
     const svc = this._getService(name);
+    await this._ensureDependenciesReady(name, svc);
 
     if (!svc.command) {
       throw createOperationError(`Service ${name} has no command configured`, {
@@ -317,13 +434,23 @@ class ServiceManager {
 
     // Resolve placeholders in path and command using basePaths
     const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
-    const resolvedCommand = resolvePlaceholders(svc.command, this.basePaths);
+    // Run configuration (run-config.json): env vars, JVM args and program args for this machine.
+    const runSettings = runConfig.forService(name, svc.type);
+    const applied = runConfig.applyToCommand(resolvePlaceholders(svc.command, this.basePaths), runSettings);
+    const resolvedCommand = applied.command;
+    const runEnv = { ...process.env, ...applied.extraEnv, ...runSettings.env };
     
     const logFile = logger.createLogFile(name);
     const out = fs.openSync(logFile, "a");
+    fs.appendFileSync(logFile, runConfig.describeRun({ command: resolvedCommand, settings: runSettings, extraEnv: applied.extraEnv }));
     const gitAutoPull = svc.gitAutoPull !== false;
 
-    if (gitAutoPull && resolvedDir) {
+    const canPull = gitAutoPull && resolvedDir && await gitUtils.hasUpstream(resolvedDir);
+    if (gitAutoPull && resolvedDir && !canPull) {
+      fs.appendFileSync(logFile, `\n[GIT PULL SKIPPED] Current branch has no remote upstream (local-only branch)\n`);
+    }
+
+    if (canPull) {
       await new Promise((resolve, reject) => {
         exec(
           `git -C "${resolvedDir}" pull`,
@@ -353,7 +480,7 @@ class ServiceManager {
       await new Promise((resolve, reject) => {
         exec(
           resolvedBuild,
-          { cwd: resolvedDir, shell: true },
+          { cwd: resolvedDir, shell: true, env: runEnv },
           (err, stdout, stderr) => {
             fs.appendFileSync(logFile, `\n[BUILD STDOUT]\n${stdout || ""}`);
             fs.appendFileSync(logFile, `\n[BUILD STDERR]\n${stderr || ""}`);
@@ -410,7 +537,8 @@ class ServiceManager {
 
     const spawnOptions = {
       shell: true,
-      stdio: ["ignore", out, out]
+      stdio: ["ignore", out, out],
+      env: runEnv
     };
 
     if (resolvedDir) {
@@ -526,7 +654,7 @@ class ServiceManager {
       await new Promise((resolve, reject) => {
         exec(
           resolvedStopCommand,
-          { cwd: resolvedDir, shell: true, timeout: 30000 },
+          { cwd: resolvedDir, shell: true, timeout: 30000, env: { ...process.env, ...runConfig.forService(name, svc.type).env } },
           (err) => {
             if (err) {
               // If stopCommand returned an error, verify if port is already not in use (already stopped)
@@ -779,7 +907,7 @@ class ServiceManager {
       return new Promise((resolve) => {
         exec(
           resolvedHealthCommand,
-          { cwd: resolvedDir, shell: true },
+          { cwd: resolvedDir, shell: true, env: { ...process.env, ...runConfig.forService(name, svc.type).env } },
           (err) => {
             // If command exits with code 0, service is running
             resolve(!err);

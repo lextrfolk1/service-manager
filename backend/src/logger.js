@@ -2,7 +2,32 @@ const fs = require("fs");
 const path = require("path");
 
 const LOG_ROOT = path.join(__dirname, "..", "logs");
-const LOG_RETENTION_DAYS = Number(process.env.LOG_RETENTION_DAYS || 7);
+const { resolveConfigPath } = require("./configResolver");
+
+// Defaults when config.logs is not set (env vars can still override).
+const DEFAULT_LOG_SETTINGS = {
+  previousRuns: "archive", // "archive": keep earlier runs within the limits below; "delete": remove them when a new run starts
+  retentionDays: Number(process.env.LOG_RETENTION_DAYS || 3),
+  maxRuns: Number(process.env.LOG_MAX_ARCHIVED_RUNS || 20),
+};
+
+// Reads config.logs from the active services config on each call, so Admin changes apply without a restart.
+function getLogSettings() {
+  let configured = {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(resolveConfigPath(), "utf8"));
+    configured = raw?.config?.logs || {};
+  } catch {
+    // Fall back to defaults if the config can't be read
+  }
+  const retentionDays = Number(configured.retentionDays);
+  const maxRuns = Number(configured.maxRuns);
+  return {
+    previousRuns: configured.previousRuns === "delete" ? "delete" : DEFAULT_LOG_SETTINGS.previousRuns,
+    retentionDays: retentionDays > 0 ? retentionDays : DEFAULT_LOG_SETTINGS.retentionDays,
+    maxRuns: maxRuns > 0 ? maxRuns : DEFAULT_LOG_SETTINGS.maxRuns,
+  };
+}
 const ARCHIVE_DIR_NAME = "archive";
 
 function ensureDir(dir) {
@@ -11,9 +36,12 @@ function ensureDir(dir) {
   }
 }
 
-function getDailyLogFileName(service, date = new Date()) {
-  const dayStamp = date.toISOString().slice(0, 10);
-  return `${service}-${dayStamp}.log`;
+const pad = (value) => String(value).padStart(2, "0");
+
+// One log file per run: <service>_YYYY-MM-DD_HH-MM-SS.log (local time). Names sort chronologically.
+function getRunLogFileName(service, date = new Date()) {
+  const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}`;
+  return `${service}_${stamp}.log`;
 }
 
 function getServiceDir(service) {
@@ -32,16 +60,23 @@ function ensureServiceDirs(service) {
   return { dir, archiveDir };
 }
 
-function archiveOldActiveLogs(service) {
+// Keeps only the newest (current run) log in the active folder; older runs are archived,
+// or deleted outright when config.logs.previousRuns is "delete".
+function archiveOldActiveLogs(service, keepFileName = null, settings = getLogSettings()) {
   const { dir, archiveDir } = ensureServiceDirs(service);
-  const currentFileName = getDailyLogFileName(service);
+  const activeFiles = fs.readdirSync(dir).filter((fileName) => fileName.endsWith(".log")).sort();
+  const currentFileName = keepFileName || activeFiles[activeFiles.length - 1];
 
-  fs.readdirSync(dir)
-    .filter((fileName) => fileName.endsWith(".log") && fileName !== currentFileName)
+  activeFiles
+    .filter((fileName) => fileName !== currentFileName)
     .forEach((fileName) => {
       const sourcePath = path.join(dir, fileName);
       const targetPath = path.join(archiveDir, fileName);
       try {
+        if (settings.previousRuns === "delete") {
+          fs.unlinkSync(sourcePath);
+          return;
+        }
         if (fs.existsSync(targetPath)) {
           fs.unlinkSync(targetPath);
         }
@@ -52,39 +87,96 @@ function archiveOldActiveLogs(service) {
     });
 }
 
-function cleanupOldLogs(service) {
+function cleanupOldLogs(service, settings = getLogSettings()) {
   const archiveDir = getArchiveDir(service);
   if (!fs.existsSync(archiveDir)) {
     return;
   }
 
-  const cutoffTime = Date.now() - (LOG_RETENTION_DAYS * 24 * 60 * 60 * 1000);
-  fs.readdirSync(archiveDir)
+  // In "delete" mode nothing is kept in the archive.
+  const keepCount = settings.previousRuns === "delete" ? 0 : settings.maxRuns;
+  const cutoffTime = Date.now() - (settings.retentionDays * 24 * 60 * 60 * 1000);
+  // Newest first; anything older than the retention window or beyond the run cap is removed.
+  const archived = fs.readdirSync(archiveDir)
     .filter((fileName) => fileName.endsWith(".log"))
-    .forEach((fileName) => {
-      const filePath = path.join(archiveDir, fileName);
-      try {
-        const stats = fs.statSync(filePath);
-        if (stats.mtimeMs < cutoffTime) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (error) {
-        console.error(`Failed to prune log file ${filePath}:`, error.message);
+    .sort()
+    .reverse();
+
+  archived.forEach((fileName, index) => {
+    const filePath = path.join(archiveDir, fileName);
+    try {
+      const stats = fs.statSync(filePath);
+      if (stats.mtimeMs < cutoffTime || index >= keepCount) {
+        fs.unlinkSync(filePath);
       }
-    });
+    } catch (error) {
+      console.error(`Failed to prune log file ${filePath}:`, error.message);
+    }
+  });
 }
 
 module.exports = {
+  // Called on every start/restart: creates a new log file for this run and archives the previous run.
   createLogFile(service) {
-    const { dir } = ensureServiceDirs(service);
-    archiveOldActiveLogs(service);
-    cleanupOldLogs(service);
+    const { dir, archiveDir } = ensureServiceDirs(service);
+    const startedAt = new Date();
 
-    const file = path.join(dir, getDailyLogFileName(service));
-    if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, "");
+    let fileName = getRunLogFileName(service, startedAt);
+    let suffix = 2;
+    while (fs.existsSync(path.join(dir, fileName)) || fs.existsSync(path.join(archiveDir, fileName))) {
+      fileName = getRunLogFileName(service, startedAt).replace(/\.log$/, `_${suffix}.log`);
+      suffix += 1;
     }
+
+    const file = path.join(dir, fileName);
+    fs.writeFileSync(file, `[RUN STARTED] ${startedAt.toString()}\n`);
+    const settings = getLogSettings();
+    archiveOldActiveLogs(service, fileName, settings);
+    cleanupOldLogs(service, settings);
     return file;
+  },
+
+  getLogSettings,
+
+  // Totals for previous runs (archive folders) across all services.
+  getArchiveStats() {
+    const stats = { services: 0, files: 0, bytes: 0 };
+    if (!fs.existsSync(LOG_ROOT)) return stats;
+    fs.readdirSync(LOG_ROOT).forEach((service) => {
+      const archiveDir = getArchiveDir(service);
+      if (!fs.existsSync(archiveDir)) return;
+      const files = fs.readdirSync(archiveDir).filter((fileName) => fileName.endsWith(".log"));
+      if (files.length) stats.services += 1;
+      files.forEach((fileName) => {
+        try {
+          stats.bytes += fs.statSync(path.join(archiveDir, fileName)).size;
+          stats.files += 1;
+        } catch {
+          // ignore files removed meanwhile
+        }
+      });
+    });
+    return stats;
+  },
+
+  // Permanently deletes every previous run (archive folders) for all services. Current runs are kept.
+  clearArchives() {
+    const before = this.getArchiveStats();
+    if (!fs.existsSync(LOG_ROOT)) return before;
+    fs.readdirSync(LOG_ROOT).forEach((service) => {
+      const archiveDir = getArchiveDir(service);
+      if (!fs.existsSync(archiveDir)) return;
+      fs.readdirSync(archiveDir)
+        .filter((fileName) => fileName.endsWith(".log"))
+        .forEach((fileName) => {
+          try {
+            fs.unlinkSync(path.join(archiveDir, fileName));
+          } catch (error) {
+            console.error(`Failed to delete archived log ${fileName}:`, error.message);
+          }
+        });
+    });
+    return before;
   },
 
   getLogFiles(service) {
@@ -98,7 +190,21 @@ module.exports = {
     const archivedFiles = fs.existsSync(archiveDir)
       ? fs.readdirSync(archiveDir).filter((fileName) => fileName.endsWith(".log"))
       : [];
-    return { files, archivedFiles };
+
+    // Size and last write time per file, so the UI can show run duration and log size.
+    const details = {};
+    const addDetails = (folder, fileName) => {
+      try {
+        const stats = fs.statSync(path.join(folder, fileName));
+        details[fileName] = { size: stats.size, modifiedAt: stats.mtimeMs };
+      } catch {
+        // File rotated away between listing and stat
+      }
+    };
+    files.forEach((fileName) => addDetails(dir, fileName));
+    archivedFiles.forEach((fileName) => addDetails(archiveDir, fileName));
+
+    return { files, archivedFiles, details };
   },
 
   getLog(service, file) {

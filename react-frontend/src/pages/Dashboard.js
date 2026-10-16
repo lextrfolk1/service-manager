@@ -1,23 +1,34 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   ButtonBase,
   Checkbox,
   Chip,
-  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
   FormControl,
-  FormControlLabel,
+  IconButton,
   InputAdornment,
   InputLabel,
+  ListItemText,
+  ListSubheader,
+  Menu,
   MenuItem,
   Paper,
+  Popover,
   Select,
+  Skeleton,
   Snackbar,
   Stack,
   Switch,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import {
@@ -25,22 +36,35 @@ import {
   FilterList as FilterListIcon,
   PlayArrow as PlayArrowIcon,
   Refresh as RefreshIcon,
+  Check as CheckIcon,
+  SyncRounded as SyncIcon,
+  Tune as TuneIcon,
   Search as SearchIcon,
   Stop as StopIcon,
 } from "@mui/icons-material";
-import ServiceCard from "../components/ServiceCard";
+import { CARD_STYLES, DEFAULT_CARD_STYLE, ServiceCardView, normalizeCardStyle } from "../components/cards";
+import HoverSubmenu from "../components/HoverSubmenu";
+import { ACCENTS, THEME_BASES, useThemeSettings } from "../theme/ThemeController";
+import { LOOKS, findLook } from "../theme/looks";
+import { SEARCH_INPUT_SX, STATUS_COLORS } from "../theme/tokens";
+import { RunConfigDialog, cleanRunConfig, countRunConfigValues } from "../components/RunConfigEditor";
 import api from "../services/api";
 import {
   DEFAULT_GROUPS,
   buildDependencyMap,
   buildReverseDependencyMap,
   categorizeFailure,
-  getPresetServices,
+  getEffectivePresets,
   normalizeService,
   topoSortServices,
 } from "../utils/serviceUtils";
 
-const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
+const AUTO_REFRESH_INTERVAL_MS = 30000;
+const EMPTY_LIST = [];
+
+function isSameJson(a, b) {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
 const SERVICE_GRID_SX = {
   display: "grid",
   gridTemplateColumns: {
@@ -106,7 +130,7 @@ function deriveBaseState(status) {
         : healthState === "unhealthy"
           ? "Unhealthy"
           : healthState === "port-open"
-            ? "Port open"
+            ? "" // the Running status chip already says this
           : lifecycleState === "stopped"
             ? ""
             : checkable
@@ -174,7 +198,7 @@ function mergeDisplayState(baseState, uiState) {
   return baseState;
 }
 
-const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref) => {
+const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditInAdmin }, ref) => {
   const [services, setServices] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [uiStates, setUiStates] = useState({});
@@ -198,33 +222,80 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     return saved !== null ? saved === "true" : false;
   });
   const [metrics, setMetrics] = useState({});
+  const [refreshingNow, setRefreshingNow] = useState(false);
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
-  const [collapsedGroups, setCollapsedGroups] = useState({});
+  const [pendingMove, setPendingMove] = useState(null); // { serviceName, from, to } awaiting confirmation
+  const [runConfig, setRunConfig] = useState({ services: {} }); // run-config.json (this machine only)
+  const [runConfigTarget, setRunConfigTarget] = useState(""); // service whose run configuration dialog is open
+  const [savingRunConfig, setSavingRunConfig] = useState(false);
+  const [configuredPresets, setConfiguredPresets] = useState(null); // config.presets; null = built-in presets
+  const [savePresetOpen, setSavePresetOpen] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
+  const [savingPreset, setSavingPreset] = useState(false);
+  const [dependencyCheck, setDependencyCheck] = useState(true); // config.dependencyCheck (Admin switch)
+  const [adminCardStyle, setAdminCardStyle] = useState(DEFAULT_CARD_STYLE); // config.ui.cardStyle (Admin › Appearance)
+  const [personalCardStyle, setPersonalCardStyle] = useState(() => {
+    try {
+      const saved = localStorage.getItem("struo_card_style") || "";
+      return CARD_STYLES.some((style) => style.id === saved) ? saved : "";
+    } catch {
+      return "";
+    }
+  }); // "" = use the Admin default
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("struo_collapsed_groups") || "{}") || {};
+    } catch {
+      return {};
+    }
+  }); // { [group]: true } = collapsed; groups are expanded by default
+  const [filtersAnchorEl, setFiltersAnchorEl] = useState(null);
+  const [viewAnchorEl, setViewAnchorEl] = useState(null);
+  const { base: themeBase, accent: accentId, setBase: setThemeBase, setAccent } = useThemeSettings();
+  const [bulkConfirm, setBulkConfirm] = useState(null); // { action: "start" | "stop", count } awaiting confirmation
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
-  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("struo_collapsed_groups", JSON.stringify(collapsedGroups));
+    } catch {
+      // Storage unavailable: collapse state just isn't remembered.
+    }
+  }, [collapsedGroups]);
 
   const normalizedServices = useMemo(
     () => services.map((service) => normalizeService(service)),
     [services]
   );
 
+  const presets = useMemo(
+    () => getEffectivePresets(normalizedServices, configuredPresets),
+    [normalizedServices, configuredPresets]
+  );
+  const presetNames = Object.keys(presets);
+  const activePreset = presets[preset] ? preset : presetNames[0] || "";
+
   const reverseDependencies = useMemo(
     () => buildReverseDependencyMap(normalizedServices),
     [normalizedServices]
   );
 
+  const previousDisplayStatesRef = useRef({});
   const displayStates = useMemo(() => {
+    const previous = previousDisplayStatesRef.current;
     const next = {};
     normalizedServices.forEach((service) => {
-      next[service.name] = mergeDisplayState(
+      const merged = mergeDisplayState(
         deriveBaseState(statuses[service.name]),
         uiStates[service.name]
       );
+      next[service.name] = isSameJson(previous[service.name], merged) ? previous[service.name] : merged;
     });
+    previousDisplayStatesRef.current = next;
     return next;
   }, [normalizedServices, statuses, uiStates]);
 
@@ -258,7 +329,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
         (statusFilter === "healthy" && state.healthState === "healthy") ||
         (statusFilter === "failed" && state.lifecycleState === "failed") ||
         (statusFilter === "waiting" && state.lifecycleState === "waiting") ||
-        (statusFilter === "stopped" && !state.running) ||
+        (statusFilter === "stopped" && !state.running && state.lifecycleState !== "failed") ||
         (statusFilter === "needs-attention" &&
           (state.lifecycleState === "failed" || state.healthState === "unhealthy"));
 
@@ -278,6 +349,8 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
 
   useEffect(() => {
     loadServices(true);
+    loadRunConfig();
+    loadPresets();
   }, []);
 
   useEffect(() => {
@@ -313,15 +386,112 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     };
   }, [showLiveMetrics]);
 
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const latest = await loadServices(false);
+      loadRunConfig();
+      loadPresets();
+      if (latest.length) await loadServiceStatuses(latest.map(normalizeService));
+    }, AUTO_REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
   }));
+
+  async function loadPresets() {
+    try {
+      const data = await api.get("/config");
+      const next = data?.config?.presets && Object.keys(data.config.presets).length ? data.config.presets : null;
+      setConfiguredPresets((previous) => (isSameJson(previous, next) ? previous : next));
+      setDependencyCheck(data?.config?.dependencyCheck !== false);
+      setAdminCardStyle(normalizeCardStyle(data?.config?.ui?.cardStyle));
+    } catch {
+      // Keep the current presets if the config can't be read
+    }
+  }
+
+  // Saves the ticked services as a preset (after the user confirmed in the dialog).
+  async function handleSavePreset() {
+    const name = newPresetName.trim();
+    if (!name || selectedServices.length === 0) return;
+    setSavingPreset(true);
+    try {
+      const updatedConfig = await api.get("/config");
+      delete updatedConfig.runtime;
+      const currentServices = Object.entries(updatedConfig.services || {}).map(([serviceName, definition]) => ({ name: serviceName, ...definition }));
+      // First custom save turns the built-in presets into configured ones so none are lost.
+      const basePresets = getEffectivePresets(currentServices, updatedConfig.config?.presets);
+      const nextPresets = { ...basePresets, [name]: [...selectedServices] };
+      updatedConfig.config = { ...(updatedConfig.config || {}), presets: nextPresets };
+      await api.put("/config", updatedConfig);
+      setConfiguredPresets(nextPresets);
+      setPreset(name);
+      setSavePresetOpen(false);
+      showToast(`Preset "${name}" saved with ${selectedServices.length} services`, "success");
+    } catch (err) {
+      showToast(`Could not save preset: ${err.message}`, "error");
+    } finally {
+      setSavingPreset(false);
+    }
+  }
+
+  // Manual refresh: re-check every service now instead of waiting for the 30s auto refresh.
+  async function handleRefreshNow() {
+    setRefreshingNow(true);
+    try {
+      const latest = await loadServices(false);
+      loadRunConfig();
+      loadPresets();
+      if (latest.length) await loadServiceStatuses(latest.map(normalizeService));
+    } catch (err) {
+      showToast(`Couldn't refresh: ${err.message || "unknown error"}`, "error");
+    } finally {
+      setRefreshingNow(false);
+    }
+  }
+
+  async function loadRunConfig() {
+    try {
+      const data = await api.get("/run-config");
+      setRunConfig((previous) => (isSameJson(previous, data) ? previous : data || { services: {} }));
+    } catch {
+      // Older backend without run configuration: keep cards as they are
+    }
+  }
+
+  // Saves one service's run configuration on top of the latest file, then optionally restarts it.
+  async function handleSaveRunConfig(serviceName, draft, restartAfterSave) {
+    setSavingRunConfig(true);
+    try {
+      const latest = cleanRunConfig(await api.get("/run-config").catch(() => ({ services: {} })));
+      const entry = cleanRunConfig({ services: { [serviceName]: draft } }).services[serviceName];
+      if (entry) latest.services[serviceName] = entry;
+      else delete latest.services[serviceName];
+      const saved = await api.put("/run-config", latest);
+      setRunConfig(saved || latest);
+      setRunConfigTarget("");
+      showToast(
+        restartAfterSave
+          ? `Run configuration saved — restarting ${serviceName}`
+          : `Run configuration saved for ${serviceName}. It applies the next time it starts.`,
+        "success"
+      );
+      if (restartAfterSave) executeSingleAction(serviceName, "restart");
+    } catch (err) {
+      showToast(`Could not save run configuration: ${err.message}`, "error");
+    } finally {
+      setSavingRunConfig(false);
+    }
+  }
 
   async function loadServices(showSpinner = false) {
     try {
       if (showSpinner) setLoading(true);
       const data = await api.get("/services");
-      setServices(data.services || []);
+      const nextServices = data.services || [];
+      setServices((previous) => (isSameJson(previous, nextServices) ? previous : nextServices));
       setError("");
       return data.services || [];
     } catch (err) {
@@ -329,20 +499,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       return [];
     } finally {
       if (showSpinner) setLoading(false);
-    }
-  }
-
-  async function handleRefreshAll() {
-    setIsRefreshing(true);
-    try {
-      const latest = await loadServices(false);
-      const targets = latest.length ? latest.map(normalizeService) : normalizedServices;
-      await loadServiceStatuses(targets);
-      showToast("Service statuses refreshed", "success");
-    } catch (err) {
-      showToast(`Failed to refresh: ${err.message || "Unknown error"}`, "error");
-    } finally {
-      setTimeout(() => setIsRefreshing(false), 400);
     }
   }
 
@@ -395,11 +551,15 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     );
 
     setStatuses((previous) => {
+      let changed = false;
       const next = { ...previous };
       results.forEach(([name, status]) => {
-        next[name] = status;
+        if (!isSameJson(previous[name], status)) {
+          next[name] = status;
+          changed = true;
+        }
       });
-      return next;
+      return changed ? next : previous;
     });
   }
 
@@ -489,7 +649,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
           message: reason,
           error: sanitizeError(rawError),
         });
-        showToast(`${serviceName}: ${reason}`, "error");
+        // No toast: the card's red box already shows the reason with Help and Logs.
       }
     }
   }
@@ -567,6 +727,20 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     }
   }
 
+  async function handleGitPush(serviceName) {
+    try {
+      const result = await api.post(`/service/${serviceName}/git/push`, {});
+      await refreshSingleStatus(serviceName);
+      showToast(result.message || `Pushed branch for ${serviceName}`, "success");
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Git push failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
 
 
   function getExpandedStartTargets(initialTargets) {
@@ -612,76 +786,93 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       });
     });
 
-    while (pending.size > 0) {
-      const ready = [...pending].filter((name) => {
-        const dependencies = dependencyMap[name] || [];
-        return dependencies.every((dependency) => {
-          if (!pending.has(dependency)) return !failed.has(dependency);
-          return completed.has(dependency);
-        });
+    // Start each service as soon as its own dependencies are up (not in fixed waves), so independent services
+    // never wait for unrelated slow ones. A failed dependency blocks only the services that need it.
+    const inFlight = new Set();
+    const dependenciesOf = (name) => (dependencyMap[name] || []).filter((dependency) => serviceMap[dependency]);
+    const isReady = (name) => dependenciesOf(name).every((dependency) => completed.has(dependency) || (!pending.has(dependency) && !failed.has(dependency)));
+    const isBlocked = (name) => dependenciesOf(name).some((dependency) => failed.has(dependency));
+
+    const startOne = async (name) => {
+      setUiState(name, {
+        lifecycleState: "starting",
+        message: "Starting now",
+        error: "",
       });
-
-      if (!ready.length) {
-        [...pending].forEach((name) => {
-          setUiState(name, {
-            lifecycleState: "failed",
-            healthState: "unhealthy",
-            message: "Blocked by dependency failure",
-            error: "A required dependency failed to start",
-          });
-          failed.add(name);
-          pending.delete(name);
-        });
-        break;
-      }
-
-      ready.forEach((name) => {
+      try {
+        await api.post(
+          `/service/${name}/start${buildEnabled && serviceMap[name].hasBuild ? "?build=true" : ""}`
+        );
+        await sleep(500);
+        const latestStatus = await refreshSingleStatus(name);
+        const nextState = latestStatus?.healthState === "healthy" ? "healthy" : latestStatus?.running ? "running" : "starting";
         setUiState(name, {
-          lifecycleState: serviceMap[name].dependsOn?.length ? "waiting" : "queued",
-          message:
-            serviceMap[name].dependsOn?.length
-              ? `Waiting for ${serviceMap[name].dependsOn.join(", ")}`
-              : "Queued for startup",
+          lifecycleState: nextState,
+          message: nextState === "healthy" ? "Healthy" : "Running",
           error: "",
         });
-      });
+        completed.add(name);
+      } catch (err) {
+        const reason = categorizeFailure(err);
+        setUiState(name, {
+          lifecycleState: "failed",
+          healthState: "unhealthy",
+          message: reason,
+          error: err.error || err.message,
+        });
+        failed.add(name);
+      }
+    };
 
-      await Promise.all(
-        ready.map(async (name) => {
-          setUiState(name, {
-            lifecycleState: "starting",
-            message: "Starting now",
-            error: "",
-          });
-
-          try {
-            await api.post(
-              `/service/${name}/start${buildEnabled && serviceMap[name].hasBuild ? "?build=true" : ""}`
-            );
-            await sleep(500);
-            const latestStatus = await refreshSingleStatus(name);
-            const nextState = latestStatus?.healthState === "healthy" ? "healthy" : latestStatus?.running ? "running" : "starting";
-            setUiState(name, {
-              lifecycleState: nextState,
-              message: nextState === "healthy" ? "Healthy" : "Running",
-              error: "",
-            });
-            completed.add(name);
-          } catch (err) {
-            const reason = categorizeFailure(err);
+    await new Promise((finish) => {
+      const pump = () => {
+        // Anything whose dependency failed can't start.
+        let blockedFound = true;
+        while (blockedFound) {
+          blockedFound = false;
+          for (const name of [...pending]) {
+            if (inFlight.has(name) || !isBlocked(name)) continue;
+            const failedDependencies = dependenciesOf(name).filter((dependency) => failed.has(dependency));
             setUiState(name, {
               lifecycleState: "failed",
               healthState: "unhealthy",
-              message: reason,
-              error: err.error || err.message,
+              message: "Blocked by dependency failure",
+              error: `Needs ${failedDependencies.join(", ")}, which failed to start`,
             });
             failed.add(name);
-          } finally {
             pending.delete(name);
+            blockedFound = true;
           }
-        })
-      );
-    }
+        }
+
+        [...pending]
+          .filter((name) => !inFlight.has(name) && isReady(name))
+          .forEach((name) => {
+            inFlight.add(name);
+            startOne(name).then(() => {
+              inFlight.delete(name);
+              pending.delete(name);
+              pump();
+            });
+          });
+
+        if (inFlight.size === 0) {
+          // Nothing running and nothing startable: either done, or the rest can never start.
+          [...pending].forEach((name) => {
+            setUiState(name, {
+              lifecycleState: "failed",
+              healthState: "unhealthy",
+              message: "Blocked by dependency failure",
+              error: "A required dependency failed to start",
+            });
+            failed.add(name);
+            pending.delete(name);
+          });
+          finish();
+        }
+      };
+      pump();
+    });
 
     const startedCount = completed.size - alreadyRunning.size;
     if (failed.size > 0) {
@@ -743,6 +934,20 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     }
   }
 
+  // Start all / Stop all ask first when they affect more than one service.
+  function requestBulk(action) {
+    const count = normalizedServices.filter((service) =>
+      action === "stop" ? displayStates[service.name]?.running : !displayStates[service.name]?.running
+    ).length;
+    if (count > 1) {
+      setBulkConfirm({ action, count });
+    } else if (action === "stop") {
+      handleBulkStopAll();
+    } else {
+      handleBulkStartAll();
+    }
+  }
+
   async function handleBulkStartAll() {
     try {
       await executeStartFlow(normalizedServices.map((service) => service.name), "Start all services");
@@ -788,12 +993,64 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
   }
 
   async function handleStartPreset() {
-    const presetServices = getPresetServices(normalizedServices, preset);
+    const known = new Set(normalizedServices.map((service) => service.name));
+    const presetServices = (presets[activePreset] || []).filter((name) => known.has(name));
+    if (presetServices.length === 0) {
+      showToast(`Preset "${activePreset}" has no services to start`, "warning");
+      return;
+    }
     try {
-      await executeStartFlow(presetServices, `Start preset: ${preset}`);
+      await executeStartFlow(presetServices, `Start preset: ${activePreset}`);
     } catch (error) {
       showToast(error.message, "error");
     }
+  }
+
+  // Stable handler identities so memoized ServiceCards only re-render when their own data changes.
+  const latestHandlersRef = useRef({});
+  // "Start X first" fix: start the service together with its stopped dependencies, in order.
+  async function handleStartWithDependencies(serviceName) {
+    try {
+      await executeStartFlow([serviceName]);
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
+  latestHandlersRef.current = {
+    executeSingleAction,
+    handleStartWithDependencies,
+    handleBranchCheckout,
+    handleGitPull,
+    handleGitPush,
+    toggleSelection,
+    onViewLogs,
+    onOpenHelp,
+    onCloneService,
+    onEditInAdmin,
+  };
+  const cardHandlers = useMemo(() => ({
+    onAction: (...args) => latestHandlersRef.current.executeSingleAction(...args),
+    onStartWithDependencies: (...args) => latestHandlersRef.current.handleStartWithDependencies(...args),
+    onBranchCheckout: (...args) => latestHandlersRef.current.handleBranchCheckout(...args),
+    onGitPull: (...args) => latestHandlersRef.current.handleGitPull(...args),
+    onGitPush: (...args) => latestHandlersRef.current.handleGitPush(...args),
+    onEditRunConfig: (serviceName) => setRunConfigTarget(serviceName),
+    onViewLogs: (...args) => latestHandlersRef.current.onViewLogs?.(...args),
+    onOpenHelp: (...args) => latestHandlersRef.current.onOpenHelp?.(...args),
+    onCloneService: (...args) => latestHandlersRef.current.onCloneService?.(...args),
+    onEditInAdmin: (...args) => latestHandlersRef.current.onEditInAdmin?.(...args),
+    onDragEnd: () => {
+      setDraggedServiceName("");
+      setDragOverGroup("");
+    },
+  }), []);
+  const selectHandlersRef = useRef(new Map());
+  function getSelectHandler(name) {
+    if (!selectHandlersRef.current.has(name)) {
+      selectHandlersRef.current.set(name, (checked) => latestHandlersRef.current.toggleSelection(name, checked));
+    }
+    return selectHandlersRef.current.get(name);
   }
 
   function toggleSelection(name, checked) {
@@ -816,16 +1073,60 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
   const someFilteredSelected =
     filteredServices.some((service) => selectedServices.includes(service.name)) && !allFilteredSelected;
 
+  const activeFilterCount = [statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length;
+
+  const effectiveCardStyle = normalizeCardStyle(personalCardStyle || adminCardStyle);
+  const choosePersonalCardStyle = (value) => {
+    setPersonalCardStyle(value);
+    try {
+      if (value) localStorage.setItem("struo_card_style", value);
+      else localStorage.removeItem("struo_card_style");
+    } catch {
+      // Storage unavailable: the choice lasts for this session only.
+    }
+  };
+
+  // At-a-glance state summary; each count filters the grid (click again to clear).
+  const stateSummary = normalizedServices.reduce(
+    (counts, service) => {
+      const state = displayStates[service.name] || {};
+      if (state.lifecycleState === "failed") counts.failed += 1;
+      else if (state.running) counts.running += 1;
+      else counts.stopped += 1;
+      return counts;
+    },
+    { running: 0, stopped: 0, failed: 0 }
+  );
+
+  function resetFilters() {
+    setStatusFilter("all");
+    setGroupFilter("all");
+    setTypeFilter("all");
+  }
+
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="60vh">
-        <CircularProgress size={56} />
+      <Box sx={{ ...SERVICE_GRID_SX, p: 1.25 }}>
+        {Array.from({ length: 10 }, (_, index) => (
+          <Skeleton key={index} variant="rounded" height={190} sx={{ borderRadius: "16px" }} />
+        ))}
       </Box>
     );
   }
 
   if (error) {
-    return <Alert severity="error">{error}</Alert>;
+    return (
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={() => loadServices(true)}>
+            Retry
+          </Button>
+        }
+      >
+        {error}
+      </Alert>
+    );
   }
 
   return (
@@ -836,253 +1137,387 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
           p: 1.5,
           border: "1px solid",
           borderColor: "divider",
-          background: "linear-gradient(180deg, rgba(255,255,255,0.94) 0%, rgba(248,250,252,0.96) 100%)",
-          boxShadow: "0 14px 34px rgba(15,23,42,0.05)",
+          background: "linear-gradient(180deg, var(--c-bg-ffffff-094) 0%, var(--c-bg-f8fafc-096) 100%)",
+          boxShadow: "0 14px 34px var(--c-shadow-0f172a-005)",
         }}
       >
-        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.75, minWidth: 0 }}>
-          <Box sx={{ display: "contents" }}>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={handleBulkStartAll}>
-                Start all
-              </Button>
-              <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleBulkStopAll}>
-                Stop all
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={isRefreshing}
-                startIcon={
-                  <RefreshIcon
+        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, minWidth: 0 }}>
+          <Stack direction="row" spacing={1}>
+            <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={() => requestBulk("start")} sx={{ height: 32 }}>
+              Start all
+            </Button>
+            <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={() => requestBulk("stop")} sx={{ height: 32 }}>
+              Stop all
+            </Button>
+          </Stack>
+          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ px: 0.5 }} role="group" aria-label="Service state summary">
+            {[
+              { key: "running", label: "running", count: stateSummary.running, dot: { bgcolor: STATUS_COLORS.running }, color: STATUS_COLORS.runningText },
+              { key: "stopped", label: "stopped", count: stateSummary.stopped, dot: { border: `1.5px solid ${STATUS_COLORS.stopped}` }, color: STATUS_COLORS.stoppedText },
+              { key: "failed", label: "failed", count: stateSummary.failed, dot: { bgcolor: STATUS_COLORS.failed }, color: stateSummary.failed ? STATUS_COLORS.failedText : STATUS_COLORS.stopped },
+            ].map((item) => {
+              const active = statusFilter === item.key;
+              return (
+                <ButtonBase
+                  key={item.key}
+                  onClick={() => setStatusFilter(active ? "all" : item.key)}
+                  aria-pressed={active}
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 0.6,
+                    px: 1,
+                    height: 32,
+                    borderRadius: "16px",
+                    fontSize: "0.82rem",
+                    fontWeight: 600,
+                    color: item.color,
+                    border: "1px solid",
+                    borderColor: active ? item.color : "transparent",
+                    bgcolor: active ? "var(--c-bg-0f172a-004)" : "transparent",
+                    "&:hover": { bgcolor: "var(--c-bg-0f172a-005)" },
+                  }}
+                >
+                  <Box component="span" sx={{ width: 8, height: 8, borderRadius: "50%", boxSizing: "border-box", ...item.dot }} />
+                  <Box component="span" sx={{ fontWeight: 800 }}>{item.count}</Box>
+                  {item.label}
+                </ButtonBase>
+              );
+            })}
+            <Tooltip title={refreshingNow ? "Refreshing…" : "Refresh status now (also refreshes every 30s)"}>
+              <span>
+                <IconButton size="small" aria-label="Refresh status now" onClick={handleRefreshNow} disabled={refreshingNow}>
+                  <SyncIcon
+                    fontSize="small"
                     sx={{
-                      animation: isRefreshing ? "spin 0.8s linear infinite" : "none",
-                      "@keyframes spin": {
-                        "0%": { transform: "rotate(0deg)" },
-                        "100%": { transform: "rotate(360deg)" },
-                      },
+                      animation: refreshingNow ? "struo-spin 0.8s linear infinite" : "none",
+                      "@keyframes struo-spin": { from: { transform: "rotate(0deg)" }, to: { transform: "rotate(360deg)" } },
                     }}
                   />
-                }
-                onClick={handleRefreshAll}
-              >
-                {isRefreshing ? "Refreshing..." : "Refresh"}
-              </Button>
-              {selectedServices.length > 0 ? (
-                <>
-                  <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={handleStartSelected}>
-                    Start selected
-                  </Button>
-                  <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleStopSelected}>
-                    Stop selected
-                  </Button>
-                  <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected}>
-                    Restart
-                  </Button>
-                </>
-              ) : null}
-            </Stack>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Button size="small" variant={buildEnabled ? "contained" : "outlined"} color="warning" onClick={() => setBuildEnabled((previous) => !previous)}>
-                {buildEnabled ? "Build on" : "Build off"}
-              </Button>
-              <FormControl size="small" sx={{ minWidth: 150 }}>
-                <InputLabel>Preset</InputLabel>
-                <Select value={preset} label="Preset" onChange={(event) => setPreset(event.target.value)}>
-                  {PRESET_OPTIONS.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <Button size="small" variant="contained" color="secondary" onClick={handleStartPreset}>
-                Run preset
-              </Button>
-            </Stack>
-          </Box>
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
 
-          <Box sx={{ display: "contents" }}>
-            <Box sx={{ flex: "1 1 220px", minWidth: { xs: "100%", sm: 220 } }}>
-              <TextField
-                fullWidth
-                size="small"
-                placeholder="Search services"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon />
-                    </InputAdornment>
-                  ),
-                }}
-              />
-            </Box>
-            <Box
-              component="details"
-              sx={{
-                position: "relative",
-                flex: "0 0 auto",
-                alignSelf: { xs: "flex-start", sm: "auto" },
-                "&[open] .filter-expand": { transform: "rotate(180deg)" },
-              }}
-            >
-              <Box
-                component="summary"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.75,
-                  cursor: "pointer",
-                  listStyle: "none",
-                  minHeight: 40,
-                  px: 1.25,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  "&::-webkit-details-marker": { display: "none" },
-                }}
-              >
-                <FilterListIcon fontSize="small" />
-                <Typography variant="body2">
-                  Filters{[statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length
-                    ? ` (${[statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length})`
-                    : ""}
-                </Typography>
-                <ExpandMoreIcon className="filter-expand" fontSize="small" sx={{ transition: "transform 160ms ease" }} />
-              </Box>
-              <Stack
-                spacing={1.25}
-                sx={{
-                  position: "absolute",
-                  zIndex: 1300,
-                  top: "calc(100% + 8px)",
-                  right: 0,
-                  width: 280,
-                  maxWidth: "calc(100vw - 32px)",
-                  p: 1.5,
-                  bgcolor: "background.paper",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 2,
-                  boxShadow: 4,
-                }}
-              >
-            <FormControl size="small" sx={{ width: "100%" }}>
-              <InputLabel>Status</InputLabel>
-              <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
-                <MenuItem value="all">All</MenuItem>
-                <MenuItem value="running">Running</MenuItem>
-                <MenuItem value="healthy">Healthy</MenuItem>
-                <MenuItem value="waiting">Waiting</MenuItem>
-                <MenuItem value="failed">Failed</MenuItem>
-                <MenuItem value="needs-attention">Needs attention</MenuItem>
-                <MenuItem value="stopped">Stopped</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ width: "100%" }}>
-              <InputLabel>Group</InputLabel>
-              <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
-                <MenuItem value="all">All groups</MenuItem>
-                {groups.map((group) => (
-                  <MenuItem key={group} value={group}>
-                    {group}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ width: "100%" }}>
-              <InputLabel>Type</InputLabel>
-              <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
-                <MenuItem value="all">All types</MenuItem>
-                {[...new Set(normalizedServices.map((service) => service.type).filter(Boolean))].map((type) => (
-                  <MenuItem key={type} value={type}>
-                    {type}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Button
+          {/* Preset: pick + run as one compact control */}
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Select
               size="small"
-              variant="text"
-              startIcon={<FilterListIcon />}
-              onClick={() => {
-                setSearchQuery("");
-                setStatusFilter("all");
-                setGroupFilter("all");
-                setTypeFilter("all");
-              }}
+              value={activePreset}
+              onChange={(event) => setPreset(event.target.value)}
+              renderValue={(value) => (
+                <Box component="span" sx={{ fontSize: "0.82rem" }}>
+                  <Box component="span" sx={{ color: "text.secondary" }}>Preset: </Box>
+                  {value}
+                </Box>
+              )}
+              inputProps={{ "aria-label": "Preset" }}
+              sx={{ height: 32, minWidth: 170, maxWidth: 240, fontSize: "0.82rem" }}
             >
-              Clear
+              {presetNames.map((option) => (
+                <MenuItem key={option} value={option} sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
+                  <span>{option}</span>
+                  <Typography component="span" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+                    {presets[option].length}
+                  </Typography>
+                </MenuItem>
+              ))}
+            </Select>
+            <Button size="small" variant="outlined" color="secondary" onClick={handleStartPreset} sx={{ height: 32 }}>
+              Run
             </Button>
-              </Stack>
-            </Box>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, ml: 0, whiteSpace: "nowrap" }}>
+            {buildEnabled ? (
+              <Tooltip title="Each start runs the build command first. Turn off in View.">
+                <Chip size="small" color="warning" variant="outlined" label="Build on" onDelete={() => setBuildEnabled(false)} />
+              </Tooltip>
+            ) : null}
+          </Stack>
+
+          <Box sx={{ flex: "1 1 200px", minWidth: { xs: "100%", sm: 200 }, display: "flex", alignItems: "center", gap: 0.5 }}>
+            <Tooltip title={allFilteredSelected ? "Unselect all visible" : "Select all visible"}>
               <Checkbox
                 size="small"
                 checked={allFilteredSelected}
                 indeterminate={someFilteredSelected}
                 onChange={(event) => toggleSelectFiltered(event.target.checked)}
-                inputProps={{ "aria-label": "Select all filtered services" }}
+                inputProps={{ "aria-label": "Select all visible services" }}
+                sx={{ p: 0.5 }}
               />
-              <Typography variant="body2" color="text.secondary">
-                Select filtered
-              </Typography>
-              {selectedServices.length > 0 ? (
-                <Button size="small" variant="text" onClick={() => setSelectedServices([])}>
-                  Clear ({selectedServices.length})
-                </Button>
-              ) : null}
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={groupedView}
-                    onChange={(event) => {
-                      setGroupedView(event.target.checked);
-                      localStorage.setItem("struo_grouped_view", String(event.target.checked));
-                    }}
-                    inputProps={{ "aria-label": "Group services" }}
-                  />
-                }
-                label="Group services"
-                sx={{ ml: 1, whiteSpace: "nowrap" }}
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={showGitBranches}
-                    onChange={(event) => {
-                      setShowGitBranches(event.target.checked);
-                      localStorage.setItem("struo_show_git_branches", String(event.target.checked));
-                    }}
-                    inputProps={{ "aria-label": "Toggle Git branches on cards" }}
-                  />
-                }
-                label="Git branches"
-                sx={{ ml: 1, whiteSpace: "nowrap" }}
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    color="primary"
-                    checked={showLiveMetrics}
-                    onChange={(event) => {
-                      setShowLiveMetrics(event.target.checked);
-                      localStorage.setItem("struo_show_live_metrics", String(event.target.checked));
-                    }}
-                    inputProps={{ "aria-label": "Toggle Live Resource Monitoring (CPU, RAM, Uptime)" }}
-                  />
-                }
-                label="Live Resources"
-                sx={{ ml: 1, whiteSpace: "nowrap" }}
-              />
-            </Box>
+            </Tooltip>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="Search services"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon sx={{ fontSize: "1rem" }} />
+                  </InputAdornment>
+                ),
+                sx: SEARCH_INPUT_SX,
+              }}
+            />
           </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={<FilterListIcon />}
+            endIcon={<ExpandMoreIcon sx={{ transform: filtersAnchorEl ? "rotate(180deg)" : "none", transition: "transform 160ms ease" }} />}
+            onClick={(event) => setFiltersAnchorEl(event.currentTarget)}
+            aria-haspopup="dialog"
+            aria-expanded={Boolean(filtersAnchorEl)}
+            sx={{ height: 32, borderColor: "divider", textTransform: "none" }}
+          >
+            Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
+          </Button>
+          <Popover
+            open={Boolean(filtersAnchorEl)}
+            anchorEl={filtersAnchorEl}
+            onClose={() => setFiltersAnchorEl(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            PaperProps={{ sx: { mt: 1, width: 280, maxWidth: "calc(100vw - 32px)", p: 1.5, borderRadius: 2 } }}
+          >
+            <Stack spacing={1.25}>
+              <FormControl size="small" sx={{ width: "100%" }}>
+                <InputLabel>Status</InputLabel>
+                <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
+                  <MenuItem value="all">All</MenuItem>
+                  <ListSubheader sx={{ lineHeight: "28px", fontSize: "0.7rem", fontWeight: 700 }}>LIFECYCLE</ListSubheader>
+                  <MenuItem value="running">Running</MenuItem>
+                  <MenuItem value="waiting">Waiting</MenuItem>
+                  <MenuItem value="stopped">Stopped</MenuItem>
+                  <MenuItem value="failed">Failed</MenuItem>
+                  <ListSubheader sx={{ lineHeight: "28px", fontSize: "0.7rem", fontWeight: 700 }}>HEALTH</ListSubheader>
+                  <MenuItem value="healthy">Healthy</MenuItem>
+                  <MenuItem value="needs-attention">Needs attention</MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ width: "100%" }}>
+                <InputLabel>Group</InputLabel>
+                <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
+                  <MenuItem value="all">All groups</MenuItem>
+                  {groups.map((group) => (
+                    <MenuItem key={group} value={group}>
+                      {group}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ width: "100%" }}>
+                <InputLabel>Type</InputLabel>
+                <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
+                  <MenuItem value="all">All types</MenuItem>
+                  {[...new Set(normalizedServices.map((service) => service.type).filter(Boolean))].map((type) => (
+                    <MenuItem key={type} value={type}>
+                      {type}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Button size="small" variant="text" onClick={resetFilters} disabled={!activeFilterCount} sx={{ alignSelf: "flex-start" }}>
+                Reset filters
+              </Button>
+            </Stack>
+          </Popover>
+
+          {/* Display options live in one menu instead of a row of switches */}
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={<TuneIcon />}
+            endIcon={<ExpandMoreIcon sx={{ transform: viewAnchorEl ? "rotate(180deg)" : "none", transition: "transform 160ms ease" }} />}
+            onClick={(event) => setViewAnchorEl(event.currentTarget)}
+            aria-haspopup="menu"
+            aria-expanded={Boolean(viewAnchorEl)}
+            sx={{ height: 32, borderColor: "divider", textTransform: "none" }}
+          >
+            View
+          </Button>
+          <Menu
+            anchorEl={viewAnchorEl}
+            open={Boolean(viewAnchorEl)}
+            onClose={() => setViewAnchorEl(null)}
+            disableEnforceFocus // lets focus move into the Theme / Card style side panels
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            PaperProps={{ sx: { mt: 1, minWidth: 240, borderRadius: 2 } }}
+          >
+            {[
+              {
+                key: "grouped",
+                label: "Group services",
+                checked: groupedView,
+                onToggle: (checked) => {
+                  setGroupedView(checked);
+                  localStorage.setItem("struo_grouped_view", String(checked));
+                },
+              },
+              {
+                key: "git",
+                label: "Git branches on cards",
+                checked: showGitBranches,
+                onToggle: (checked) => {
+                  setShowGitBranches(checked);
+                  localStorage.setItem("struo_show_git_branches", String(checked));
+                },
+              },
+              {
+                key: "metrics",
+                label: "Live resources (CPU, memory)",
+                checked: showLiveMetrics,
+                onToggle: (checked) => {
+                  setShowLiveMetrics(checked);
+                  localStorage.setItem("struo_show_live_metrics", String(checked));
+                },
+              },
+            ].map((option) => (
+              <MenuItem key={option.key} onClick={() => option.onToggle(!option.checked)} sx={{ py: 0.5, fontSize: "0.85rem" }}>
+                <ListItemText primary={option.label} primaryTypographyProps={{ fontSize: "0.85rem" }} />
+                <Switch size="small" checked={option.checked} tabIndex={-1} inputProps={{ "aria-label": option.label }} />
+              </MenuItem>
+            ))}
+            <Divider />
+            {/* Compact rows: show the current choice; hover opens the options */}
+            <HoverSubmenu label="Look" value={findLook(themeBase, effectiveCardStyle)?.label || "Custom"} width={280}>
+              {LOOKS.map((look) => {
+                const active = themeBase === look.theme && effectiveCardStyle === look.cardStyle;
+                return (
+                  <MenuItem
+                    key={look.id}
+                    selected={active}
+                    onClick={() => {
+                      setThemeBase(look.theme);
+                      choosePersonalCardStyle(look.cardStyle);
+                    }}
+                  >
+                    <ListItemText
+                      primary={look.label}
+                      secondary={look.hint}
+                      primaryTypographyProps={{ fontSize: "0.85rem" }}
+                      secondaryTypographyProps={{ fontSize: "0.7rem", sx: { whiteSpace: "normal" } }}
+                    />
+                    {active ? <CheckIcon fontSize="small" color="primary" sx={{ ml: 1 }} /> : null}
+                  </MenuItem>
+                );
+              })}
+            </HoverSubmenu>
+            <HoverSubmenu label="Theme" value={THEME_BASES.find((option) => option.id === themeBase)?.label}>
+              {THEME_BASES.map((option) => (
+                <MenuItem key={option.id} selected={themeBase === option.id} onClick={() => setThemeBase(option.id)}>
+                  <ListItemText
+                    primary={option.label}
+                    secondary={option.hint}
+                    primaryTypographyProps={{ fontSize: "0.85rem" }}
+                    secondaryTypographyProps={{ fontSize: "0.7rem", sx: { whiteSpace: "normal" } }}
+                  />
+                  {themeBase === option.id ? <CheckIcon fontSize="small" color="primary" sx={{ ml: 1 }} /> : null}
+                </MenuItem>
+              ))}
+              <Divider />
+              <Typography sx={{ px: 2, pt: 0.75, fontSize: "0.7rem", fontWeight: 700, color: "text.secondary" }}>ACCENT</Typography>
+              <Box role="radiogroup" aria-label="Accent colour" sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, px: 2, py: 1 }}>
+                {ACCENTS.map((option) => (
+                  <Tooltip key={option.id} title={option.label}>
+                    <Box
+                      component="button"
+                      type="button"
+                      role="radio"
+                      aria-checked={accentId === option.id}
+                      aria-label={option.label}
+                      onClick={() => setAccent(option.id)}
+                      sx={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: "50%",
+                        border: "2px solid",
+                        borderColor: accentId === option.id ? "text.primary" : "transparent",
+                        bgcolor: option.main,
+                        cursor: "pointer",
+                        display: "grid",
+                        placeItems: "center",
+                        color: "#ffffff",
+                      }}
+                    >
+                      {accentId === option.id ? <CheckIcon sx={{ fontSize: 13 }} /> : null}
+                    </Box>
+                  </Tooltip>
+                ))}
+              </Box>
+            </HoverSubmenu>
+            <HoverSubmenu label="Card style" value={CARD_STYLES.find((style) => style.id === effectiveCardStyle)?.label} width={260}>
+              {CARD_STYLES.map((style) => (
+                <MenuItem key={style.id} selected={effectiveCardStyle === style.id} onClick={() => choosePersonalCardStyle(style.id)}>
+                  <ListItemText
+                    primary={style.label}
+                    secondary={style.description}
+                    primaryTypographyProps={{ fontSize: "0.85rem" }}
+                    secondaryTypographyProps={{ fontSize: "0.7rem", sx: { whiteSpace: "normal" } }}
+                  />
+                  {effectiveCardStyle === style.id ? <CheckIcon fontSize="small" color="primary" sx={{ ml: 1 }} /> : null}
+                </MenuItem>
+              ))}
+            </HoverSubmenu>
+            <Divider />
+            <MenuItem onClick={() => setBuildEnabled((previous) => !previous)} sx={{ py: 0.5 }}>
+              <ListItemText
+                primary="Build before start"
+                secondary="Runs each service's build command first"
+                primaryTypographyProps={{ fontSize: "0.85rem" }}
+                secondaryTypographyProps={{ fontSize: "0.72rem" }}
+              />
+              <Switch size="small" color="warning" checked={buildEnabled} tabIndex={-1} inputProps={{ "aria-label": "Build before start" }} />
+            </MenuItem>
+          </Menu>
         </Box>
+
+        {/* Selection bar: only while services are selected, so the main toolbar never shifts */}
+        {selectedServices.length > 0 ? (
+          <Box
+            sx={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 1,
+              mt: 1.25,
+              pt: 1.25,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 700, mr: 0.5 }}>
+              {selectedServices.length} selected
+            </Typography>
+            <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={handleStartSelected}>
+              Start selected
+            </Button>
+            <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleStopSelected}>
+              Stop selected
+            </Button>
+            <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected}>
+              Restart selected
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              color="secondary"
+              onClick={() => {
+                setNewPresetName("");
+                setSavePresetOpen(true);
+              }}
+            >
+              Save as preset
+            </Button>
+            <Button size="small" variant="text" onClick={() => setSelectedServices([])}>
+              Clear selection
+            </Button>
+          </Box>
+        ) : null}
       </Paper>
 
       <Paper
@@ -1098,7 +1533,23 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       >
         <Stack spacing={3}>
           {filteredServices.length === 0 ? (
-            <Alert severity="info">No services match the current filters.</Alert>
+            <Alert
+              severity="info"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    setSearchQuery("");
+                    resetFilters();
+                  }}
+                >
+                  Reset filters
+                </Button>
+              }
+            >
+              No services match the current search and filters.
+            </Alert>
           ) : groupedView ? (
             groupedServices.map(({ group, services: groupServices }) => (
               <Box
@@ -1113,7 +1564,11 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   const serviceName = event.dataTransfer.getData("text/plain") || draggedServiceName;
                   setDragOverGroup("");
                   setDraggedServiceName("");
-                  if (serviceName) moveServiceToGroup(serviceName, group);
+                  const movedService = normalizedServices.find((entry) => entry.name === serviceName);
+                  // Moving changes the saved config, so ask first.
+                  if (movedService && movedService.group !== group) {
+                    setPendingMove({ serviceName, from: movedService.group, to: group });
+                  }
                 }}
                 sx={{
                   borderRadius: 2,
@@ -1126,10 +1581,10 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   onClick={() =>
                     setCollapsedGroups((previous) => ({
                       ...previous,
-                      [group]: !(previous[group] ?? true),
+                      [group]: !previous[group],
                     }))
                   }
-                  aria-expanded={collapsedGroups[group] === false}
+                  aria-expanded={!collapsedGroups[group]}
                   sx={{
                     display: "flex",
                     width: "100%",
@@ -1138,47 +1593,67 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                     mb: 1,
                     p: 0.75,
                     borderRadius: 2,
-                    background: "linear-gradient(90deg, rgba(15,23,42,0.04) 0%, rgba(255,255,255,0.8) 100%)",
-                    border: "1px solid rgba(148, 163, 184, 0.16)",
+                    background: "linear-gradient(90deg, var(--c-bg-0f172a-004) 0%, var(--c-bg-ffffff-08) 100%)",
+                    border: "1px solid var(--c-border-94a3b8-016)",
                     textAlign: "left",
                   }}
                 >
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="h6">{group}</Typography>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{group}</Typography>
                     <Chip label={groupServices.length} size="small" variant="outlined" />
+                    {(() => {
+                      const runningCount = groupServices.filter((service) => displayStates[service.name]?.running).length;
+                      const failedCount = groupServices.filter(
+                        (service) => displayStates[service.name]?.error || displayStates[service.name]?.lifecycleState === "failed"
+                      ).length;
+                      return (
+                        <>
+                          {runningCount ? (
+                            <Chip label={`${runningCount} running`} size="small" sx={{ bgcolor: "var(--c-bg-ecfdf3)", color: "var(--c-text-027a48)", fontWeight: 600 }} />
+                          ) : null}
+                          {failedCount ? (
+                            <Chip label={`${failedCount} failed`} size="small" sx={{ bgcolor: "var(--c-bg-fef2f2)", color: "var(--c-text-dc2626)", fontWeight: 600 }} />
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </Box>
                   <ExpandMoreIcon
                     sx={{
-                      transform: collapsedGroups[group] === false ? "rotate(180deg)" : "none",
+                      transform: collapsedGroups[group] ? "none" : "rotate(180deg)",
                       transition: "transform 160ms ease",
                     }}
                   />
                 </ButtonBase>
-                {collapsedGroups[group] === false ? (
+                {!collapsedGroups[group] ? (
                   <Box sx={SERVICE_GRID_SX}>
                     {groupServices.map((service) => (
-                      <ServiceCard
+                      <ServiceCardView
+                        cardStyle={effectiveCardStyle}
                         key={service.name}
                         service={service}
                         status={displayStates[service.name]}
-                        reverseDependencies={reverseDependencies[service.name] || []}
+                        reverseDependencies={reverseDependencies[service.name] || EMPTY_LIST}
                         isMoving={movingServiceName === service.name}
                         isSelected={selectedServices.includes(service.name)}
-                        onSelect={(checked) => toggleSelection(service.name, checked)}
-                        onAction={executeSingleAction}
-                        onBranchCheckout={handleBranchCheckout}
-                        onGitPull={handleGitPull}
+                        onSelect={getSelectHandler(service.name)}
+                        onAction={cardHandlers.onAction}
+                        onBranchCheckout={cardHandlers.onBranchCheckout}
+                        onGitPull={cardHandlers.onGitPull}
+                        onGitPush={cardHandlers.onGitPush}
+                        onEditRunConfig={cardHandlers.onEditRunConfig}
+                        runConfigCount={countRunConfigValues(runConfig.services?.[service.name])}
+                        buildMode={buildEnabled}
                         showGitBranches={showGitBranches}
                         showLiveMetrics={showLiveMetrics}
                         metrics={metrics[service.name] || null}
-                        onViewLogs={onViewLogs}
-                        onCloneService={onCloneService}
-                        onEditInAdmin={onEditInAdmin}
+                        onViewLogs={onViewLogs ? cardHandlers.onViewLogs : undefined}
+                        onOpenHelp={onOpenHelp ? cardHandlers.onOpenHelp : undefined}
+                        onStartWithDependencies={dependencyCheck ? cardHandlers.onStartWithDependencies : undefined}
+                        onCloneService={onCloneService ? cardHandlers.onCloneService : undefined}
+                        onEditInAdmin={onEditInAdmin ? cardHandlers.onEditInAdmin : undefined}
                         onDragStart={setDraggedServiceName}
-                        onDragEnd={() => {
-                          setDraggedServiceName("");
-                          setDragOverGroup("");
-                        }}
+                        onDragEnd={cardHandlers.onDragEnd}
                       />
                     ))}
                   </Box>
@@ -1188,11 +1663,12 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
           ) : (
             <Box sx={SERVICE_GRID_SX}>
               {filteredServices.map((service) => (
-                <ServiceCard
+                <ServiceCardView
+                  cardStyle={effectiveCardStyle}
                   key={service.name}
                   service={service}
                   status={displayStates[service.name]}
-                  reverseDependencies={reverseDependencies[service.name] || []}
+                  reverseDependencies={reverseDependencies[service.name] || EMPTY_LIST}
                   isMoving={movingServiceName === service.name}
                   isDraggable={false}
                   showGroup
@@ -1200,13 +1676,19 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   showLiveMetrics={showLiveMetrics}
                   metrics={metrics[service.name] || null}
                   isSelected={selectedServices.includes(service.name)}
-                  onSelect={(checked) => toggleSelection(service.name, checked)}
-                  onAction={executeSingleAction}
-                  onBranchCheckout={handleBranchCheckout}
-                  onGitPull={handleGitPull}
-                  onViewLogs={onViewLogs}
-                  onCloneService={onCloneService}
-                  onEditInAdmin={onEditInAdmin}
+                  onSelect={getSelectHandler(service.name)}
+                  onAction={cardHandlers.onAction}
+                  onBranchCheckout={cardHandlers.onBranchCheckout}
+                  onGitPull={cardHandlers.onGitPull}
+                  onGitPush={cardHandlers.onGitPush}
+                  onEditRunConfig={cardHandlers.onEditRunConfig}
+                  runConfigCount={countRunConfigValues(runConfig.services?.[service.name])}
+                  buildMode={buildEnabled}
+                  onViewLogs={onViewLogs ? cardHandlers.onViewLogs : undefined}
+                  onOpenHelp={onOpenHelp ? cardHandlers.onOpenHelp : undefined}
+                  onStartWithDependencies={dependencyCheck ? cardHandlers.onStartWithDependencies : undefined}
+                  onCloneService={onCloneService ? cardHandlers.onCloneService : undefined}
+                  onEditInAdmin={onEditInAdmin ? cardHandlers.onEditInAdmin : undefined}
                 />
               ))}
             </Box>
@@ -1214,9 +1696,111 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
         </Stack>
       </Paper>
 
+      <Dialog open={savePresetOpen} onClose={savingPreset ? undefined : () => setSavePresetOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Save selection as preset</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Autocomplete
+            freeSolo
+            options={presetNames}
+            inputValue={newPresetName}
+            onInputChange={(_, value) => setNewPresetName(value)}
+            renderInput={(params) => (
+              <TextField {...params} autoFocus size="small" label="Preset name" placeholder="e.g. My daily set" sx={{ mt: 1 }} />
+            )}
+          />
+          {presets[newPresetName.trim()] ? (
+            <Alert severity="warning" sx={{ mt: 1.5, py: 0 }}>
+              Replaces the existing preset "{newPresetName.trim()}" ({presets[newPresetName.trim()].length} services).
+            </Alert>
+          ) : null}
+          <Typography variant="body2" sx={{ mt: 2, mb: 1 }}>
+            {selectedServices.length} selected service{selectedServices.length === 1 ? "" : "s"}:
+          </Typography>
+          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+            {selectedServices.map((name) => (
+              <Chip key={name} size="small" label={name} />
+            ))}
+          </Stack>
+          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 2 }}>
+            This updates the configuration file. Edit or delete presets later in Admin › Presets.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setSavePresetOpen(false)} disabled={savingPreset}>Cancel</Button>
+          <Button variant="contained" onClick={handleSavePreset} disabled={savingPreset || !newPresetName.trim()}>
+            {savingPreset ? "Saving…" : "Confirm and save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <RunConfigDialog
+        open={Boolean(runConfigTarget)}
+        serviceName={runConfigTarget}
+        serviceType={normalizedServices.find((entry) => entry.name === runConfigTarget)?.type || ""}
+        initialSettings={runConfig.services?.[runConfigTarget] || {}}
+        isRunning={Boolean(displayStates[runConfigTarget]?.running)}
+        saving={savingRunConfig}
+        onClose={() => setRunConfigTarget("")}
+        onSave={(draft, restartAfterSave) => handleSaveRunConfig(runConfigTarget, draft, restartAfterSave)}
+      />
+
+      <Dialog open={Boolean(pendingMove)} onClose={() => setPendingMove(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Move service?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            Move <strong>{pendingMove?.serviceName}</strong> from <strong>{pendingMove?.from}</strong> to{" "}
+            <strong>{pendingMove?.to}</strong>?
+          </Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 1 }}>
+            This changes the service's group in the configuration file.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setPendingMove(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const move = pendingMove;
+              setPendingMove(null);
+              if (move) moveServiceToGroup(move.serviceName, move.to);
+            }}
+          >
+            Move and save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(bulkConfirm)} onClose={() => setBulkConfirm(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>
+          {bulkConfirm?.action === "stop" ? "Stop all services?" : "Start all services?"}
+        </DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            {bulkConfirm?.action === "stop"
+              ? `This stops ${bulkConfirm?.count} running services.`
+              : `This starts ${bulkConfirm?.count} services, in dependency order.`}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setBulkConfirm(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color={bulkConfirm?.action === "stop" ? "error" : "primary"}
+            onClick={() => {
+              const action = bulkConfirm?.action;
+              setBulkConfirm(null);
+              if (action === "stop") handleBulkStopAll();
+              else handleBulkStartAll();
+            }}
+          >
+            {bulkConfirm?.action === "stop" ? `Stop ${bulkConfirm?.count}` : `Start ${bulkConfirm?.count}`}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Snackbar
         open={toast.open}
-        autoHideDuration={5000}
+        autoHideDuration={toast.severity === "error" ? null : 5000}
         onClose={() => setToast((previous) => ({ ...previous, open: false }))}
       >
         <Alert
