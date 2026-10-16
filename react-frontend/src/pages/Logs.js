@@ -189,13 +189,13 @@ function ExplorerItem({ service, active, pinned, running, onOpen, onPin }) {
           borderRadius: 1.5,
           cursor: "pointer",
           color: active ? "primary.main" : "text.primary",
-          backgroundColor: active ? "rgba(37,99,235,0.1)" : "transparent",
+          backgroundColor: active ? "color-mix(in srgb, var(--sm-accent) 10%, transparent)" : "transparent",
           transition: "background-color 0.12s ease",
           "&:hover": {
-            backgroundColor: active ? "rgba(37,99,235,0.14)" : "rgba(15,23,42,0.05)",
+            backgroundColor: active ? "color-mix(in srgb, var(--sm-accent) 14%, transparent)" : "var(--c-bg-0f172a-005)",
           },
           "&:hover .explorer-pin, &:focus-within .explorer-pin": { opacity: 1 },
-          "&:focus-visible": { outline: "2px solid rgba(37,99,235,0.5)", outlineOffset: -2 },
+          "&:focus-visible": { outline: "2px solid color-mix(in srgb, var(--sm-accent) 50%, transparent)", outlineOffset: -2 },
         }}
       >
         <StatusDot running={running} />
@@ -277,7 +277,7 @@ function OpenServiceTabLabel({ serviceName, running, onClose }) {
           p: 0.25,
           borderRadius: "50%",
           color: "text.secondary",
-          "&:hover": { bgcolor: "rgba(15,23,42,0.08)", color: "text.primary" },
+          "&:hover": { bgcolor: "var(--c-bg-0f172a-008)", color: "text.primary" },
         }}
       >
         <CloseIcon sx={{ fontSize: "0.95rem" }} />
@@ -823,8 +823,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         px: 1,
         minHeight: TOP_BAR_HEIGHT,
         flexShrink: 0,
-        borderBottom: "1px solid rgba(148,163,184,0.16)",
-        backgroundColor: "rgba(248,250,252,0.88)",
+        borderBottom: "1px solid var(--c-border-94a3b8-016)",
+        backgroundColor: "var(--c-bg-f8fafc-088)",
       }}
     >
       <Tabs
@@ -852,13 +852,13 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             mr: 0.5,
             color: "text.secondary",
             border: "1px solid transparent",
-            "&:hover": { backgroundColor: "rgba(15,23,42,0.05)" },
+            "&:hover": { backgroundColor: "var(--c-bg-0f172a-005)" },
           },
           "& .MuiTab-root.Mui-selected": {
             color: "primary.main",
             backgroundColor: "background.paper",
-            borderColor: "rgba(37,99,235,0.35)",
-            boxShadow: "0 1px 3px rgba(15,23,42,0.08), inset 0 -2px 0 #2563eb",
+            borderColor: "color-mix(in srgb, var(--sm-accent) 35%, transparent)",
+            boxShadow: "0 1px 3px var(--c-shadow-0f172a-008), inset 0 -2px 0 var(--sm-accent)",
           },
           "& .MuiTabs-indicator": {
             display: "none",
@@ -896,7 +896,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         px: 1.5,
         py: 0.75,
         flexShrink: 0,
-        borderBottom: "1px solid rgba(148,163,184,0.16)",
+        borderBottom: "1px solid var(--c-border-94a3b8-016)",
       }}
     >
       <Typography variant="subtitle2" noWrap sx={{ fontWeight: 800, maxWidth: 220 }}>
@@ -931,15 +931,15 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             const items = [];
             if (index === 0 || logFileOptions[index - 1].group !== option.group) {
               items.push(
-                <MenuItem key={`group-${option.group}`} disabled value={`__group_${option.group}`} sx={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, opacity: "1 !important", color: "text.secondary", minHeight: 0, px: 2, pt: index === 0 ? 0.75 : 1.5, pb: 0.75, mt: index === 0 ? 0 : 0.75, borderTop: index === 0 ? 0 : "1px solid rgba(148,163,184,0.25)" }}>
+                <MenuItem key={`group-${option.group}`} disabled value={`__group_${option.group}`} sx={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, opacity: "1 !important", color: "text.secondary", minHeight: 0, px: 2, pt: index === 0 ? 0.75 : 1.5, pb: 0.75, mt: index === 0 ? 0 : 0.75, borderTop: index === 0 ? 0 : "1px solid var(--c-border-94a3b8-025)" }}>
                   {option.group}
                 </MenuItem>
               );
             }
             const kindStyles = {
-              current: { color: "#059669", background: "rgba(16,185,129,0.08)", border: STATUS_COLORS.running },
-              run: { color: "#2563eb", background: "transparent", border: "transparent" },
-              legacy: { color: "#94a3b8", background: "transparent", border: "transparent" },
+              current: { color: "var(--c-text-059669)", background: "var(--c-bg-10b981-008)", border: STATUS_COLORS.running },
+              run: { color: "var(--sm-accent-text)", background: "transparent", border: "transparent" },
+              legacy: { color: "var(--c-text-94a3b8)", background: "transparent", border: "transparent" },
             }[option.kind];
             items.push(
               <MenuItem
@@ -958,12 +958,12 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                   borderRadius: 1.5,
                   backgroundColor: kindStyles.background,
                   border: "1px solid",
-                  borderColor: option.kind === "current" ? "rgba(16,185,129,0.35)" : "rgba(148,163,184,0.18)",
+                  borderColor: option.kind === "current" ? "var(--c-border-10b981-035)" : "var(--c-border-94a3b8-018)",
                 }}
               >
                 <Box sx={{ mt: 0.25, color: kindStyles.color, display: "flex" }}>
                   {option.kind === "current" ? (
-                    <Box sx={{ width: 9, height: 9, m: "3px", borderRadius: "50%", backgroundColor: STATUS_COLORS.running, boxShadow: "0 0 0 3px rgba(18,183,106,0.2)" }} />
+                    <Box sx={{ width: 9, height: 9, m: "3px", borderRadius: "50%", backgroundColor: STATUS_COLORS.running, boxShadow: "0 0 0 3px var(--c-shadow-12b76a-02)" }} />
                   ) : option.kind === "run" ? (
                     <HistoryIcon sx={{ fontSize: 15 }} />
                   ) : (
@@ -975,7 +975,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                     sx={{
                       fontSize: "0.82rem",
                       fontWeight: option.kind === "current" ? 700 : 500,
-                      color: option.kind === "legacy" ? "text.secondary" : option.kind === "current" ? "#047857" : "text.primary",
+                      color: option.kind === "legacy" ? "text.secondary" : option.kind === "current" ? "var(--c-text-047857)" : "text.primary",
                       fontStyle: option.kind === "legacy" ? "italic" : "normal",
                     }}
                   >
@@ -1038,7 +1038,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   );
 
   const renderSearchResults = () => (
-    <Box sx={{ px: 1.5, py: 1, flexShrink: 0, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
+    <Box sx={{ px: 1.5, py: 1, flexShrink: 0, borderBottom: "1px solid var(--c-border-94a3b8-016)" }}>
       <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} sx={{ mb: 0.75 }}>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
@@ -1137,8 +1137,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               display: "flex",
               flexDirection: "column",
               overflow: "hidden",
-              borderRight: "1px solid rgba(148,163,184,0.18)",
-              backgroundColor: "rgba(248,250,252,0.6)",
+              borderRight: "1px solid var(--c-border-94a3b8-018)",
+              backgroundColor: "var(--c-bg-f8fafc-06)",
             }}
           >
             <Box
@@ -1150,7 +1150,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                 px: 1,
                 minHeight: TOP_BAR_HEIGHT,
                 flexShrink: 0,
-                borderBottom: "1px solid rgba(148,163,184,0.16)",
+                borderBottom: "1px solid var(--c-border-94a3b8-016)",
               }}
             >
               {!explorerCollapsed ? (
@@ -1221,7 +1221,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                     />
                     <StatusDot
                       running={Boolean(runningServices[service.name])}
-                      sx={{ position: "absolute", top: -1, right: -1, pointerEvents: "none", outline: "1.5px solid #fff", bgcolor: runningServices[service.name] ? undefined : "#fff" }}
+                      sx={{ position: "absolute", top: -1, right: -1, pointerEvents: "none", outline: "1.5px solid var(--c-border-ffffff)", bgcolor: runningServices[service.name] ? undefined : "var(--c-bg-ffffff)" }}
                     />
                     </Box>
                   </Tooltip>

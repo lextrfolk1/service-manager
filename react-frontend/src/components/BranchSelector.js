@@ -264,12 +264,12 @@ function BranchSelector({
           py: 0.25,
           px: 0.6,
           borderRadius: "6px",
-          bgcolor: "rgba(15, 23, 42, 0.025)",
-          border: "1px solid rgba(148, 163, 184, 0.16)",
+          bgcolor: "var(--c-bg-0f172a-0025)",
+          border: "1px solid var(--c-border-94a3b8-016)",
           transition: "all 0.15s ease",
           "&:hover": {
-            bgcolor: "rgba(15, 23, 42, 0.045)",
-            borderColor: "rgba(148, 163, 184, 0.3)",
+            bgcolor: "var(--c-bg-0f172a-0045)",
+            borderColor: "var(--c-border-94a3b8-03)",
           },
         }}
       >
@@ -302,18 +302,18 @@ function BranchSelector({
                 border: "none",
                 bgcolor: "transparent",
                 cursor: isBusy ? "default" : "pointer",
-                color: "#101828",
+                color: "var(--c-text-101828)",
                 outline: "none",
                 borderRadius: "4px",
                 "&:hover": {
                   color: "primary.main",
                 },
                 "&:focus-visible": {
-                  boxShadow: "0 0 0 2px rgba(25, 118, 210, 0.3)",
+                  boxShadow: "0 0 0 2px color-mix(in srgb, var(--sm-accent) 30%, transparent)",
                 },
               }}
             >
-              <CallSplitIcon sx={{ fontSize: "15px !important", flexShrink: 0, color: "#64748b" }} />
+              <CallSplitIcon sx={{ fontSize: "15px !important", flexShrink: 0, color: "var(--c-text-64748b)" }} />
               <Typography
                 component="span"
                 sx={{
@@ -329,7 +329,7 @@ function BranchSelector({
               >
                 {currentBranch}
               </Typography>
-              <KeyboardArrowDownIcon sx={{ fontSize: "14px !important", flexShrink: 0, color: "#94a3b8" }} />
+              <KeyboardArrowDownIcon sx={{ fontSize: "14px !important", flexShrink: 0, color: "var(--c-text-94a3b8)" }} />
             </Box>
           </Tooltip>
 
@@ -351,22 +351,22 @@ function BranchSelector({
                 }}
               >
                 {isDirty ? (
-                  <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.2, color: "#475569" }}>
+                  <Box component="span" sx={{ display: "inline-flex", alignItems: "center", gap: 0.2, color: "var(--c-text-475569)" }}>
                     <EditIcon sx={{ fontSize: "11px !important" }} />
                     {uncommittedCount || ""}
                   </Box>
                 ) : null}
                 {behind > 0 ? (
-                  <Box component="span" sx={{ color: "#0284c7" }}>
+                  <Box component="span" sx={{ color: "var(--c-text-0284c7)" }}>
                     ↓{behind}
                   </Box>
                 ) : null}
                 {ahead > 0 ? (
-                  <Box component="span" sx={{ color: "#4f46e5" }}>
+                  <Box component="span" sx={{ color: "var(--c-text-4f46e5)" }}>
                     ↑{ahead}
                   </Box>
                 ) : null}
-                {isLocalOnly ? <CloudOffIcon sx={{ fontSize: "12px !important", color: "#4f46e5" }} /> : null}
+                {isLocalOnly ? <CloudOffIcon sx={{ fontSize: "12px !important", color: "var(--c-text-4f46e5)" }} /> : null}
               </Box>
             </Tooltip>
           ) : null}
@@ -389,12 +389,12 @@ function BranchSelector({
                     height: 24,
                     p: 0,
                     borderRadius: "4px",
-                    color: behind > 0 ? "#0284c7" : "#64748b",
-                    bgcolor: behind > 0 ? "rgba(2, 132, 199, 0.1)" : "transparent",
+                    color: behind > 0 ? "var(--c-text-0284c7)" : "var(--c-text-64748b)",
+                    bgcolor: behind > 0 ? "var(--c-bg-0284c7-01)" : "transparent",
                     transition: "all 0.15s ease",
                     "&:hover": {
-                      bgcolor: "rgba(15, 23, 42, 0.08)",
-                      color: behind > 0 ? "#0284c7" : "#0f172a",
+                      bgcolor: "var(--c-bg-0f172a-008)",
+                      color: behind > 0 ? "var(--c-text-0284c7)" : "var(--c-text-0f172a)",
                     },
                     "&:disabled": {
                       opacity: 0.45,
@@ -425,12 +425,12 @@ function BranchSelector({
                     height: 24,
                     p: 0,
                     borderRadius: "4px",
-                    color: ahead > 0 || isLocalOnly ? "#4f46e5" : "#64748b",
-                    bgcolor: ahead > 0 || isLocalOnly ? "rgba(99, 102, 241, 0.1)" : "transparent",
+                    color: ahead > 0 || isLocalOnly ? "var(--c-text-4f46e5)" : "var(--c-text-64748b)",
+                    bgcolor: ahead > 0 || isLocalOnly ? "var(--c-bg-6366f1-01)" : "transparent",
                     transition: "all 0.15s ease",
                     "&:hover": {
-                      bgcolor: "rgba(15, 23, 42, 0.08)",
-                      color: ahead > 0 || isLocalOnly ? "#4f46e5" : "#0f172a",
+                      bgcolor: "var(--c-bg-0f172a-008)",
+                      color: ahead > 0 || isLocalOnly ? "var(--c-text-4f46e5)" : "var(--c-text-0f172a)",
                     },
                     "&:disabled": {
                       opacity: 0.45,
@@ -439,7 +439,7 @@ function BranchSelector({
                   }}
                 >
                   {pushing ? (
-                    <CircularProgress size={12} sx={{ color: "#4f46e5" }} />
+                    <CircularProgress size={12} sx={{ color: "var(--c-text-4f46e5)" }} />
                   ) : (
                     <CloudUploadIcon sx={{ fontSize: "14px !important" }} />
                   )}
@@ -469,7 +469,7 @@ function BranchSelector({
             maxHeight: 440,
             p: 1.5,
             borderRadius: 2.5,
-            boxShadow: "0 10px 30px rgba(15,23,42,0.18)",
+            boxShadow: "0 10px 30px var(--c-shadow-0f172a-018)",
             display: "flex",
             flexDirection: "column",
           },
@@ -503,8 +503,8 @@ function BranchSelector({
             p: 1,
             mb: 1,
             borderRadius: 1.5,
-            bgcolor: "rgba(15, 23, 42, 0.03)",
-            border: "1px solid rgba(148, 163, 184, 0.18)",
+            bgcolor: "var(--c-bg-0f172a-003)",
+            border: "1px solid var(--c-border-94a3b8-018)",
           }}
         >
           <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
@@ -554,9 +554,9 @@ function BranchSelector({
                   height: 18,
                   fontSize: "0.65rem",
                   fontWeight: 600,
-                  bgcolor: "rgba(2, 132, 199, 0.12)",
-                  color: "#0284c7",
-                  border: "1px solid rgba(2, 132, 199, 0.25)",
+                  bgcolor: "var(--c-bg-0284c7-012)",
+                  color: "var(--c-text-0284c7)",
+                  border: "1px solid var(--c-border-0284c7-025)",
                 }}
               />
             ) : null}
@@ -569,9 +569,9 @@ function BranchSelector({
                   height: 18,
                   fontSize: "0.65rem",
                   fontWeight: 600,
-                  bgcolor: "rgba(99, 102, 241, 0.12)",
-                  color: "#4f46e5",
-                  border: "1px solid rgba(99, 102, 241, 0.25)",
+                  bgcolor: "var(--c-bg-6366f1-012)",
+                  color: "var(--c-text-4f46e5)",
+                  border: "1px solid var(--c-border-6366f1-025)",
                 }}
               />
             ) : null}
@@ -583,9 +583,9 @@ function BranchSelector({
                 sx={{
                   fontSize: "0.65rem",
                   fontWeight: 600,
-                  bgcolor: "rgba(34, 197, 94, 0.1)",
-                  color: "#166534",
-                  border: "1px solid rgba(34, 197, 94, 0.25)",
+                  bgcolor: "var(--c-bg-22c55e-01)",
+                  color: "var(--c-text-166534)",
+                  border: "1px solid var(--c-border-22c55e-025)",
                 }}
               />
             ) : null}
@@ -597,8 +597,8 @@ function BranchSelector({
                 sx={{
                   fontSize: "0.65rem",
                   fontWeight: 500,
-                  bgcolor: "rgba(100, 116, 139, 0.1)",
-                  color: "#64748b",
+                  bgcolor: "var(--c-bg-64748b-01)",
+                  color: "var(--c-text-64748b)",
                 }}
               />
             ) : null}

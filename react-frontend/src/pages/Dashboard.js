@@ -36,12 +36,16 @@ import {
   FilterList as FilterListIcon,
   PlayArrow as PlayArrowIcon,
   Refresh as RefreshIcon,
+  Check as CheckIcon,
   SyncRounded as SyncIcon,
   Tune as TuneIcon,
   Search as SearchIcon,
   Stop as StopIcon,
 } from "@mui/icons-material";
-import ServiceCard from "../components/ServiceCard";
+import { CARD_STYLES, DEFAULT_CARD_STYLE, ServiceCardView, normalizeCardStyle } from "../components/cards";
+import HoverSubmenu from "../components/HoverSubmenu";
+import { ACCENTS, THEME_BASES, useThemeSettings } from "../theme/ThemeController";
+import { LOOKS, findLook } from "../theme/looks";
 import { SEARCH_INPUT_SX, STATUS_COLORS } from "../theme/tokens";
 import { RunConfigDialog, cleanRunConfig, countRunConfigValues } from "../components/RunConfigEditor";
 import api from "../services/api";
@@ -231,6 +235,15 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   const [newPresetName, setNewPresetName] = useState("");
   const [savingPreset, setSavingPreset] = useState(false);
   const [dependencyCheck, setDependencyCheck] = useState(true); // config.dependencyCheck (Admin switch)
+  const [adminCardStyle, setAdminCardStyle] = useState(DEFAULT_CARD_STYLE); // config.ui.cardStyle (Admin › Appearance)
+  const [personalCardStyle, setPersonalCardStyle] = useState(() => {
+    try {
+      const saved = localStorage.getItem("struo_card_style") || "";
+      return CARD_STYLES.some((style) => style.id === saved) ? saved : "";
+    } catch {
+      return "";
+    }
+  }); // "" = use the Admin default
   const [collapsedGroups, setCollapsedGroups] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("struo_collapsed_groups") || "{}") || {};
@@ -240,6 +253,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   }); // { [group]: true } = collapsed; groups are expanded by default
   const [filtersAnchorEl, setFiltersAnchorEl] = useState(null);
   const [viewAnchorEl, setViewAnchorEl] = useState(null);
+  const { base: themeBase, accent: accentId, setBase: setThemeBase, setAccent } = useThemeSettings();
   const [bulkConfirm, setBulkConfirm] = useState(null); // { action: "start" | "stop", count } awaiting confirmation
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -392,6 +406,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       const next = data?.config?.presets && Object.keys(data.config.presets).length ? data.config.presets : null;
       setConfiguredPresets((previous) => (isSameJson(previous, next) ? previous : next));
       setDependencyCheck(data?.config?.dependencyCheck !== false);
+      setAdminCardStyle(normalizeCardStyle(data?.config?.ui?.cardStyle));
     } catch {
       // Keep the current presets if the config can't be read
     }
@@ -1060,6 +1075,17 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
 
   const activeFilterCount = [statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length;
 
+  const effectiveCardStyle = normalizeCardStyle(personalCardStyle || adminCardStyle);
+  const choosePersonalCardStyle = (value) => {
+    setPersonalCardStyle(value);
+    try {
+      if (value) localStorage.setItem("struo_card_style", value);
+      else localStorage.removeItem("struo_card_style");
+    } catch {
+      // Storage unavailable: the choice lasts for this session only.
+    }
+  };
+
   // At-a-glance state summary; each count filters the grid (click again to clear).
   const stateSummary = normalizedServices.reduce(
     (counts, service) => {
@@ -1111,8 +1137,8 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
           p: 1.5,
           border: "1px solid",
           borderColor: "divider",
-          background: "linear-gradient(180deg, rgba(255,255,255,0.94) 0%, rgba(248,250,252,0.96) 100%)",
-          boxShadow: "0 14px 34px rgba(15,23,42,0.05)",
+          background: "linear-gradient(180deg, var(--c-bg-ffffff-094) 0%, var(--c-bg-f8fafc-096) 100%)",
+          boxShadow: "0 14px 34px var(--c-shadow-0f172a-005)",
         }}
       >
         <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, minWidth: 0 }}>
@@ -1148,8 +1174,8 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                     color: item.color,
                     border: "1px solid",
                     borderColor: active ? item.color : "transparent",
-                    bgcolor: active ? "rgba(15,23,42,0.04)" : "transparent",
-                    "&:hover": { bgcolor: "rgba(15,23,42,0.05)" },
+                    bgcolor: active ? "var(--c-bg-0f172a-004)" : "transparent",
+                    "&:hover": { bgcolor: "var(--c-bg-0f172a-005)" },
                   }}
                 >
                   <Box component="span" sx={{ width: 8, height: 8, borderRadius: "50%", boxSizing: "border-box", ...item.dot }} />
@@ -1317,6 +1343,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
             anchorEl={viewAnchorEl}
             open={Boolean(viewAnchorEl)}
             onClose={() => setViewAnchorEl(null)}
+            disableEnforceFocus // lets focus move into the Theme / Card style side panels
             anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
             transformOrigin={{ vertical: "top", horizontal: "right" }}
             PaperProps={{ sx: { mt: 1, minWidth: 240, borderRadius: 2 } }}
@@ -1355,6 +1382,87 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                 <Switch size="small" checked={option.checked} tabIndex={-1} inputProps={{ "aria-label": option.label }} />
               </MenuItem>
             ))}
+            <Divider />
+            {/* Compact rows: show the current choice; hover opens the options */}
+            <HoverSubmenu label="Look" value={findLook(themeBase, effectiveCardStyle)?.label || "Custom"} width={280}>
+              {LOOKS.map((look) => {
+                const active = themeBase === look.theme && effectiveCardStyle === look.cardStyle;
+                return (
+                  <MenuItem
+                    key={look.id}
+                    selected={active}
+                    onClick={() => {
+                      setThemeBase(look.theme);
+                      choosePersonalCardStyle(look.cardStyle);
+                    }}
+                  >
+                    <ListItemText
+                      primary={look.label}
+                      secondary={look.hint}
+                      primaryTypographyProps={{ fontSize: "0.85rem" }}
+                      secondaryTypographyProps={{ fontSize: "0.7rem", sx: { whiteSpace: "normal" } }}
+                    />
+                    {active ? <CheckIcon fontSize="small" color="primary" sx={{ ml: 1 }} /> : null}
+                  </MenuItem>
+                );
+              })}
+            </HoverSubmenu>
+            <HoverSubmenu label="Theme" value={THEME_BASES.find((option) => option.id === themeBase)?.label}>
+              {THEME_BASES.map((option) => (
+                <MenuItem key={option.id} selected={themeBase === option.id} onClick={() => setThemeBase(option.id)}>
+                  <ListItemText
+                    primary={option.label}
+                    secondary={option.hint}
+                    primaryTypographyProps={{ fontSize: "0.85rem" }}
+                    secondaryTypographyProps={{ fontSize: "0.7rem", sx: { whiteSpace: "normal" } }}
+                  />
+                  {themeBase === option.id ? <CheckIcon fontSize="small" color="primary" sx={{ ml: 1 }} /> : null}
+                </MenuItem>
+              ))}
+              <Divider />
+              <Typography sx={{ px: 2, pt: 0.75, fontSize: "0.7rem", fontWeight: 700, color: "text.secondary" }}>ACCENT</Typography>
+              <Box role="radiogroup" aria-label="Accent colour" sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, px: 2, py: 1 }}>
+                {ACCENTS.map((option) => (
+                  <Tooltip key={option.id} title={option.label}>
+                    <Box
+                      component="button"
+                      type="button"
+                      role="radio"
+                      aria-checked={accentId === option.id}
+                      aria-label={option.label}
+                      onClick={() => setAccent(option.id)}
+                      sx={{
+                        width: 24,
+                        height: 24,
+                        borderRadius: "50%",
+                        border: "2px solid",
+                        borderColor: accentId === option.id ? "text.primary" : "transparent",
+                        bgcolor: option.main,
+                        cursor: "pointer",
+                        display: "grid",
+                        placeItems: "center",
+                        color: "#ffffff",
+                      }}
+                    >
+                      {accentId === option.id ? <CheckIcon sx={{ fontSize: 13 }} /> : null}
+                    </Box>
+                  </Tooltip>
+                ))}
+              </Box>
+            </HoverSubmenu>
+            <HoverSubmenu label="Card style" value={CARD_STYLES.find((style) => style.id === effectiveCardStyle)?.label} width={260}>
+              {CARD_STYLES.map((style) => (
+                <MenuItem key={style.id} selected={effectiveCardStyle === style.id} onClick={() => choosePersonalCardStyle(style.id)}>
+                  <ListItemText
+                    primary={style.label}
+                    secondary={style.description}
+                    primaryTypographyProps={{ fontSize: "0.85rem" }}
+                    secondaryTypographyProps={{ fontSize: "0.7rem", sx: { whiteSpace: "normal" } }}
+                  />
+                  {effectiveCardStyle === style.id ? <CheckIcon fontSize="small" color="primary" sx={{ ml: 1 }} /> : null}
+                </MenuItem>
+              ))}
+            </HoverSubmenu>
             <Divider />
             <MenuItem onClick={() => setBuildEnabled((previous) => !previous)} sx={{ py: 0.5 }}>
               <ListItemText
@@ -1485,8 +1593,8 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                     mb: 1,
                     p: 0.75,
                     borderRadius: 2,
-                    background: "linear-gradient(90deg, rgba(15,23,42,0.04) 0%, rgba(255,255,255,0.8) 100%)",
-                    border: "1px solid rgba(148, 163, 184, 0.16)",
+                    background: "linear-gradient(90deg, var(--c-bg-0f172a-004) 0%, var(--c-bg-ffffff-08) 100%)",
+                    border: "1px solid var(--c-border-94a3b8-016)",
                     textAlign: "left",
                   }}
                 >
@@ -1501,10 +1609,10 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                       return (
                         <>
                           {runningCount ? (
-                            <Chip label={`${runningCount} running`} size="small" sx={{ bgcolor: "#ecfdf3", color: "#027a48", fontWeight: 600 }} />
+                            <Chip label={`${runningCount} running`} size="small" sx={{ bgcolor: "var(--c-bg-ecfdf3)", color: "var(--c-text-027a48)", fontWeight: 600 }} />
                           ) : null}
                           {failedCount ? (
-                            <Chip label={`${failedCount} failed`} size="small" sx={{ bgcolor: "#fef2f2", color: "#dc2626", fontWeight: 600 }} />
+                            <Chip label={`${failedCount} failed`} size="small" sx={{ bgcolor: "var(--c-bg-fef2f2)", color: "var(--c-text-dc2626)", fontWeight: 600 }} />
                           ) : null}
                         </>
                       );
@@ -1520,7 +1628,8 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                 {!collapsedGroups[group] ? (
                   <Box sx={SERVICE_GRID_SX}>
                     {groupServices.map((service) => (
-                      <ServiceCard
+                      <ServiceCardView
+                        cardStyle={effectiveCardStyle}
                         key={service.name}
                         service={service}
                         status={displayStates[service.name]}
@@ -1554,7 +1663,8 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
           ) : (
             <Box sx={SERVICE_GRID_SX}>
               {filteredServices.map((service) => (
-                <ServiceCard
+                <ServiceCardView
+                  cardStyle={effectiveCardStyle}
                   key={service.name}
                   service={service}
                   status={displayStates[service.name]}

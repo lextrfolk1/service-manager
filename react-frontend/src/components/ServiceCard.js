@@ -40,12 +40,12 @@ import { getServiceLinks, getDocsLabel, getHelpTopicForFailure, isFrontendServic
 function getServiceTypeIcon(type = "") {
   const t = type.toLowerCase();
   if (t === "database" || t === "redis" || t === "neo4j" || t === "postgresql" || t === "clickhouse") {
-    return <StorageIcon sx={{ fontSize: 18, color: "#64748b" }} />;
+    return <StorageIcon sx={{ fontSize: 18, color: "var(--c-text-64748b)" }} />;
   }
   if (t === "frontend" || t === "ui") {
-    return <LanguageIcon sx={{ fontSize: 18, color: "#64748b" }} />;
+    return <LanguageIcon sx={{ fontSize: 18, color: "var(--c-text-64748b)" }} />;
   }
-  return <CodeIcon sx={{ fontSize: 18, color: "#64748b" }} />;
+  return <CodeIcon sx={{ fontSize: 18, color: "var(--c-text-64748b)" }} />;
 }
 
 function ServiceCard({
@@ -76,6 +76,7 @@ function ServiceCard({
   onDragStart,
   onDragEnd,
   layout = "compact",
+  skin = "", // "" (Detailed) | strip | elevated — same content, different surface
 }) {
   const isBusy = ["queued", "waiting", "starting", "stopping"].includes(status.lifecycleState);
   // Idle cards are visually dimmed so running (and failed / busy) services stand out in the grid.
@@ -113,21 +114,21 @@ function ServiceCard({
   // Status Badge styling mapping with distinct visual treatments for all states
   const statusInfo = useMemo(() => {
     if (status.error) {
-      return { label: "Failed", bg: "#fef2f2", color: "#dc2626", border: "#fecaca", isTransitional: false };
+      return { label: "Failed", bg: "var(--c-bg-fef2f2)", color: "var(--c-text-dc2626)", border: "var(--c-border-fecaca)", isTransitional: false };
     }
     if (status.lifecycleState === "starting") {
       const label = /^restart/i.test(status.message || "") ? "Restarting" : "Starting";
-      return { label, bg: "#fffbeb", color: "#b45309", border: "#fef3c7", isTransitional: true };
+      return { label, bg: "var(--c-bg-fffbeb)", color: "var(--c-text-b45309)", border: "var(--c-border-fef3c7)", isTransitional: true };
     }
     if (status.lifecycleState === "stopping") {
-      return { label: "Stopping", bg: "#fffbeb", color: "#b45309", border: "#fef3c7", isTransitional: true };
+      return { label: "Stopping", bg: "var(--c-bg-fffbeb)", color: "var(--c-text-b45309)", border: "var(--c-border-fef3c7)", isTransitional: true };
     }
     if (status.lifecycleState === "queued" || status.lifecycleState === "waiting") {
       return {
         label: status.lifecycleLabel || (status.lifecycleState === "queued" ? "Queued" : "Waiting"),
-        bg: "#eff6ff",
-        color: "#1d4ed8",
-        border: "#dbeafe",
+        bg: "var(--c-bg-eff6ff)",
+        color: "var(--c-text-1d4ed8)",
+        border: "var(--c-border-dbeafe)",
         isTransitional: true,
       };
     }
@@ -136,13 +137,13 @@ function ServiceCard({
       const health = status.healthState === "healthy" ? "Healthy" : status.healthState === "unhealthy" ? "Unhealthy" : "";
       return {
         label: health ? `Running · ${health}` : "Running",
-        bg: health === "Unhealthy" ? "#fef2f2" : "#ecfdf3",
-        color: health === "Unhealthy" ? "#b42318" : "#067647",
-        border: health === "Unhealthy" ? "#fecaca" : "#abefc6",
+        bg: health === "Unhealthy" ? "var(--c-bg-fef2f2)" : "var(--c-bg-ecfdf3)",
+        color: health === "Unhealthy" ? "var(--c-text-b42318)" : "var(--c-text-067647)",
+        border: health === "Unhealthy" ? "var(--c-border-fecaca)" : "var(--c-border-abefc6)",
         isTransitional: false,
       };
     }
-    return { label: "Stopped", bg: "transparent", color: "#667085", border: "transparent", isTransitional: false };
+    return { label: "Stopped", bg: "transparent", color: "var(--c-text-667085)", border: "transparent", isTransitional: false };
   }, [status.error, status.running, status.healthState, status.lifecycleState, status.lifecycleLabel, status.message]);
 
   // Busy message tooltip & label
@@ -160,7 +161,7 @@ function ServiceCard({
     if (!showLiveMetrics || !status.running || !metrics) return null;
 
     const cpuVal = parseFloat(metrics.cpuPercent) || 0;
-    const cpuColor = cpuVal > 80 ? "#ef4444" : "#101828";
+    const cpuColor = cpuVal > 80 ? "var(--c-text-ef4444)" : "var(--c-text-101828)";
 
     return (
       <Box
@@ -175,11 +176,11 @@ function ServiceCard({
         <Box sx={{ minWidth: 0, textAlign: "left" }}>
           <Typography
             variant="caption"
-            sx={{ fontSize: "0.75rem", color: "#667085", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
+            sx={{ fontSize: "0.75rem", color: "var(--c-text-667085)", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
           >
             Memory
           </Typography>
-          <Typography sx={{ fontSize: "1.05rem", fontWeight: 700, color: "#101828", lineHeight: 1.2 }} noWrap>
+          <Typography sx={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--c-text-101828)", lineHeight: 1.2 }} noWrap>
             {metrics.memoryFormatted || "—"}
           </Typography>
         </Box>
@@ -187,7 +188,7 @@ function ServiceCard({
         <Box sx={{ minWidth: 0, textAlign: "left" }}>
           <Typography
             variant="caption"
-            sx={{ fontSize: "0.75rem", color: "#667085", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
+            sx={{ fontSize: "0.75rem", color: "var(--c-text-667085)", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
           >
             CPU
           </Typography>
@@ -199,11 +200,11 @@ function ServiceCard({
         <Box sx={{ minWidth: 0, textAlign: "left" }}>
           <Typography
             variant="caption"
-            sx={{ fontSize: "0.75rem", color: "#667085", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
+            sx={{ fontSize: "0.75rem", color: "var(--c-text-667085)", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
           >
             Uptime
           </Typography>
-          <Typography sx={{ fontSize: "1.05rem", fontWeight: 700, color: "#101828", lineHeight: 1.2 }} noWrap>
+          <Typography sx={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--c-text-101828)", lineHeight: 1.2 }} noWrap>
             {metrics.uptimeFormatted || "—"}
           </Typography>
         </Box>
@@ -225,7 +226,7 @@ function ServiceCard({
 
   // Health is folded into the lifecycle pill as a dot (running services only)
   const healthDotColor = status.running
-    ? { healthy: "#16a34a", unhealthy: "#dc2626", "port-open": "#64748b" }[status.healthState] || null
+    ? { healthy: "var(--c-text-16a34a)", unhealthy: "var(--c-text-dc2626)", "port-open": "var(--c-text-64748b)" }[status.healthState] || null
     : null;
 
   // Action Buttons (Primary Start/Stop + Secondary Circular Restart)
@@ -233,13 +234,13 @@ function ServiceCard({
     isBusy ? (
       <Tooltip title={busyTooltip} placement="top" arrow>
         <Box sx={{ display: "flex", alignItems: "center", gap: 0.6, minWidth: 0, flex: "0 1 auto", overflow: "hidden" }}>
-          <CircularProgress size={12} thickness={5} sx={{ color: "#d97706", flexShrink: 0 }} />
+          <CircularProgress size={12} thickness={5} sx={{ color: "var(--c-text-d97706)", flexShrink: 0 }} />
           <Typography
             variant="caption"
             sx={{
               fontSize: "0.74rem",
               fontWeight: 600,
-              color: "#b45309",
+              color: "var(--c-text-b45309)",
               whiteSpace: "nowrap",
               textOverflow: "ellipsis",
               overflow: "hidden",
@@ -259,15 +260,15 @@ function ServiceCard({
             startIcon={<PlayArrowIcon sx={{ fontSize: 15 }} />}
             sx={{
               borderRadius: "20px",
-              bgcolor: "rgba(25,118,210,0.08)",
-              color: "#1565c0",
+              bgcolor: "color-mix(in srgb, var(--sm-accent) 8%, transparent)",
+              color: "var(--sm-accent-strong)",
               textTransform: "none",
               fontSize: "0.8rem",
               fontWeight: 600,
               px: 2,
               height: 30,
               boxShadow: "none",
-              "&:hover": { bgcolor: "rgba(25,118,210,0.16)" },
+              "&:hover": { bgcolor: "color-mix(in srgb, var(--sm-accent) 16%, transparent)" },
             }}
           >
             Start
@@ -279,9 +280,9 @@ function ServiceCard({
             onClick={() => onAction(service.name, "stop")}
             sx={{
               borderRadius: "20px",
-              borderColor: "#d0d5dd",
-              color: "#344054",
-              bgcolor: "#ffffff",
+              borderColor: "var(--c-border-d0d5dd)",
+              color: "var(--c-text-344054)",
+              bgcolor: "var(--c-bg-ffffff)",
               textTransform: "none",
               fontSize: "0.82rem",
               fontWeight: 600,
@@ -289,9 +290,9 @@ function ServiceCard({
               height: 30,
               boxShadow: "none",
               "&:hover": {
-                borderColor: "#fda29b",
-                color: "#d92d20",
-                bgcolor: "rgba(217, 45, 32, 0.04)",
+                borderColor: "var(--c-border-fda29b)",
+                color: "var(--c-text-d92d20)",
+                bgcolor: "var(--c-bg-d92d20-004)",
               },
             }}
           >
@@ -312,10 +313,10 @@ function ServiceCard({
                   width: 30,
                   height: 30,
                   borderRadius: "50%",
-                  border: "1px solid #d0d5dd",
-                  color: "#667085",
-                  "&.Mui-disabled": { opacity: 0.4, borderColor: "#eaecf0" },
-                  "&:hover": { bgcolor: "#f8fafc", borderColor: "#98a2b3", color: "#101828" },
+                  border: "1px solid var(--c-border-d0d5dd)",
+                  color: "var(--c-text-667085)",
+                  "&.Mui-disabled": { opacity: 0.4, borderColor: "var(--c-border-eaecf0)" },
+                  "&:hover": { bgcolor: "var(--c-bg-f8fafc)", borderColor: "var(--c-border-98a2b3)", color: "var(--c-text-101828)" },
                 }}
               >
                 <RefreshIcon sx={{ fontSize: 17 }} />
@@ -325,6 +326,43 @@ function ServiceCard({
         ) : null}
       </Stack>
     );
+
+  // Card skins: same content as Detailed, different surface.
+  const statusColor = status.error
+    ? STATUS_COLORS.failed
+    : status.running
+    ? STATUS_COLORS.running
+    : isBusy
+    ? STATUS_COLORS.busy
+    : STATUS_COLORS.stopped;
+  const skinSx = {
+    // Depth comes from theme variables: shadows on light themes, a lifted surface + faint edge on dark ones.
+    elevated: {
+      borderRadius: "18px",
+      backgroundColor: "var(--sm-elevated-surface)",
+      borderColor: "var(--sm-elevated-edge)",
+      boxShadow: "var(--sm-elevated-shadow)",
+      "&:hover": {
+        transform: "translateY(-2px)",
+        boxShadow: "var(--sm-elevated-shadow-hover)",
+        borderColor: "var(--sm-elevated-edge)",
+      },
+    },
+    strip: {
+      borderRadius: "14px",
+      pt: 2.5,
+      borderColor: "var(--c-border-eaecf0)",
+      boxShadow: `inset 0 4px 0 ${statusColor}, 0 1px 3px var(--c-text-0f172a-003)`,
+      "&:hover": { boxShadow: `inset 0 4px 0 ${statusColor}, 0 6px 20px var(--c-text-0f172a-008)`, borderColor: "var(--c-border-cbd5e1)" },
+    },
+  }[skin];
+  const initials = (service.name || "")
+    .split(/[-_\s.]+/)
+    .filter((part) => part && !/^(service|svc|app)$/i.test(part))
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 
   return (
     <Paper
@@ -350,32 +388,33 @@ function ServiceCard({
         ...(isDraggable ? { "&:active": { cursor: "grabbing" } } : {}),
         border: "1px solid",
         borderColor: status.error
-          ? "rgba(239, 68, 68, 0.4)"
+          ? "var(--c-border-ef4444-04)"
           : status.running
-          ? "rgba(34, 197, 94, 0.4)"
+          ? "var(--c-border-22c55e-04)"
           : isBusy
-          ? "rgba(245, 158, 11, 0.35)"
-          : "#eaecf0",
+          ? "var(--c-border-f59e0b-035)"
+          : "var(--c-border-eaecf0)",
         borderRadius: "16px",
-        backgroundColor: isStopped ? "#fafbfc" : "#ffffff",
+        backgroundColor: isStopped ? "var(--c-bg-fafbfc)" : "var(--c-bg-ffffff)",
         boxShadow: status.running
-          ? `inset 4px 0 0 ${STATUS_COLORS.running}, 0 3px 12px rgba(34, 197, 94, 0.08)`
+          ? `inset 4px 0 0 ${STATUS_COLORS.running}, 0 3px 12px var(--c-text-22c55e-008)`
           : isBusy
-          ? "0 3px 12px rgba(245, 158, 11, 0.07)"
-          : "0 1px 3px rgba(15, 23, 42, 0.03)",
+          ? "0 3px 12px var(--c-text-f59e0b-007)"
+          : "0 1px 3px var(--c-text-0f172a-003)",
         transition: "all 0.2s ease-in-out",
         "&:hover": {
           boxShadow: status.running
-            ? `inset 4px 0 0 ${STATUS_COLORS.running}, 0 6px 20px rgba(15, 23, 42, 0.08)`
-            : "0 6px 20px rgba(15, 23, 42, 0.08)",
+            ? `inset 4px 0 0 ${STATUS_COLORS.running}, 0 6px 20px var(--c-text-0f172a-008)`
+            : "0 6px 20px var(--c-text-0f172a-008)",
           borderColor: status.error
             ? "error.main"
             : status.running
-            ? "rgba(34, 197, 94, 0.6)"
+            ? "var(--c-border-22c55e-06)"
             : isBusy
             ? "warning.main"
-            : "#cbd5e1",
+            : "var(--c-border-cbd5e1)",
         },
+        ...(skinSx || {}),
       }}
     >
       {/* 1. Header: Icon + Checkbox + Service Title + Status Pill (with health dot) + Overflow Menu */}
@@ -395,9 +434,32 @@ function ServiceCard({
               transition: "opacity 0.15s ease",
             }}
           />
-          <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center", mt: "1px" }}>
-            {getServiceTypeIcon(service.type)}
-          </Box>
+          {skin === "elevated" ? (
+            // Avatar with the service initials, ringed in the status colour
+            <Box
+              aria-hidden
+              sx={{
+                flexShrink: 0,
+                width: 30,
+                height: 30,
+                mt: "-5px",
+                borderRadius: "50%",
+                display: "grid",
+                placeItems: "center",
+                fontSize: "0.7rem",
+                fontWeight: 800,
+                color: statusColor,
+                border: `2px solid ${statusColor}`,
+                bgcolor: `color-mix(in srgb, ${statusColor} 12%, transparent)`,
+              }}
+            >
+              {initials || "?"}
+            </Box>
+          ) : (
+            <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center", mt: "1px" }}>
+              {getServiceTypeIcon(service.type)}
+            </Box>
+          )}
           <Tooltip title={service.name} placement="top" arrow disableInteractive>
             <Typography
               variant="subtitle1"
@@ -405,7 +467,7 @@ function ServiceCard({
                 fontWeight: 700,
                 fontSize: "0.95rem",
                 lineHeight: 1.25,
-                color: isStopped ? STATUS_COLORS.stoppedText : "#101828",
+                color: isStopped ? STATUS_COLORS.stoppedText : "var(--c-text-101828)",
                 minWidth: 0,
                 overflow: "hidden",
                 overflowWrap: "anywhere",
@@ -471,7 +533,7 @@ function ServiceCard({
               setMenuAnchorEl(event.currentTarget);
             }}
             aria-label={`Options for ${service.name}`}
-            sx={{ p: 0.25, color: "#64748b", "&:hover": { color: "#0f172a", bgcolor: "rgba(0,0,0,0.05)" } }}
+            sx={{ p: 0.25, color: "var(--c-text-64748b)", "&:hover": { color: "var(--c-text-0f172a)", bgcolor: "var(--c-bg-000000-005)" } }}
           >
             <MoreVertIcon sx={{ fontSize: 18 }} />
           </IconButton>
@@ -490,7 +552,7 @@ function ServiceCard({
           sx: {
             minWidth: 185,
             borderRadius: 2,
-            boxShadow: "0 10px 30px rgba(15,23,42,0.14)",
+            boxShadow: "0 10px 30px var(--c-shadow-0f172a-014)",
             py: 0.5,
           },
         }}
@@ -570,7 +632,7 @@ function ServiceCard({
             minWidth: 270,
             maxWidth: 340,
             borderRadius: 2.5,
-            boxShadow: "0 10px 30px rgba(15,23,42,0.16)",
+            boxShadow: "0 10px 30px var(--c-shadow-0f172a-016)",
             p: 0.5,
           },
         }}
@@ -583,7 +645,7 @@ function ServiceCard({
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            bgcolor: "rgba(15, 23, 42, 0.03)",
+            bgcolor: "var(--c-bg-0f172a-003)",
             borderRadius: 1.5,
           }}
         >
@@ -617,11 +679,11 @@ function ServiceCard({
           >
             <ListItemIcon sx={{ minWidth: 28 }}>
               {link.isCopyOnly ? (
-                <StorageIcon sx={{ fontSize: 17, color: "#64748b" }} />
+                <StorageIcon sx={{ fontSize: 17, color: "var(--c-text-64748b)" }} />
               ) : link.isDocs ? (
-                <MenuBookIcon sx={{ fontSize: 17, color: "#4f46e5" }} />
+                <MenuBookIcon sx={{ fontSize: 17, color: "var(--c-text-4f46e5)" }} />
               ) : link.isHealth ? (
-                <FavoriteBorderIcon sx={{ fontSize: 17, color: "#166534" }} />
+                <FavoriteBorderIcon sx={{ fontSize: 17, color: "var(--c-text-166534)" }} />
               ) : (
                 <LanguageIcon sx={{ fontSize: 17, color: "primary.main" }} />
               )}
@@ -651,7 +713,7 @@ function ServiceCard({
           variant="body2"
           aria-hidden={service.description ? undefined : true}
           sx={{
-            color: "#64748b",
+            color: "var(--c-text-64748b)",
             fontSize: "0.78rem",
             lineHeight: 1.35,
             overflow: "hidden",
@@ -673,8 +735,8 @@ function ServiceCard({
               px: 1.2,
               py: 0.2,
               borderRadius: "12px",
-              bgcolor: "#f1f5f9",
-              color: "#334155",
+              bgcolor: "var(--c-bg-f1f5f9)",
+              color: "var(--c-text-334155)",
               fontSize: "0.74rem",
               fontWeight: 600,
               textTransform: "capitalize",
@@ -692,8 +754,8 @@ function ServiceCard({
               display: "inline-flex",
               alignItems: "stretch",
               borderRadius: "12px",
-              bgcolor: "#f1f5f9",
-              color: "#334155",
+              bgcolor: "var(--c-bg-f1f5f9)",
+              color: "var(--c-text-334155)",
               fontSize: "0.74rem",
               fontWeight: 600,
               fontFamily: CODE_FONT,
@@ -705,7 +767,7 @@ function ServiceCard({
                 font: "inherit",
                 cursor: "pointer",
                 transition: "background-color 0.15s ease",
-                "&:hover": { bgcolor: "#e2e8f0", color: "#101828" },
+                "&:hover": { bgcolor: "var(--c-bg-e2e8f0)", color: "var(--c-text-101828)" },
               },
             }}
           >
@@ -730,9 +792,9 @@ function ServiceCard({
                   event.stopPropagation();
                   setLinksAnchorEl(event.currentTarget.parentElement);
                 }}
-                sx={{ display: "inline-flex", alignItems: "center", px: 0.4, borderLeft: "1px solid #e2e8f0 !important" }}
+                sx={{ display: "inline-flex", alignItems: "center", px: 0.4, borderLeft: "1px solid var(--c-border-e2e8f0) !important" }}
               >
-                <KeyboardArrowDownIcon sx={{ fontSize: 14, color: "#64748b" }} />
+                <KeyboardArrowDownIcon sx={{ fontSize: 14, color: "var(--c-text-64748b)" }} />
               </Box>
             </Tooltip>
           </Box>
@@ -744,8 +806,8 @@ function ServiceCard({
               px: 1.2,
               py: 0.2,
               borderRadius: "12px",
-              bgcolor: "#f1f5f9",
-              color: "#334155",
+              bgcolor: "var(--c-bg-f1f5f9)",
+              color: "var(--c-text-334155)",
               fontSize: "0.74rem",
               fontWeight: 500,
             }}
@@ -763,13 +825,13 @@ function ServiceCard({
                 px: 1.2,
                 py: 0.2,
                 borderRadius: "12px",
-                bgcolor: "rgba(13,148,136,0.1)",
-                color: "#0f766e",
+                bgcolor: "var(--c-bg-0d9488-01)",
+                color: "var(--c-text-0f766e)",
                 fontSize: "0.74rem",
                 fontWeight: 600,
                 border: "none",
                 cursor: "pointer",
-                "&:hover": { bgcolor: "rgba(13,148,136,0.18)" },
+                "&:hover": { bgcolor: "var(--c-bg-0d9488-018)" },
               }}
             >
               Config · {runConfigCount}
@@ -783,8 +845,8 @@ function ServiceCard({
               px: 1.2,
               py: 0.2,
               borderRadius: "12px",
-              bgcolor: "rgba(245,158,11,0.12)",
-              color: "#d97706",
+              bgcolor: "var(--c-bg-f59e0b-012)",
+              color: "var(--c-text-d97706)",
               fontSize: "0.74rem",
               fontWeight: 600,
             }}
@@ -800,8 +862,8 @@ function ServiceCard({
                 px: 1.2,
                 py: 0.2,
                 borderRadius: "12px",
-                bgcolor: "#f1f5f9",
-                color: "#334155",
+                bgcolor: "var(--c-bg-f1f5f9)",
+                color: "var(--c-text-334155)",
                 fontSize: "0.74rem",
                 fontWeight: 500,
                 whiteSpace: "nowrap",
@@ -899,7 +961,7 @@ function ServiceCard({
             alignItems: "center",
             gap: 1,
             pt: 1.25,
-            borderTop: "1px solid #f1f5f9",
+            borderTop: "1px solid var(--c-border-f1f5f9)",
             minHeight: 34,
           }}
         >
@@ -913,14 +975,14 @@ function ServiceCard({
                 sx={{
                   background: "none",
                   border: "none",
-                  color: "#101828",
+                  color: "var(--c-text-101828)",
                   fontSize: "0.78rem",
                   fontWeight: 600,
                   cursor: "pointer",
                   p: 0,
                   whiteSpace: "nowrap",
                   flexShrink: 0,
-                  "&:hover": { color: "#000000", textDecoration: "underline" },
+                  "&:hover": { color: "var(--c-text-000000)", textDecoration: "underline" },
                 }}
               >
                 Logs
@@ -934,13 +996,13 @@ function ServiceCard({
                 target="_blank"
                 rel="noreferrer"
                 sx={{
-                  color: "#101828",
+                  color: "var(--c-text-101828)",
                   fontSize: "0.78rem",
                   fontWeight: 600,
                   textDecoration: "none",
                   whiteSpace: "nowrap",
                   flexShrink: 0,
-                  "&:hover": { color: "#000000", textDecoration: "underline" },
+                  "&:hover": { color: "var(--c-text-000000)", textDecoration: "underline" },
                 }}
               >
                 {docsBadgeLabel}
@@ -952,13 +1014,13 @@ function ServiceCard({
                 target="_blank"
                 rel="noreferrer"
                 sx={{
-                  color: "#101828",
+                  color: "var(--c-text-101828)",
                   fontSize: "0.78rem",
                   fontWeight: 600,
                   textDecoration: "none",
                   whiteSpace: "nowrap",
                   flexShrink: 0,
-                  "&:hover": { color: "#000000", textDecoration: "underline" },
+                  "&:hover": { color: "var(--c-text-000000)", textDecoration: "underline" },
                 }}
               >
                 Web UI

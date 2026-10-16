@@ -34,6 +34,7 @@ import {
 import {
   Add as AddIcon,
   Code as CodeIcon,
+  Palette as AppearanceIcon,
   AutoAwesome as AutoAwesomeIcon,
   ContentCopy as ContentCopyIcon,
   Delete as DeleteIcon,
@@ -54,15 +55,17 @@ import { validateConfiguration } from "../utils/configValidation";
 import { getEffectivePresets, getStartupDependencies, normalizeService } from "../utils/serviceUtils";
 import { RunConfigSection, cleanRunConfig, summarizeRunConfigChanges } from "../components/RunConfigEditor";
 import StatusDot from "../components/StatusDot";
+import ThemePicker from "../components/ThemePicker";
 import EmptyState from "../components/EmptyState";
 import useServiceRunningStates from "../hooks/useServiceRunningStates";
 import { CODE_FONT, SEARCH_INPUT_SX, TOP_BAR_HEIGHT } from "../theme/tokens";
+import { CARD_STYLES, DEFAULT_CARD_STYLE, ServiceCardView, normalizeCardStyle } from "../components/cards";
 
 const panelSx = {
   borderRadius: 3,
-  border: "1px solid rgba(148,163,184,0.18)",
-  backgroundColor: "rgba(255,255,255,0.92)",
-  boxShadow: "0 10px 30px rgba(15,23,42,0.05)",
+  border: "1px solid var(--c-border-94a3b8-018)",
+  backgroundColor: "var(--c-bg-ffffff-092)",
+  boxShadow: "0 10px 30px var(--c-shadow-0f172a-005)",
 };
 
 const serviceTypeOptions = ["java", "python", "npm", "redis", "neo4j", "listener"];
@@ -139,11 +142,11 @@ function ServiceListItem({ serviceName, service, running, isSelected, hasError, 
         px: 1.5,
         py: 0.75,
         cursor: "pointer",
-        borderLeft: isSelected ? "3px solid #2563eb" : "3px solid transparent",
-        backgroundColor: isSelected ? "rgba(37,99,235,0.08)" : "transparent",
+        borderLeft: isSelected ? "3px solid var(--sm-accent)" : "3px solid transparent",
+        backgroundColor: isSelected ? "color-mix(in srgb, var(--sm-accent) 8%, transparent)" : "transparent",
         transition: "background-color 0.15s ease",
         "&:hover": {
-          backgroundColor: isSelected ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.08)",
+          backgroundColor: isSelected ? "color-mix(in srgb, var(--sm-accent) 12%, transparent)" : "var(--c-bg-94a3b8-008)",
         },
         "&:hover .service-actions, &:focus-within .service-actions": { opacity: 1 },
       }}
@@ -234,8 +237,8 @@ function BasePathRow({ pathKey, pathValue, usageCount, onChange, onDelete, onBro
         gap: 1.5,
         px: 2,
         py: 1,
-        borderBottom: "1px solid rgba(148,163,184,0.14)",
-        "&:hover": { backgroundColor: "rgba(148,163,184,0.05)" },
+        borderBottom: "1px solid var(--c-border-94a3b8-014)",
+        "&:hover": { backgroundColor: "var(--c-bg-94a3b8-005)" },
       }}
     >
       <Box sx={{ width: { xs: 140, md: 220 }, flexShrink: 0, minWidth: 0 }}>
@@ -303,9 +306,62 @@ function BasePathRow({ pathKey, pathValue, usageCount, onChange, onDelete, onBro
   );
 }
 
+// Sample status for the Appearance previews: a running service on main (no health check result).
+const PREVIEW_STATUS = {
+  running: true,
+  lifecycleState: "running",
+  lifecycleLabel: "Running",
+  healthState: "unknown",
+  healthLabel: "",
+  message: "Service is running",
+  error: "",
+  git: { isGitRepo: true, currentBranch: "main", hasUpstream: true, upstreamBranch: "origin/main", ahead: 0, behind: 0, isDirty: false, uncommittedCount: 0 },
+};
+const PREVIEW_METRICS = { memoryFormatted: "256 MB", cpuFormatted: "1.2%", cpuPercent: "1.2", uptimeFormatted: "Up 12m" };
+// Made-up service for the previews, so no real service from the config is shown.
+const PREVIEW_SAMPLE = {
+  service: {
+    name: "orders-service",
+    type: "java",
+    port: 8085,
+    group: "Core",
+    description: "Example service: manages customer orders",
+    dependsOn: ["catalog-service"],
+    docsPath: "/swagger-ui/index.html",
+  },
+  reverseDependencies: ["billing-service", "shipping-service"],
+};
+const noop = () => {};
+
+// The real card component for a style, rendered with sample data. Look-only: clicks never reach it.
+function LiveCardPreview({ styleId, sample }) {
+  return (
+    <Box aria-hidden sx={{ pointerEvents: "none", userSelect: "none" }}>
+      <ServiceCardView
+        cardStyle={styleId}
+        service={sample.service}
+        status={PREVIEW_STATUS}
+        reverseDependencies={sample.reverseDependencies}
+        isDraggable={false}
+        showGroup
+        showGitBranches
+        showLiveMetrics
+        metrics={PREVIEW_METRICS}
+        isSelected={false}
+        onSelect={noop}
+        onAction={noop}
+        onBranchCheckout={noop}
+        onGitPull={noop}
+        onGitPush={noop}
+        onViewLogs={noop}
+      />
+    </Box>
+  );
+}
+
 function EditorSection({ title, action, children }) {
   return (
-    <Box sx={{ py: 2, borderBottom: "1px solid rgba(148,163,184,0.16)", "&:last-of-type": { borderBottom: 0 } }}>
+    <Box sx={{ py: 2, borderBottom: "1px solid var(--c-border-94a3b8-016)", "&:last-of-type": { borderBottom: 0 } }}>
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1.25, minHeight: 28 }}>
         <Typography variant="overline" sx={{ fontWeight: 800, color: "text.secondary", lineHeight: 1.5 }}>
           {title}
@@ -428,7 +484,7 @@ function ServiceEditor({
           py: 1,
           minHeight: 52,
           flexShrink: 0,
-          borderBottom: "1px solid rgba(148,163,184,0.16)",
+          borderBottom: "1px solid var(--c-border-94a3b8-016)",
         }}
       >
         <Typography variant="subtitle1" noWrap sx={{ fontWeight: 800, minWidth: 0 }}>
@@ -786,8 +842,13 @@ function summarizePresetChanges(savedPresets, presets) {
 }
 
 // Lists what Save would change compared with the saved config: [{ kind: "added" | "removed" | "changed", text }].
-function summarizeConfigChanges(savedConfig, basePaths, services, logSettings = {}, dependencyCheck = true) {
+function summarizeConfigChanges(savedConfig, basePaths, services, logSettings = {}, dependencyCheck = true, cardStyle = DEFAULT_CARD_STYLE) {
   const changes = [];
+  const savedCardStyle = normalizeCardStyle(savedConfig?.config?.ui?.cardStyle);
+  if (savedCardStyle !== cardStyle) {
+    const label = (id) => CARD_STYLES.find((style) => style.id === id)?.label || id;
+    changes.push({ kind: "changed", text: `Default card style: ${label(savedCardStyle)} → ${label(cardStyle)}` });
+  }
   const savedDependencyCheck = savedConfig?.config?.dependencyCheck !== false;
   if (savedDependencyCheck !== dependencyCheck) {
     changes.push({ kind: "changed", text: `Dependency check: ${savedDependencyCheck ? "on" : "off"} → ${dependencyCheck ? "on" : "off"}` });
@@ -860,6 +921,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
   const [groupChip, setGroupChip] = useState(""); // group filter for the services list ("" = all)
   const [confirmReloadOpen, setConfirmReloadOpen] = useState(false);
   const [confirmResetPresetsOpen, setConfirmResetPresetsOpen] = useState(false);
+  const [cardStyle, setCardStyle] = useState(DEFAULT_CARD_STYLE); // config.ui.cardStyle (Appearance tab)
   const [jsonText, setJsonText] = useState(""); // Advanced › JSON draft text
   const [jsonTouched, setJsonTouched] = useState(false); // edited but not applied yet
   const jsonParseError = useMemo(() => {
@@ -960,6 +1022,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
       setLogSettings(payload.config?.logs || {});
       setPresets(payload.config?.presets && Object.keys(payload.config.presets).length ? payload.config.presets : null);
       setDependencyCheck(payload.config?.dependencyCheck !== false);
+      setCardStyle(normalizeCardStyle(payload.config?.ui?.cardStyle));
       setServices(payload.services || {});
       setRuntimeInfo(data.runtime || null);
       try {
@@ -1156,9 +1219,10 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
       stableConfigString(services) !== stableConfigString(config.services || {}) ||
       stableConfigString(logSettings) !== stableConfigString(config.config?.logs || {}) ||
       JSON.stringify(presets) !== JSON.stringify(config.config?.presets && Object.keys(config.config.presets).length ? config.config.presets : null) ||
-      dependencyCheck !== (config.config?.dependencyCheck !== false)
+      dependencyCheck !== (config.config?.dependencyCheck !== false) ||
+      cardStyle !== normalizeCardStyle(config.config?.ui?.cardStyle)
     );
-  }, [basePaths, services, logSettings, presets, dependencyCheck, config]);
+  }, [basePaths, services, logSettings, presets, dependencyCheck, cardStyle, config]);
   const isRunConfigDirty = useMemo(
     () => JSON.stringify(cleanRunConfig(runConfig)) !== JSON.stringify(cleanRunConfig(savedRunConfig)),
     [runConfig, savedRunConfig]
@@ -1185,12 +1249,12 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
     () =>
       confirmSaveOpen
         ? [
-            ...summarizeConfigChanges(config, basePaths, services, logSettings, dependencyCheck),
+            ...summarizeConfigChanges(config, basePaths, services, logSettings, dependencyCheck, cardStyle),
             ...summarizePresetChanges(config?.config?.presets, presets),
             ...summarizeRunConfigChanges(savedRunConfig, runConfig),
           ]
         : [],
-    [confirmSaveOpen, config, basePaths, services, logSettings, presets, dependencyCheck, savedRunConfig, runConfig]
+    [confirmSaveOpen, config, basePaths, services, logSettings, presets, dependencyCheck, cardStyle, savedRunConfig, runConfig]
   );
 
   // Save never writes directly: it opens a confirmation listing every change first.
@@ -1208,16 +1272,19 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
   const buildDraftConfig = () => ({
     ...config,
     config: (() => {
-      const { logs: _previousLogs, presets: _previousPresets, dependencyCheck: _previousCheck, ...restConfig } = config.config || {};
+      const { logs: _previousLogs, presets: _previousPresets, dependencyCheck: _previousCheck, ui: previousUi, ...restConfig } = config.config || {};
       const cleanedLogs = Object.fromEntries(
         Object.entries(logSettings).filter(([, value]) => value !== undefined && value !== "")
       );
+      const { cardStyle: _previousCardStyle, ...restUi } = previousUi || {};
+      const ui = { ...restUi, ...(cardStyle !== DEFAULT_CARD_STYLE ? { cardStyle } : {}) };
       return {
         ...restConfig,
         basePaths,
         ...(Object.keys(cleanedLogs).length ? { logs: cleanedLogs } : {}),
         ...(presets ? { presets } : {}),
         ...(dependencyCheck ? {} : { dependencyCheck: false }),
+        ...(Object.keys(ui).length ? { ui } : {}),
       };
     })(),
     services,
@@ -1246,6 +1313,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
     setLogSettings(nextConfig.logs || {});
     setPresets(nextConfig.presets && Object.keys(nextConfig.presets).length ? nextConfig.presets : null);
     setDependencyCheck(nextConfig.dependencyCheck !== false);
+    setCardStyle(normalizeCardStyle(nextConfig.ui?.cardStyle));
     setServices(parsed.services);
     setJsonTouched(false);
     showSnackbar("JSON applied to the editor — review and Save to write it", "success");
@@ -1618,15 +1686,15 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
           columnGap: 1,
           px: 1,
           minHeight: TOP_BAR_HEIGHT,
-          borderBottom: "1px solid rgba(148,163,184,0.16)",
-          backgroundColor: "rgba(248,250,252,0.88)",
+          borderBottom: "1px solid var(--c-border-94a3b8-016)",
+          backgroundColor: "var(--c-bg-f8fafc-088)",
         }}
       >
         <Tabs
           value={currentTab}
           onChange={(_, value) => {
             // Fresh JSON view of the current draft, unless there are un-applied JSON edits.
-            if (value === 4 && !jsonTouched) openJsonDraft();
+            if (value === 5 && !jsonTouched) openJsonDraft();
             setCurrentTab(value);
           }}
           sx={{
@@ -1643,6 +1711,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
           <Tab icon={<SettingsIcon fontSize="small" />} iconPosition="start" label={`Services (${Object.keys(services).length})`} />
           <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Log retention" />
           <Tab icon={<PresetsIcon fontSize="small" />} iconPosition="start" label={`Presets (${presetNames.length})`} />
+          <Tab icon={<AppearanceIcon fontSize="small" />} iconPosition="start" label="Appearance" />
           <Tab icon={<CodeIcon fontSize="small" />} iconPosition="start" label="JSON" />
         </Tabs>
 
@@ -1681,7 +1750,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
               </IconButton>
             </span>
           </Tooltip>
-          {currentTab !== 2 && currentTab !== 4 ? (
+          {currentTab <= 3 && currentTab !== 2 ? (
             <Button
               size="small"
               variant="outlined"
@@ -1706,7 +1775,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
       {errorIssues.length > 0 ? (
         <Alert
           severity="error"
-          sx={{ flexShrink: 0, py: 0.25, borderRadius: 0, borderBottom: "1px solid rgba(220,38,38,0.2)", "& .MuiAlert-message": { width: "100%" } }}
+          sx={{ flexShrink: 0, py: 0.25, borderRadius: 0, borderBottom: "1px solid var(--c-border-dc2626-02)", "& .MuiAlert-message": { width: "100%" } }}
         >
           <Typography variant="body2" sx={{ fontWeight: 700 }}>
             Fix {errorIssues.length} issue{errorIssues.length === 1 ? "" : "s"} before saving
@@ -1750,8 +1819,8 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
               sx={{
                 px: 2,
                 py: 1,
-                borderBottom: "1px solid rgba(148,163,184,0.16)",
-                backgroundColor: "rgba(248,250,252,0.8)",
+                borderBottom: "1px solid var(--c-border-94a3b8-016)",
+                backgroundColor: "var(--c-bg-f8fafc-08)",
               }}
             >
               <Typography variant="caption" sx={{ color: "text.secondary" }}>
@@ -1804,12 +1873,12 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
                 display: "flex",
                 flexDirection: "column",
                 overflow: "hidden",
-                borderRight: { md: "1px solid rgba(148,163,184,0.18)" },
-                borderBottom: { xs: "1px solid rgba(148,163,184,0.18)", md: 0 },
-                backgroundColor: "rgba(248,250,252,0.6)",
+                borderRight: { md: "1px solid var(--c-text-94a3b8-018)" },
+                borderBottom: { xs: "1px solid var(--c-text-94a3b8-018)", md: 0 },
+                backgroundColor: "var(--c-bg-f8fafc-06)",
               }}
             >
-              <Box sx={{ p: 1, flexShrink: 0, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
+              <Box sx={{ p: 1, flexShrink: 0, borderBottom: "1px solid var(--c-border-94a3b8-016)" }}>
                 <TextField
                   fullWidth
                   size="small"
@@ -1971,7 +2040,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
                     {archiveStatsError || "Loading…"}
                   </Typography>
                 ) : archiveStats.files === 0 ? (
-                  <Box sx={{ mt: 1.5, p: 2, borderRadius: 2, backgroundColor: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                  <Box sx={{ mt: 1.5, p: 2, borderRadius: 2, backgroundColor: "var(--c-bg-10b981-006)", border: "1px solid var(--c-border-10b981-02)" }}>
                     <Typography sx={{ fontWeight: 700 }}>Nothing to clean up</Typography>
                     <Typography variant="body2" sx={{ color: "text.secondary" }}>
                       No logs from earlier runs are stored. Logs of runs in progress are never counted here.
@@ -1987,7 +2056,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
                       across {archiveStats.services} service{archiveStats.services === 1 ? "" : "s"}. Logs of runs in progress are not included.
                     </Typography>
 
-                    <Box sx={{ mt: 2.5, pt: 2, borderTop: "1px solid rgba(148,163,184,0.2)" }}>
+                    <Box sx={{ mt: 2.5, pt: 2, borderTop: "1px solid var(--c-border-94a3b8-02)" }}>
                       <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>Free up this space</Typography>
                       <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.25, mb: 1.5 }}>
                         Removes all previous run logs for every service now. Services keep running and keep logging to their
@@ -2027,11 +2096,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
                 display: "flex",
                 flexDirection: "column",
                 overflow: "hidden",
-                borderRight: { md: "1px solid rgba(148,163,184,0.18)" },
-                backgroundColor: "rgba(248,250,252,0.6)",
+                borderRight: { md: "1px solid var(--c-text-94a3b8-018)" },
+                backgroundColor: "var(--c-bg-f8fafc-06)",
               }}
             >
-              <Box sx={{ p: 1.5, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
+              <Box sx={{ p: 1.5, borderBottom: "1px solid var(--c-border-94a3b8-016)" }}>
                 <Typography variant="body2" sx={{ color: "text.secondary", fontSize: "0.78rem" }}>
                   {presets
                     ? "Custom presets saved in the configuration."
@@ -2066,9 +2135,9 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
                         textAlign: "left",
                         font: "inherit",
                         color: "text.primary",
-                        backgroundColor: active ? "rgba(37,99,235,0.08)" : "transparent",
-                        boxShadow: active ? "inset 3px 0 0 #2563eb" : "none",
-                        "&:hover": { backgroundColor: active ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.08)" },
+                        backgroundColor: active ? "color-mix(in srgb, var(--sm-accent) 8%, transparent)" : "transparent",
+                        boxShadow: active ? "inset 3px 0 0 var(--sm-accent)" : "none",
+                        "&:hover": { backgroundColor: active ? "color-mix(in srgb, var(--sm-accent) 12%, transparent)" : "var(--c-bg-94a3b8-008)" },
                       }}
                     >
                       <Typography sx={{ flex: 1, fontSize: "0.85rem", fontWeight: active ? 700 : 600 }} noWrap>
@@ -2171,6 +2240,74 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
         )}
 
         {currentTab === 4 && (
+          <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto", p: { xs: 2, md: 3 } }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Theme</Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary", mb: 1.5, maxWidth: 720 }}>
+              Just for you: applies immediately and is remembered in this browser. It is not part of Save and doesn't change the
+              configuration.
+            </Typography>
+            <ThemePicker />
+            <Divider sx={{ my: 3 }} />
+            <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Default card style</Typography>
+            <Typography variant="body2" sx={{ color: "text.secondary", mb: 2, maxWidth: 720 }}>
+              How services appear on the Dashboard for everyone using this configuration. Each person can still pick their own
+              style in Dashboard › View › Card style. Changes apply after you Save. Previews show an example service
+              (running, on main).
+            </Typography>
+            <Box
+              role="radiogroup"
+              aria-label="Default card style"
+              sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 2, maxWidth: 1200, alignItems: "stretch" }}
+            >
+              {CARD_STYLES.map((style) => {
+                const active = cardStyle === style.id;
+                return (
+                  <Box
+                    key={style.id}
+                    role="radio"
+                    tabIndex={0}
+                    aria-checked={active}
+                    aria-label={`${style.label} card style`}
+                    onClick={() => setCardStyle(style.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setCardStyle(style.id);
+                      }
+                    }}
+                    sx={{
+                      display: "flex",
+                      flexDirection: "column",
+                      textAlign: "left",
+                      font: "inherit",
+                      cursor: "pointer",
+                      p: 1.5,
+                      borderRadius: 2.5,
+                      border: "2px solid",
+                      borderColor: active ? "primary.main" : "divider",
+                      bgcolor: active ? "color-mix(in srgb, var(--sm-accent) 4%, transparent)" : "background.paper",
+                      "&:hover": { borderColor: active ? "primary.main" : "var(--c-border-94a3b8)" },
+                      "&:focus-visible": { outline: "2px solid color-mix(in srgb, var(--sm-accent) 50%, transparent)", outlineOffset: 2 },
+                    }}
+                  >
+                    <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.25 }}>
+                      <Typography sx={{ fontWeight: 700, fontSize: "0.9rem", flex: 1 }}>{style.label}</Typography>
+                      {style.id === DEFAULT_CARD_STYLE ? <Chip size="small" variant="outlined" label="Default" /> : null}
+                    </Stack>
+                    <Typography sx={{ fontSize: "0.78rem", color: "text.secondary", mb: 1.25, minHeight: "2.8em", lineHeight: 1.4 }}>
+                      {style.description}
+                    </Typography>
+                    <Box>
+                      <LiveCardPreview styleId={style.id} sample={PREVIEW_SAMPLE} />
+                    </Box>
+                  </Box>
+                );
+              })}
+            </Box>
+          </Box>
+        )}
+
+        {currentTab === 5 && (
           <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", p: { xs: 2, md: 2.5 }, gap: 1.25 }}>
             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
               <Typography variant="body2" sx={{ color: "text.secondary", flex: 1, minWidth: 240 }}>
@@ -2351,7 +2488,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
                       p: 1.5,
                       borderRadius: 2.5,
                       borderStyle: "dashed",
-                      backgroundColor: "rgba(15,23,42,0.03)",
+                      backgroundColor: "var(--c-bg-0f172a-003)",
                     }}
                   >
                     <Typography variant="body2" sx={{ fontFamily: CODE_FONT, wordBreak: "break-all" }}>

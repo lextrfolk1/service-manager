@@ -152,8 +152,7 @@ function App() {
     <Box
       sx={{
         minHeight: "100vh",
-        background:
-          "radial-gradient(circle at top left, rgba(37,99,235,0.16), transparent 24%), radial-gradient(circle at top right, rgba(124,58,237,0.14), transparent 26%), linear-gradient(180deg, #f8fbff 0%, #eef2ff 42%, #f8fafc 100%)",
+        background: "var(--sm-app-bg)",  // per theme (ThemeController)
         display: "flex",
         flexDirection: "column",
       }}
@@ -162,9 +161,9 @@ function App() {
         position="fixed" 
         elevation={0}
         sx={{
-          background: "rgba(255, 255, 255, 0.72)",
+          background: "var(--sm-header-bg)",
           backdropFilter: "blur(22px)",
-          borderBottom: "1px solid rgba(148, 163, 184, 0.16)",
+          borderBottom: "1px solid var(--c-border-94a3b8-016)",
           color: "text.primary",
         }}
       >
@@ -175,8 +174,8 @@ function App() {
                 width: 36,
                 height: 36,
                 borderRadius: 3,
-                background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
-                boxShadow: "0 14px 28px rgba(37,99,235,0.22)",
+                background: "linear-gradient(135deg, var(--sm-accent) 0%, var(--c-bg-7c3aed) 100%)",
+                boxShadow: "0 14px 28px color-mix(in srgb, var(--sm-accent) 22%, transparent)",
               }}
             />
             <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
@@ -196,7 +195,7 @@ function App() {
                 sx={{ 
                   width: 72, 
                   height: "2px", 
-                  background: "linear-gradient(90deg, #38BDF8 0%, #7c3aed 100%)",
+                  background: "linear-gradient(90deg, var(--c-bg-38bdf8) 0%, var(--c-bg-7c3aed) 100%)",
                   borderRadius: "1px",
                   my: 0.25
                 }} 
@@ -221,20 +220,20 @@ function App() {
             onChange={handleTabChange}
             sx={{
               "& .MuiTab-root": {
-                color: "rgba(15,23,42,0.72)",
+                color: "var(--c-text-0f172a-072)",
                 fontWeight: 600,
                 fontSize: "0.92rem",
                 minWidth: 110,
                 minHeight: 44,
                 textTransform: "none",
                 "&.Mui-selected": {
-                  color: "#0f172a",
-                  backgroundColor: "rgba(255,255,255,0.86)",
-                  boxShadow: "0 10px 24px rgba(15,23,42,0.08)",
+                  color: "var(--c-text-0f172a)",
+                  backgroundColor: "var(--c-bg-ffffff-086)",
+                  boxShadow: "0 10px 24px var(--c-shadow-0f172a-008)",
                   borderRadius: 999,
                 },
                 "&:hover": {
-                  backgroundColor: "rgba(255,255,255,0.62)",
+                  backgroundColor: "var(--c-bg-ffffff-062)",
                   borderRadius: 999,
                 }
               },

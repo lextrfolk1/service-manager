@@ -147,11 +147,11 @@ export function RunConfigSection({ settings = {}, serviceType = "", onChange }) 
       {envEntries.length === 0 ? (
         <Box
           sx={{
-            border: "1px dashed rgba(148,163,184,0.6)",
+            border: "1px dashed var(--c-border-94a3b8-06)",
             borderRadius: 2,
             py: 2,
             textAlign: "center",
-            backgroundColor: "rgba(248,250,252,0.7)",
+            backgroundColor: "var(--c-bg-f8fafc-07)",
           }}
         >
           <Typography sx={{ fontSize: "0.8rem", color: "text.secondary", mb: 1 }}>No environment variables yet</Typography>
@@ -167,7 +167,7 @@ export function RunConfigSection({ settings = {}, serviceType = "", onChange }) 
               gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr) 72px",
               px: 1.25,
               py: 0.5,
-              backgroundColor: "rgba(248,250,252,0.9)",
+              backgroundColor: "var(--c-bg-f8fafc-09)",
               borderBottom: "1px solid",
               borderColor: "divider",
             }}
@@ -188,7 +188,7 @@ export function RunConfigSection({ settings = {}, serviceType = "", onChange }) 
                 alignItems: "center",
                 px: 1.25,
                 py: 0.75,
-                "&:not(:last-of-type)": { borderBottom: "1px solid rgba(148,163,184,0.15)" },
+                "&:not(:last-of-type)": { borderBottom: "1px solid var(--c-border-94a3b8-015)" },
               }}
             >
               <TextField
@@ -396,7 +396,7 @@ export function RunConfigDialog({ open, serviceName, serviceType, initialSetting
               Values are not shown here because they may be secrets.
             </Typography>
             {isRunning ? (
-              <Box sx={{ mt: 2, px: 1.5, py: 0.5, borderRadius: 2, backgroundColor: "rgba(37,99,235,0.06)", border: "1px solid rgba(37,99,235,0.18)" }}>
+              <Box sx={{ mt: 2, px: 1.5, py: 0.5, borderRadius: 2, backgroundColor: "color-mix(in srgb, var(--sm-accent) 6%, transparent)", border: "1px solid color-mix(in srgb, var(--sm-accent) 18%, transparent)" }}>
                 <FormControlLabel
                   control={<Checkbox size="small" checked={restartAfterSave} onChange={(event) => setRestartAfterSave(event.target.checked)} />}
                   label={<Typography sx={{ fontSize: "0.85rem" }}>Restart {serviceName} now so the changes take effect</Typography>}

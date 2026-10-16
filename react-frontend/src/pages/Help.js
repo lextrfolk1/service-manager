@@ -56,6 +56,9 @@ const FEATURE_GROUPS = [
       ["Search & filters", "Find services by name, or filter by type, group or status — including \"Needs attention\" for failed or unhealthy services.", "Dashboard toolbar: search box and Filters"],
       ["Grouped view", "Show services under their group headings, collapse groups you don't need, and drag a card onto another group to move it (you confirm before the config is changed).", "Dashboard toolbar: View › Group services"],
       ["Live resources", "Show CPU, memory and uptime for each running service, updated every few seconds.", "Dashboard toolbar: View › Live resources"],
+      ["Card styles", "Pick how services look: Classic (the default — the card from before the redesign), Detailed (full card with live resources and more detail), Accent strip (Detailed with a status-coloured top edge) or Elevated (Detailed as a floating card with a status-ringed avatar). Admin sets the default for everyone; anyone can override it for themselves. Every style has the same actions.", "Admin › Appearance (default) · Dashboard › View › Card style (just you)"],
+      ["Themes", "Pick a theme in Dashboard › View or Admin › Appearance: Light, Dark, Graphite (neutral charcoal dark), Warm (paper-like, softer contrast) or Follow system (light or dark like your computer), plus an accent colour for buttons, tabs and highlights. It is your personal choice, remembered in this browser; the log viewer stays dark in every theme.", "Admin › Appearance › Theme"],
+      ["Looks", "One click sets a theme and a card style that go well together: Everyday (Light + Detailed), Modern (Light + Elevated), Studio (Graphite + Accent strip), Night (Dark + Detailed) and Long session (Warm + Classic). You can still change theme and card style separately.", "Dashboard › View › Look"],
       ["Clear failure reasons", "Failures are labelled (Build failed, Git pull failed, Startup timed out, Port issue, …) with the error text, a Logs button and a Help button that opens the matching troubleshooting guide.", "Red box at the bottom of a failed card"],
     ],
   },
@@ -543,8 +546,8 @@ function GettingStarted() {
         px: 2.5,
         py: 1.5,
         flexShrink: 0,
-        background: "linear-gradient(135deg, rgba(37,99,235,0.08) 0%, rgba(124,58,237,0.08) 100%)",
-        borderBottom: "1px solid rgba(148,163,184,0.18)",
+        background: "linear-gradient(135deg, color-mix(in srgb, var(--sm-accent) 8%, transparent) 0%, var(--c-bg-7c3aed-008) 100%)",
+        borderBottom: "1px solid var(--c-border-94a3b8-018)",
       }}
     >
       {GETTING_STARTED.map(([title, description], index) => (
@@ -572,9 +575,9 @@ function NumberBadge({ value, color = "#2563eb", gradient = false, size = 28 }) 
         placeItems: "center",
         fontWeight: 800,
         fontSize: size > 24 ? "0.85rem" : "0.72rem",
-        color: gradient ? "#fff" : color,
-        background: gradient ? "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)" : `${color}14`,
-        boxShadow: gradient ? "0 4px 12px rgba(79,70,229,0.3)" : "none",
+        color: gradient ? "var(--c-text-ffffff)" : color,
+        background: gradient ? "linear-gradient(135deg, var(--sm-accent) 0%, var(--c-bg-7c3aed) 100%)" : `${color}14`,
+        boxShadow: gradient ? "0 4px 12px var(--c-shadow-4f46e5-03)" : "none",
       }}
     >
       {value}
@@ -651,9 +654,9 @@ function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelec
           flexDirection: { xs: "row", md: "column" },
           gap: 0.5,
           overflow: "auto",
-          borderRight: { md: "1px solid rgba(148,163,184,0.18)" },
-          borderBottom: { xs: "1px solid rgba(148,163,184,0.18)", md: 0 },
-          backgroundColor: "rgba(248,250,252,0.6)",
+          borderRight: { md: "1px solid var(--c-text-94a3b8-018)" },
+          borderBottom: { xs: "1px solid var(--c-text-94a3b8-018)", md: 0 },
+          backgroundColor: "var(--c-bg-f8fafc-06)",
         }}
       >
         {sections.map((section) => {
@@ -680,7 +683,7 @@ function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelec
                 backgroundColor: active ? `${color}14` : "transparent",
                 boxShadow: active ? `inset 3px 0 0 ${color}` : "none",
                 transition: "background-color 0.15s ease",
-                "&:hover": { backgroundColor: active ? `${color}1f` : "rgba(15,23,42,0.05)" },
+                "&:hover": { backgroundColor: active ? `${color}1f` : "var(--c-bg-0f172a-005)" },
               }}
             >
               <IconTile icon={section.icon} color={color} size={30} />
@@ -691,7 +694,7 @@ function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelec
                 <Chip
                   size="small"
                   label={section.count}
-                  sx={{ fontWeight: 700, color: active ? color : "text.secondary", backgroundColor: active ? "#fff" : "rgba(148,163,184,0.16)" }}
+                  sx={{ fontWeight: 700, color: active ? color : "text.secondary", backgroundColor: active ? "var(--c-bg-ffffff)" : "var(--c-bg-94a3b8-016)" }}
                 />
               ) : null}
             </Box>
@@ -734,7 +737,7 @@ function FeaturesTab({ term, ...navProps }) {
     .map((group) => ({
       ...group,
       key: group.title,
-      color: GROUP_COLORS[group.title] || "#2563eb",
+      color: GROUP_COLORS[group.title] || "var(--sm-accent-text)",
       count: group.items.length,
     }));
 
@@ -1001,8 +1004,8 @@ const Help = ({ target }) => {
           columnGap: 1,
           px: 1,
           minHeight: TOP_BAR_HEIGHT,
-          borderBottom: "1px solid rgba(148,163,184,0.16)",
-          backgroundColor: "rgba(248,250,252,0.88)",
+          borderBottom: "1px solid var(--c-border-94a3b8-016)",
+          backgroundColor: "var(--c-bg-f8fafc-088)",
         }}
       >
         <Tabs

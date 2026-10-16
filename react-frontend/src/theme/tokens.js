@@ -1,13 +1,13 @@
 // Shared UI values so every page uses the same status colours, fonts and sizes.
 
 export const STATUS_COLORS = {
-  running: "#12b76a", // solid dot / accent bar
-  runningText: "#067647",
-  stopped: "#98a2b3", // hollow dot outline
-  stoppedText: "#475467",
-  failed: "#dc2626",
-  failedText: "#b42318",
-  busy: "#d97706",
+  running: "var(--c-text-12b76a)", // solid dot / accent bar
+  runningText: "var(--c-text-067647)",
+  stopped: "var(--c-text-98a2b3)", // hollow dot outline
+  stoppedText: "var(--c-text-475467)",
+  failed: "var(--c-text-dc2626)",
+  failedText: "var(--c-text-b42318)",
+  busy: "var(--c-text-d97706)",
 };
 
 export const CODE_FONT = '"Monaco", "Menlo", "Ubuntu Mono", monospace';

@@ -1,19 +1,19 @@
 import Chip from "@mui/material/Chip";
 
 const STATUS_STYLES = {
-  idle: { label: "Idle", bg: "#E5E7EB", color: "#374151" },
-  queued: { label: "Queued", bg: "#DBEAFE", color: "#1D4ED8" },
-  waiting: { label: "Waiting", bg: "#DBEAFE", color: "#1D4ED8" },
-  starting: { label: "Starting", bg: "#FEF3C7", color: "#B45309" },
-  running: { label: "Running", bg: "#DCFCE7", color: "#166534" },
-  healthy: { label: "Healthy", bg: "#DCFCE7", color: "#166534" },
-  unhealthy: { label: "Unhealthy", bg: "#FEE2E2", color: "#B91C1C" },
-  "port-open": { label: "Port Open", bg: "#F1F5F9", color: "#475569" },
-  stopping: { label: "Stopping", bg: "#FEF3C7", color: "#B45309" },
-  stopped: { label: "Stopped", bg: "#F3F4F6", color: "#4B5563" },
-  failed: { label: "Failed", bg: "#FEE2E2", color: "#B91C1C" },
-  blocked: { label: "Port Blocked", bg: "#FEF2F2", color: "#DC2626" },
-  unknown: { label: "Unknown", bg: "#F3F4F6", color: "#4B5563" },
+  idle: { label: "Idle", bg: "var(--c-bg-e5e7eb)", color: "var(--c-text-374151)" },
+  queued: { label: "Queued", bg: "var(--c-bg-dbeafe)", color: "var(--c-text-1d4ed8)" },
+  waiting: { label: "Waiting", bg: "var(--c-bg-dbeafe)", color: "var(--c-text-1d4ed8)" },
+  starting: { label: "Starting", bg: "var(--c-bg-fef3c7)", color: "var(--c-text-b45309)" },
+  running: { label: "Running", bg: "var(--c-bg-dcfce7)", color: "var(--c-text-166534)" },
+  healthy: { label: "Healthy", bg: "var(--c-bg-dcfce7)", color: "var(--c-text-166534)" },
+  unhealthy: { label: "Unhealthy", bg: "var(--c-bg-fee2e2)", color: "var(--c-text-b91c1c)" },
+  "port-open": { label: "Port Open", bg: "var(--c-bg-f1f5f9)", color: "var(--c-text-475569)" },
+  stopping: { label: "Stopping", bg: "var(--c-bg-fef3c7)", color: "var(--c-text-b45309)" },
+  stopped: { label: "Stopped", bg: "var(--c-bg-f3f4f6)", color: "var(--c-text-4b5563)" },
+  failed: { label: "Failed", bg: "var(--c-bg-fee2e2)", color: "var(--c-text-b91c1c)" },
+  blocked: { label: "Port Blocked", bg: "var(--c-bg-fef2f2)", color: "var(--c-text-dc2626)" },
+  unknown: { label: "Unknown", bg: "var(--c-bg-f3f4f6)", color: "var(--c-text-4b5563)" },
 };
 
 function StatusChip({ state, label, size = "small", sx = {} }) {
