@@ -293,22 +293,6 @@
       "healthCommand": "curl -sf http://127.0.0.1:8181/health > /dev/null",
       "description": "Open Policy Agent on Docker",
       "group": "Other"
-    },
-    "execution-service-listener-clone": {
-      "type": "listener",
-      "port": "",
-      "path": "${basePaths.listener}/execution-service",
-      "command": "export PYTHONPATH=${basePaths.python}/execution-service && $(pwd)/venv/bin/python ${basePaths.python}/execution-service/utils/pg_sync_worker.py",
-      "stopCommand": "pkill -f pg_sync_worker.py",
-      "healthCommand": "pgrep -f pg_sync_worker.py > /dev/null",
-      "build": "$(pwd)/venv/bin/pip install -r requirements.txt",
-      "group": "Background",
-      "dependsOn": [
-        "config-service",
-        "redis"
-      ],
-      "description": "Execution Service listener (Clone)",
-      "enableGit": true
     }
   }
 }
