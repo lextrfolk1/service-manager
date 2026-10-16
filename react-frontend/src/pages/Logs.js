@@ -18,6 +18,8 @@ import {
 } from "@mui/material";
 import {
   Clear as ClearIcon,
+  History as HistoryIcon,
+  Inventory2Outlined as LegacyLogIcon,
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
   Close as CloseIcon,
@@ -41,6 +43,100 @@ const contentCardSx = {
   border: "1px solid",
   borderColor: "divider",
 };
+
+const FILE_LIST_POLL_MS = 5000;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+const pad2 = (value) => String(value).padStart(2, "0");
+
+// Run logs are named <service>_YYYY-MM-DD_HH-MM-SS[_N].log; older daily logs <service>-YYYY-MM-DD.log.
+function parseLogFileName(fileName) {
+  const run = fileName.match(/_(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})(?:_\d+)?\.log$/);
+  if (run) {
+    const [, year, month, day, hours, minutes, seconds] = run.map(Number);
+    return { isRun: true, startedAt: new Date(year, month - 1, day, hours, minutes, seconds) };
+  }
+  const daily = fileName.match(/-(\d{4})-(\d{2})-(\d{2})\.log$/);
+  if (daily) {
+    const [, year, month, day] = daily.map(Number);
+    return { isRun: false, startedAt: new Date(year, month - 1, day) };
+  }
+  return { isRun: false, startedAt: null };
+}
+
+function formatDayLabel(date, now) {
+  const startOfDay = (value) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(date)) / 86400000);
+  if (dayDiff === 0) return "Today";
+  if (dayDiff === 1) return "Yesterday";
+  return `${date.getDate()} ${MONTHS[date.getMonth()]}`;
+}
+
+function formatClock(date) {
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes}m ${totalSeconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function formatAgo(ms) {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 10) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+  return `${Math.floor(seconds / 86400)} d ago`;
+}
+
+function formatSize(bytes) {
+  if (bytes == null) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// Human description of a log file for the run picker:
+// { group: "Today", title: "Current run · 14:26:20", subtitle: "started 2 min ago · 12.4 KB", short: "…" }
+function describeLogFile(fileName, detail, isCurrent, now) {
+  const { isRun, startedAt } = parseLogFileName(fileName);
+  const size = formatSize(detail?.size);
+  if (!startedAt) {
+    return { kind: "legacy", group: "Other", title: fileName, subtitle: size, short: fileName };
+  }
+  const group = formatDayLabel(startedAt, now);
+  if (!isRun) {
+    return {
+      kind: "legacy",
+      group,
+      title: "Whole day (older log format)",
+      subtitle: ["all runs that day in one file", size].filter(Boolean).join(" · "),
+      short: `${group} · whole day`,
+    };
+  }
+  const clock = formatClock(startedAt);
+  if (isCurrent) {
+    return {
+      kind: "current",
+      group,
+      title: `Current run · started ${clock}`,
+      subtitle: [`started ${formatAgo(now - startedAt)}`, size].filter(Boolean).join(" · "),
+      short: `Current run · started ${clock}`,
+    };
+  }
+  const ran = detail?.modifiedAt ? `ran ${formatDuration(detail.modifiedAt - startedAt.getTime())}` : "";
+  return {
+    kind: "run",
+    group,
+    title: `Run started ${clock}`,
+    subtitle: [ran, size].filter(Boolean).join(" · "),
+    short: `${group} ${clock}${ran ? ` · ${ran}` : ""}`,
+  };
+}
 
 function prettifyStatus(status) {
   switch (status) {
@@ -119,9 +215,20 @@ function ExplorerItem({ service, active, pinned, running, onOpen, onPin }) {
   );
 }
 
-function OpenServiceTabLabel({ serviceName, onClose }) {
+function OpenServiceTabLabel({ serviceName, running, onClose }) {
   return (
     <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
+      <Box
+        component="span"
+        aria-label={running ? "Running" : "Stopped"}
+        sx={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          flexShrink: 0,
+          backgroundColor: running ? "#10b981" : "rgba(148,163,184,0.7)",
+        }}
+      />
       <Typography
         variant="body2"
         sx={{
@@ -155,6 +262,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [selectedLogFile, setSelectedLogFile] = useState("");
   const [activeLogFiles, setActiveLogFiles] = useState([]);
   const [archivedLogFiles, setArchivedLogFiles] = useState([]);
+  const [logFileDetails, setLogFileDetails] = useState({});
   const [logContent, setLogContent] = useState("(select a service to load logs)");
   const [serviceSearchState, setServiceSearchState] = useState({});
   const [wrapped, setWrapped] = useState(false);
@@ -164,13 +272,20 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [pinnedServices, setPinnedServices] = useState([]);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const eventSourceRef = useRef(null);
+  const latestFileRef = useRef("");
   const logContentRef = useRef(null);
 
   const activeServiceFromTabs = openServices[activeServiceTab] || "";
   const currentService = activeServiceFromTabs || selectedServiceName || services[0]?.name || "";
   const isArchivedSelection = archivedLogFiles.includes(selectedLogFile);
+  // Newest first; recomputed each render so "x min ago" stays current as the file list refreshes.
+  const now = new Date();
+  const logFileOptions = [...activeLogFiles, ...archivedLogFiles].map((fileName) => ({
+    fileName,
+    ...describeLogFile(fileName, logFileDetails[fileName], fileName === activeLogFiles[0], now),
+  }));
+  const logFileOptionByName = Object.fromEntries(logFileOptions.map((option) => [option.fileName, option]));
   const isActiveSelection = activeLogFiles.includes(selectedLogFile);
-  const liveFile = activeLogFiles[0] || "";
   const currentSearchState = serviceSearchState[currentService] || {
     searchQuery: "",
     debouncedSearchQuery: "",
@@ -242,17 +357,23 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     }
   }, []);
 
-  const loadLogFiles = useCallback(async (serviceName) => {
+  // silent: background refresh (no loading chip, keeps errors quiet).
+  // When the user is viewing the latest run and a newer run appears (service restarted), switch to it.
+  const loadLogFiles = useCallback(async (serviceName, { silent = false } = {}) => {
     if (!serviceName) return;
-    setLoadingFiles(true);
+    if (!silent) setLoadingFiles(true);
     try {
       const data = await api.get(`/logs/${serviceName}`);
       const files = (data.files || []).sort().reverse();
       const archivedFiles = (data.archivedFiles || []).sort().reverse();
-      setActiveLogFiles(files);
-      setArchivedLogFiles(archivedFiles);
+      const previousLatest = latestFileRef.current;
+      latestFileRef.current = files[0] || "";
+      setActiveLogFiles((previous) => (previous.join("|") === files.join("|") ? previous : files));
+      setArchivedLogFiles((previous) => (previous.join("|") === archivedFiles.join("|") ? previous : archivedFiles));
+      setLogFileDetails(data.details || {});
       setSelectedLogFile((previous) => {
-        if (previous && (files.includes(previous) || archivedFiles.includes(previous))) {
+        const followLatest = !previous || previous === previousLatest;
+        if (!followLatest && (files.includes(previous) || archivedFiles.includes(previous))) {
           return previous;
         }
         return files[0] || archivedFiles[0] || "";
@@ -261,12 +382,13 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         setLogContent("(no log files available for this service)");
       }
     } catch (error) {
+      if (silent) return;
       setActiveLogFiles([]);
       setArchivedLogFiles([]);
       setSelectedLogFile("");
       setLogContent(`Error loading log files: ${error.message}`);
     } finally {
-      setLoadingFiles(false);
+      if (!silent) setLoadingFiles(false);
     }
   }, []);
 
@@ -330,9 +452,17 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   useEffect(() => {
     if (!currentService) return;
     setSelectedLogFile("");
+    latestFileRef.current = "";
     loadLogFiles(currentService);
     return stopStreaming;
   }, [currentService, loadLogFiles, stopStreaming]);
+
+  // Pick up new runs (service started/restarted) while the Logs tab is visible.
+  useEffect(() => {
+    if (!isActive || !currentService) return undefined;
+    const interval = setInterval(() => loadLogFiles(currentService, { silent: true }), FILE_LIST_POLL_MS);
+    return () => clearInterval(interval);
+  }, [isActive, currentService, loadLogFiles]);
 
   useEffect(() => {
     if (!selectedLogFile || !currentService) return undefined;
@@ -520,7 +650,30 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
 
   const renderedLogContent = useMemo(() => {
     if (!debouncedSearchQuery) {
-      return logContent;
+      // Highlight the run header ([RUN STARTED], [RUN CONFIG], [RUN COMMAND]) written at the top of each run.
+      const headerEnd = logContent.search(/\n(?!\[RUN [A-Z]+\])[^\n]*\n?/);
+      const header = headerEnd === -1 ? logContent : logContent.slice(0, headerEnd + 1);
+      if (!header.startsWith("[RUN ")) {
+        return logContent;
+      }
+      return (
+        <>
+          {header.split("\n").filter(Boolean).map((line, index) => (
+            <Box
+              key={`run-header-${index}`}
+              component="span"
+              sx={{
+                display: "block",
+                color: line.startsWith("[RUN CONFIG]") ? "#5eead4" : line.startsWith("[RUN COMMAND]") ? "#93c5fd" : "#94a3b8",
+                fontWeight: line.startsWith("[RUN STARTED]") ? 400 : 600,
+              }}
+            >
+              {line}
+            </Box>
+          ))}
+          {logContent.slice(header.length)}
+        </>
+      );
     }
 
     return logContent.split("\n").map((line, index) => {
@@ -652,10 +805,14 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             borderRadius: 1.5,
             mr: 0.5,
             color: "text.secondary",
+            border: "1px solid transparent",
+            "&:hover": { backgroundColor: "rgba(15,23,42,0.05)" },
           },
           "& .MuiTab-root.Mui-selected": {
-            color: "text.primary",
-            backgroundColor: "rgba(37,99,235,0.1)",
+            color: "primary.main",
+            backgroundColor: "background.paper",
+            borderColor: "rgba(37,99,235,0.35)",
+            boxShadow: "0 1px 3px rgba(15,23,42,0.08), inset 0 -2px 0 #2563eb",
           },
           "& .MuiTabs-indicator": {
             display: "none",
@@ -669,6 +826,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             label={
               <OpenServiceTabLabel
                 serviceName={serviceName}
+                running={Boolean(runningServices[serviceName])}
                 onClose={() => onCloseService(serviceName)}
               />
             }
@@ -702,12 +860,12 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       {selectedLogFile ? (
         <Tooltip
           title={isArchivedSelection
-            ? "Archived files are read-only snapshots."
-            : "Current log file streams live while the service is writing to it."}
+            ? "A previous run of this service — read-only."
+            : "The current run streams live while the service is writing to it. A restart starts a new run."}
         >
           <Chip
             size="small"
-            label={isArchivedSelection ? "Archived" : "Live file"}
+            label={isArchivedSelection ? "Previous run" : "Live run"}
             color={isArchivedSelection ? "default" : "success"}
             variant={isArchivedSelection ? "outlined" : "filled"}
             sx={compactChipSx}
@@ -719,25 +877,73 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
           size="small"
           value={selectedLogFile || ""}
           displayEmpty
-          renderValue={(value) => value || "Select log file"}
+          renderValue={(value) => (value ? logFileOptionByName[value]?.short || value : "Select run")}
           onChange={(event) => setSelectedLogFile(event.target.value)}
-          sx={{ height: 28, maxWidth: 320, fontSize: "0.75rem", borderRadius: 1.5 }}
+          sx={{ height: 28, maxWidth: 360, fontSize: "0.75rem", borderRadius: 1.5 }}
+          MenuProps={{ PaperProps: { sx: { maxHeight: 460, py: 0.5 } } }}
         >
-          {activeLogFiles.map((fileName) => (
-            <MenuItem key={fileName} value={fileName} sx={{ fontSize: "0.8rem" }}>
-              {fileName === liveFile ? `${fileName} • Live` : fileName}
-            </MenuItem>
-          ))}
-          {archivedLogFiles.length > 0 ? (
-            <MenuItem disabled value="__archive_header__" sx={{ fontSize: "0.75rem" }}>
-              Archived files
-            </MenuItem>
-          ) : null}
-          {archivedLogFiles.map((fileName) => (
-            <MenuItem key={fileName} value={fileName} sx={{ fontSize: "0.8rem" }}>
-              {fileName}
-            </MenuItem>
-          ))}
+          {logFileOptions.flatMap((option, index) => {
+            const items = [];
+            if (index === 0 || logFileOptions[index - 1].group !== option.group) {
+              items.push(
+                <MenuItem key={`group-${option.group}`} disabled value={`__group_${option.group}`} sx={{ fontSize: "0.7rem", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4, opacity: "1 !important", color: "text.secondary", minHeight: 0, px: 2, pt: index === 0 ? 0.75 : 1.5, pb: 0.75, mt: index === 0 ? 0 : 0.75, borderTop: index === 0 ? 0 : "1px solid rgba(148,163,184,0.25)" }}>
+                  {option.group}
+                </MenuItem>
+              );
+            }
+            const kindStyles = {
+              current: { color: "#059669", background: "rgba(16,185,129,0.08)", border: "#10b981" },
+              run: { color: "#2563eb", background: "transparent", border: "transparent" },
+              legacy: { color: "#94a3b8", background: "transparent", border: "transparent" },
+            }[option.kind];
+            items.push(
+              <MenuItem
+                key={option.fileName}
+                value={option.fileName}
+                title={option.fileName}
+                sx={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 1.25,
+                  px: 1.5,
+                  py: 1,
+                  mx: 1,
+                  my: 0.5,
+                  minWidth: 300,
+                  borderRadius: 1.5,
+                  backgroundColor: kindStyles.background,
+                  border: "1px solid",
+                  borderColor: option.kind === "current" ? "rgba(16,185,129,0.35)" : "rgba(148,163,184,0.18)",
+                }}
+              >
+                <Box sx={{ mt: 0.25, color: kindStyles.color, display: "flex" }}>
+                  {option.kind === "current" ? (
+                    <Box sx={{ width: 9, height: 9, m: "3px", borderRadius: "50%", backgroundColor: "#10b981", boxShadow: "0 0 0 3px rgba(16,185,129,0.2)" }} />
+                  ) : option.kind === "run" ? (
+                    <HistoryIcon sx={{ fontSize: 15 }} />
+                  ) : (
+                    <LegacyLogIcon sx={{ fontSize: 15 }} />
+                  )}
+                </Box>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography
+                    sx={{
+                      fontSize: "0.82rem",
+                      fontWeight: option.kind === "current" ? 700 : 500,
+                      color: option.kind === "legacy" ? "text.secondary" : option.kind === "current" ? "#047857" : "text.primary",
+                      fontStyle: option.kind === "legacy" ? "italic" : "normal",
+                    }}
+                  >
+                    {option.title}
+                  </Typography>
+                  {option.subtitle ? (
+                    <Typography sx={{ fontSize: "0.72rem", color: "text.secondary", mt: 0.25 }}>{option.subtitle}</Typography>
+                  ) : null}
+                </Box>
+              </MenuItem>
+            );
+            return items;
+          })}
         </Select>
       ) : (
         <Typography variant="caption" sx={{ color: "text.secondary" }}>

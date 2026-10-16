@@ -40,11 +40,13 @@ import {
   Save as SaveIcon,
   Search as SearchIcon,
   Settings as SettingsIcon,
+  Article as LogsIcon,
   Storage as StorageIcon,
   WarningAmber as WarningAmberIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 import { validateConfiguration } from "../utils/configValidation";
+import { RunConfigSection, cleanRunConfig, summarizeRunConfigChanges } from "../components/RunConfigEditor";
 
 const panelSx = {
   borderRadius: 3,
@@ -299,6 +301,8 @@ function ServiceEditor({
   onPickDirectory,
   onClone,
   onRename,
+  runSettings,
+  onRunSettingsChange,
   validationIssues = [],
 }) {
   const [pathTemplateKey, setPathTemplateKey] = useState("");
@@ -676,6 +680,12 @@ function ServiceEditor({
             </Grid>
           </EditorSection>
 
+          {onRunSettingsChange ? (
+            <EditorSection title="Run configuration">
+              <RunConfigSection settings={runSettings} serviceType={service.type || ""} onChange={onRunSettingsChange} />
+            </EditorSection>
+          ) : null}
+
           <EditorSection title="Dependencies">
             <Autocomplete
               multiple
@@ -724,9 +734,29 @@ function stableConfigString(value) {
   return JSON.stringify(normalize(value));
 }
 
+// Defaults used by the backend when config.logs is not set (keep in sync with backend/src/logger.js).
+const DEFAULT_LOG_SETTINGS = { previousRuns: "archive", retentionDays: 3, maxRuns: 20 };
+
+function formatBytes(bytes = 0) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 // Lists what Save would change compared with the saved config: [{ kind: "added" | "removed" | "changed", text }].
-function summarizeConfigChanges(savedConfig, basePaths, services) {
+function summarizeConfigChanges(savedConfig, basePaths, services, logSettings = {}) {
   const changes = [];
+  const savedLogs = savedConfig?.config?.logs || {};
+  [
+    ["previousRuns", "Log previous runs"],
+    ["retentionDays", "Log retention (days)"],
+    ["maxRuns", "Log max runs per service"],
+  ].forEach(([key, label]) => {
+    const before = savedLogs[key] ?? DEFAULT_LOG_SETTINGS[key];
+    const after = logSettings[key] ?? DEFAULT_LOG_SETTINGS[key];
+    if (String(before) !== String(after)) changes.push({ kind: "changed", text: `${label}: ${before} → ${after}` });
+  });
   const savedPaths = savedConfig?.config?.basePaths || {};
   const savedServices = savedConfig?.services || {};
 
@@ -806,6 +836,13 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   const [pickerBusy, setPickerBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState(null); // { kind: "path" | "service", name }
   const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
+  const [logSettings, setLogSettings] = useState({}); // config.logs; unset keys use DEFAULT_LOG_SETTINGS
+  const [runConfig, setRunConfig] = useState({ services: {} }); // run-config.json (this machine only)
+  const [savedRunConfig, setSavedRunConfig] = useState({ services: {} });
+  const [archiveStats, setArchiveStats] = useState(null);
+  const [archiveStatsError, setArchiveStatsError] = useState("");
+  const [confirmClearArchives, setConfirmClearArchives] = useState(false);
+  const [clearingArchives, setClearingArchives] = useState(false);
 
   const processedTargetIdRef = useRef(null);
 
@@ -850,8 +887,17 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
       const payload = toConfigPayload(data);
       setConfig(payload);
       setBasePaths(payload.config?.basePaths || {});
+      setLogSettings(payload.config?.logs || {});
       setServices(payload.services || {});
       setRuntimeInfo(data.runtime || null);
+      try {
+        const loadedRunConfig = await api.get("/run-config");
+        setRunConfig(loadedRunConfig || { services: {} });
+        setSavedRunConfig(loadedRunConfig || { services: {} });
+      } catch {
+        setRunConfig({ services: {} });
+        setSavedRunConfig({ services: {} });
+      }
       if (onConfigReload) {
         onConfigReload();
       }
@@ -882,6 +928,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
           currentServices = payload.services || {};
           setConfig(payload);
           setBasePaths(payload.config?.basePaths || {});
+          setLogSettings(payload.config?.logs || {});
           setServices(currentServices);
         } catch (e) {
           // ignore
@@ -913,6 +960,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
       };
 
       // Like other edits, the clone is only written to the config when the user clicks Save.
+      setRunConfig((previous) =>
+        previous.services?.[baseName]
+          ? { services: { ...previous.services, [newName]: JSON.parse(JSON.stringify(previous.services[baseName])) } }
+          : previous
+      );
       setServices(updatedServices);
       setCurrentTab(1);
       setSelectedService(newName);
@@ -965,6 +1017,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
       }
     });
     // Like other edits, the rename is only written to the config when the user clicks Save.
+    setRunConfig((previous) => {
+      if (!previous.services?.[serviceToRename]) return previous;
+      const { [serviceToRename]: moved, ...rest } = previous.services;
+      return { services: { ...rest, [trimmed]: moved } };
+    });
     setServices(updatedServices);
     setSelectedService(trimmed);
     setRenameDialogOpen(false);
@@ -1013,13 +1070,19 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     }
   }, [filteredServices, selectedService, services, loading]);
 
-  const isDirty = useMemo(() => {
+  const isConfigDirty = useMemo(() => {
     if (!config) return false;
     return (
       stableConfigString(basePaths) !== stableConfigString(config.config?.basePaths || {}) ||
-      stableConfigString(services) !== stableConfigString(config.services || {})
+      stableConfigString(services) !== stableConfigString(config.services || {}) ||
+      stableConfigString(logSettings) !== stableConfigString(config.config?.logs || {})
     );
-  }, [basePaths, services, config]);
+  }, [basePaths, services, logSettings, config]);
+  const isRunConfigDirty = useMemo(
+    () => JSON.stringify(cleanRunConfig(runConfig)) !== JSON.stringify(cleanRunConfig(savedRunConfig)),
+    [runConfig, savedRunConfig]
+  );
+  const isDirty = isConfigDirty || isRunConfigDirty;
 
   const errorIssues = useMemo(
     () => validationResult.issues.filter((issue) => issue.severity === "error"),
@@ -1028,8 +1091,14 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   const servicesWithErrors = useMemo(() => new Set(errorIssues.map((issue) => issue.scope)), [errorIssues]);
 
   const pendingChanges = useMemo(
-    () => (confirmSaveOpen ? summarizeConfigChanges(config, basePaths, services) : []),
-    [confirmSaveOpen, config, basePaths, services]
+    () =>
+      confirmSaveOpen
+        ? [
+            ...summarizeConfigChanges(config, basePaths, services, logSettings),
+            ...summarizeRunConfigChanges(savedRunConfig, runConfig),
+          ]
+        : [],
+    [confirmSaveOpen, config, basePaths, services, logSettings, savedRunConfig, runConfig]
   );
 
   // Save never writes directly: it opens a confirmation listing every change first.
@@ -1053,14 +1122,39 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     try {
       const updatedConfig = {
         ...config,
-        config: {
-          ...config.config,
-          basePaths,
-        },
+        config: (() => {
+          const { logs: _previousLogs, ...restConfig } = config.config || {};
+          const cleanedLogs = Object.fromEntries(
+            Object.entries(logSettings).filter(([, value]) => value !== undefined && value !== "")
+          );
+          return {
+            ...restConfig,
+            basePaths,
+            ...(Object.keys(cleanedLogs).length ? { logs: cleanedLogs } : {}),
+          };
+        })(),
         services,
       };
-      await api.put("/config", updatedConfig);
-      setConfig(updatedConfig);
+      if (isConfigDirty) {
+        await api.put("/config", updatedConfig);
+        setConfig(updatedConfig);
+      }
+      if (isRunConfigDirty) {
+        // Apply only the services edited here on top of the latest file, so quick edits made from the
+        // Dashboard in the meantime are not overwritten.
+        const mine = cleanRunConfig(runConfig).services;
+        const before = cleanRunConfig(savedRunConfig).services;
+        const latest = cleanRunConfig(await api.get("/run-config").catch(() => ({ services: {} }))).services;
+        new Set([...Object.keys(mine), ...Object.keys(before)]).forEach((name) => {
+          if (JSON.stringify(mine[name] || null) === JSON.stringify(before[name] || null)) return;
+          if (mine[name]) latest[name] = mine[name];
+          else delete latest[name];
+        });
+        const merged = { services: latest };
+        await api.put("/run-config", merged);
+        setRunConfig(merged);
+        setSavedRunConfig(merged);
+      }
       if (onConfigReload) {
         onConfigReload();
       }
@@ -1071,6 +1165,52 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
       setSaving(false);
     }
   };
+
+  const effectiveLogSettings = { ...DEFAULT_LOG_SETTINGS, ...Object.fromEntries(Object.entries(logSettings).filter(([, value]) => value !== undefined && value !== "")) };
+
+  // Numbers are clamped to 1..max; an empty field means "use the default".
+  const updateLogSetting = (key, rawValue, max) => {
+    setLogSettings((previous) => {
+      const next = { ...previous };
+      if (key === "previousRuns") {
+        if (rawValue === undefined) delete next.previousRuns;
+        else next.previousRuns = rawValue;
+        return next;
+      }
+      const parsed = parseInt(rawValue, 10);
+      if (Number.isNaN(parsed)) delete next[key];
+      else next[key] = Math.min(Math.max(parsed, 1), max);
+      return next;
+    });
+  };
+
+  const loadArchiveStats = useCallback(async () => {
+    setArchiveStatsError("");
+    try {
+      setArchiveStats(await api.get("/log-archive/stats"));
+    } catch (error) {
+      setArchiveStats(null);
+      setArchiveStatsError(`Could not load log storage: ${error.message}`);
+    }
+  }, []);
+
+  const clearArchives = async () => {
+    setConfirmClearArchives(false);
+    setClearingArchives(true);
+    try {
+      const result = await api.post("/log-archive/clear", {});
+      showSnackbar(`Freed ${formatBytes(result.deleted?.bytes || 0)} — deleted ${result.deleted?.files || 0} previous run logs.`, "success");
+    } catch (error) {
+      showSnackbar(`Could not delete previous runs: ${error.message}`, "error");
+    } finally {
+      setClearingArchives(false);
+      loadArchiveStats();
+    }
+  };
+
+  useEffect(() => {
+    if (currentTab === 2) loadArchiveStats();
+  }, [currentTab, loadArchiveStats]);
 
   const copyToken = async (pathKey) => {
     try {
@@ -1231,6 +1371,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   }, [pendingDelete, services]);
 
   const removeService = (serviceName) => {
+    setRunConfig((previous) => {
+      if (!previous.services?.[serviceName]) return previous;
+      const { [serviceName]: _removed, ...rest } = previous.services;
+      return { services: rest };
+    });
     setServices((prev) => {
       const nextServices = { ...prev };
       delete nextServices[serviceName];
@@ -1292,6 +1437,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
         >
           <Tab icon={<StorageIcon fontSize="small" />} iconPosition="start" label={`Paths (${Object.keys(basePaths).length})`} />
           <Tab icon={<SettingsIcon fontSize="small" />} iconPosition="start" label={`Services (${Object.keys(services).length})`} />
+          <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Logs" />
         </Tabs>
 
         <Box sx={{ flex: 1 }} />
@@ -1311,14 +1457,16 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
               </IconButton>
             </span>
           </Tooltip>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<AddIcon />}
-            onClick={() => (currentTab === 0 ? openPathDialog() : setAddServiceDialog(true))}
-          >
-            {currentTab === 0 ? "Add path" : "Add service"}
-          </Button>
+          {currentTab !== 2 ? (
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => (currentTab === 0 ? openPathDialog() : setAddServiceDialog(true))}
+            >
+              {currentTab === 0 ? "Add path" : "Add service"}
+            </Button>
+          ) : null}
           <Button
             size="small"
             variant="contained"
@@ -1509,6 +1657,10 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                   onPickDirectory={pickDirectory}
                   onClone={() => cloneService(selectedService)}
                   onRename={() => handleOpenRename(selectedService)}
+                  runSettings={runConfig.services?.[selectedService] || {}}
+                  onRunSettingsChange={(next) =>
+                    setRunConfig((previous) => ({ services: { ...previous.services, [selectedService]: next } }))
+                  }
                   validationIssues={validationResult.issues}
                 />
               ) : (
@@ -1527,6 +1679,128 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
             </Box>
           </Box>
         )}
+        {currentTab === 2 && (
+          <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto", p: { xs: 2, md: 3 } }}>
+            <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 3fr) minmax(0, 2fr)" }, gap: 2.5, alignItems: "start" }}>
+              <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2.5, p: 2.5 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Log retention</Typography>
+                <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
+                  Every start or restart writes a new log. Choose what happens to earlier runs. The current run of each
+                  service is never deleted. Changes apply after you Save.
+                </Typography>
+
+                <Typography variant="overline" sx={{ fontWeight: 800, color: "text.secondary" }}>Previous runs</Typography>
+                <ToggleButtonGroup
+                  exclusive
+                  size="small"
+                  value={effectiveLogSettings.previousRuns}
+                  onChange={(_, value) => value && updateLogSetting("previousRuns", value === DEFAULT_LOG_SETTINGS.previousRuns ? undefined : value)}
+                  sx={{ display: "flex", mb: 1, "& .MuiToggleButton-root": { flex: 1, textTransform: "none", py: 1, alignItems: "flex-start", flexDirection: "column", textAlign: "left" } }}
+                >
+                  <ToggleButton value="archive">
+                    <Typography sx={{ fontWeight: 700, fontSize: "0.85rem" }}>Archive</Typography>
+                    <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Keep earlier runs for a limited time</Typography>
+                  </ToggleButton>
+                  <ToggleButton value="delete">
+                    <Typography sx={{ fontWeight: 700, fontSize: "0.85rem" }}>Delete</Typography>
+                    <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>Remove earlier runs when a new run starts</Typography>
+                  </ToggleButton>
+                </ToggleButtonGroup>
+
+                <Grid container spacing={2} sx={{ mt: 0.5 }}>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      type="number"
+                      label="Keep archived runs for (days)"
+                      value={logSettings.retentionDays ?? ""}
+                      placeholder={`${DEFAULT_LOG_SETTINGS.retentionDays} (default)`}
+                      onChange={(event) => updateLogSetting("retentionDays", event.target.value, 365)}
+                      disabled={effectiveLogSettings.previousRuns === "delete"}
+                      InputLabelProps={{ shrink: true }}
+                      inputProps={{ min: 1, max: 365 }}
+                      helperText="Older archived runs are deleted permanently."
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      type="number"
+                      label="Keep at most (runs per service)"
+                      value={logSettings.maxRuns ?? ""}
+                      placeholder={`${DEFAULT_LOG_SETTINGS.maxRuns} (default)`}
+                      onChange={(event) => updateLogSetting("maxRuns", event.target.value, 500)}
+                      disabled={effectiveLogSettings.previousRuns === "delete"}
+                      InputLabelProps={{ shrink: true }}
+                      inputProps={{ min: 1, max: 500 }}
+                      helperText="Beyond this, the oldest runs are deleted."
+                    />
+                  </Grid>
+                </Grid>
+
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  {effectiveLogSettings.previousRuns === "delete"
+                    ? "Only the current run of each service is kept. Earlier runs are deleted as soon as a service starts again."
+                    : `Earlier runs are kept for up to ${effectiveLogSettings.retentionDays} day${effectiveLogSettings.retentionDays === 1 ? "" : "s"} and at most ${effectiveLogSettings.maxRuns} per service, whichever limit is reached first.`}
+                </Alert>
+              </Box>
+
+              <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2.5, p: 2.5 }}>
+                <Stack direction="row" alignItems="center" justifyContent="space-between">
+                  <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Old logs on disk</Typography>
+                  <Tooltip title="Refresh">
+                    <IconButton size="small" onClick={loadArchiveStats}>
+                      <RefreshIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
+
+                {!archiveStats ? (
+                  <Typography variant="body2" sx={{ color: "text.secondary", mt: 1 }}>
+                    {archiveStatsError || "Loading…"}
+                  </Typography>
+                ) : archiveStats.files === 0 ? (
+                  <Box sx={{ mt: 1.5, p: 2, borderRadius: 2, backgroundColor: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)" }}>
+                    <Typography sx={{ fontWeight: 700 }}>Nothing to clean up</Typography>
+                    <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                      No logs from earlier runs are stored. Logs of runs in progress are never counted here.
+                    </Typography>
+                  </Box>
+                ) : (
+                  <>
+                    <Typography sx={{ fontSize: "2rem", fontWeight: 800, lineHeight: 1.1, mt: 1.5 }}>
+                      {formatBytes(archiveStats.bytes)}
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
+                      {archiveStats.files} log file{archiveStats.files === 1 ? "" : "s"} from runs that have already ended,
+                      across {archiveStats.services} service{archiveStats.services === 1 ? "" : "s"}. Logs of runs in progress are not included.
+                    </Typography>
+
+                    <Box sx={{ mt: 2.5, pt: 2, borderTop: "1px solid rgba(148,163,184,0.2)" }}>
+                      <Typography sx={{ fontWeight: 700, fontSize: "0.9rem" }}>Free up this space</Typography>
+                      <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.25, mb: 1.5 }}>
+                        Removes all previous run logs for every service now. Services keep running and keep logging to their
+                        current run. This cannot be undone.
+                      </Typography>
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        startIcon={clearingArchives ? <CircularProgress size={14} color="inherit" /> : <DeleteIcon />}
+                        onClick={() => setConfirmClearArchives(true)}
+                        disabled={clearingArchives}
+                      >
+                        Delete previous run logs · free {formatBytes(archiveStats.bytes)}
+                      </Button>
+                    </Box>
+                  </>
+                )}
+              </Box>
+            </Box>
+          </Box>
+        )}
+
       </Box>
 
       <Dialog open={addPathDialog} onClose={closePathDialog} maxWidth="md" fullWidth>
@@ -1732,7 +2006,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
         <DialogTitle sx={{ fontWeight: 800 }}>Save configuration?</DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Typography variant="body2" sx={{ color: "text.secondary", mb: 1.5 }}>
-            These changes will be written to the configuration file:
+            These changes will be saved:
           </Typography>
           <Stack spacing={0.75} sx={{ maxHeight: 320, overflowY: "auto" }}>
             {pendingChanges.map((change, index) => (
@@ -1751,6 +2025,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
               <Typography variant="body2" sx={{ color: "text.secondary" }}>No changes to save.</Typography>
             ) : null}
           </Stack>
+          {isRunConfigDirty ? (
+            <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 1.5 }}>
+              Run configuration is saved on this machine only and is never committed. Values are not shown here.
+            </Typography>
+          ) : null}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setConfirmSaveOpen(false)}>Cancel</Button>
@@ -1761,6 +2040,26 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
             disabled={saving || pendingChanges.length === 0}
           >
             Save {pendingChanges.length} change{pendingChanges.length === 1 ? "" : "s"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={confirmClearArchives} onClose={() => setConfirmClearArchives(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Delete previous run logs?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            {archiveStats
+              ? `This frees ${formatBytes(archiveStats.bytes)} by permanently deleting ${archiveStats.files} log files from earlier runs across ${archiveStats.services} services.`
+              : "All logs from earlier runs will be deleted permanently."}
+          </Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 1 }}>
+            Running services are not affected — they keep logging to their current run. This cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setConfirmClearArchives(false)}>Cancel</Button>
+          <Button variant="contained" color="error" startIcon={<DeleteIcon />} onClick={clearArchives}>
+            Delete and free space
           </Button>
         </DialogActions>
       </Dialog>

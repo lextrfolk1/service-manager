@@ -33,6 +33,7 @@ import {
   Stop as StopIcon,
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
+import { RunConfigDialog, cleanRunConfig, countRunConfigValues } from "../components/RunConfigEditor";
 import api from "../services/api";
 import {
   DEFAULT_GROUPS,
@@ -212,6 +213,9 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
   const [pendingMove, setPendingMove] = useState(null); // { serviceName, from, to } awaiting confirmation
+  const [runConfig, setRunConfig] = useState({ services: {} }); // run-config.json (this machine only)
+  const [runConfigTarget, setRunConfigTarget] = useState(""); // service whose run configuration dialog is open
+  const [savingRunConfig, setSavingRunConfig] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -292,6 +296,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
 
   useEffect(() => {
     loadServices(true);
+    loadRunConfig();
   }, []);
 
   useEffect(() => {
@@ -330,6 +335,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   useEffect(() => {
     const interval = setInterval(async () => {
       const latest = await loadServices(false);
+      loadRunConfig();
       if (latest.length) await loadServiceStatuses(latest.map(normalizeService));
     }, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
@@ -338,6 +344,40 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
   }));
+
+  async function loadRunConfig() {
+    try {
+      const data = await api.get("/run-config");
+      setRunConfig((previous) => (isSameJson(previous, data) ? previous : data || { services: {} }));
+    } catch {
+      // Older backend without run configuration: keep cards as they are
+    }
+  }
+
+  // Saves one service's run configuration on top of the latest file, then optionally restarts it.
+  async function handleSaveRunConfig(serviceName, draft, restartAfterSave) {
+    setSavingRunConfig(true);
+    try {
+      const latest = cleanRunConfig(await api.get("/run-config").catch(() => ({ services: {} })));
+      const entry = cleanRunConfig({ services: { [serviceName]: draft } }).services[serviceName];
+      if (entry) latest.services[serviceName] = entry;
+      else delete latest.services[serviceName];
+      const saved = await api.put("/run-config", latest);
+      setRunConfig(saved || latest);
+      setRunConfigTarget("");
+      showToast(
+        restartAfterSave
+          ? `Run configuration saved — restarting ${serviceName}`
+          : `Run configuration saved for ${serviceName}. It applies the next time it starts.`,
+        "success"
+      );
+      if (restartAfterSave) executeSingleAction(serviceName, "restart");
+    } catch (err) {
+      showToast(`Could not save run configuration: ${err.message}`, "error");
+    } finally {
+      setSavingRunConfig(false);
+    }
+  }
 
   async function loadServices(showSpinner = false) {
     try {
@@ -841,6 +881,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     onBranchCheckout: (...args) => latestHandlersRef.current.handleBranchCheckout(...args),
     onGitPull: (...args) => latestHandlersRef.current.handleGitPull(...args),
     onGitPush: (...args) => latestHandlersRef.current.handleGitPush(...args),
+    onEditRunConfig: (serviceName) => setRunConfigTarget(serviceName),
     onViewLogs: (...args) => latestHandlersRef.current.onViewLogs?.(...args),
     onOpenHelp: (...args) => latestHandlersRef.current.onOpenHelp?.(...args),
     onCloneService: (...args) => latestHandlersRef.current.onCloneService?.(...args),
@@ -1216,6 +1257,9 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                         onBranchCheckout={cardHandlers.onBranchCheckout}
                         onGitPull={cardHandlers.onGitPull}
                         onGitPush={cardHandlers.onGitPush}
+                        onEditRunConfig={cardHandlers.onEditRunConfig}
+                        runConfigCount={countRunConfigValues(runConfig.services?.[service.name])}
+                        buildMode={buildEnabled}
                         showGitBranches={showGitBranches}
                         showLiveMetrics={showLiveMetrics}
                         metrics={metrics[service.name] || null}
@@ -1251,6 +1295,9 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                   onBranchCheckout={cardHandlers.onBranchCheckout}
                   onGitPull={cardHandlers.onGitPull}
                   onGitPush={cardHandlers.onGitPush}
+                  onEditRunConfig={cardHandlers.onEditRunConfig}
+                  runConfigCount={countRunConfigValues(runConfig.services?.[service.name])}
+                  buildMode={buildEnabled}
                   onViewLogs={onViewLogs ? cardHandlers.onViewLogs : undefined}
                   onOpenHelp={onOpenHelp ? cardHandlers.onOpenHelp : undefined}
                   onCloneService={onCloneService ? cardHandlers.onCloneService : undefined}
@@ -1261,6 +1308,17 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
           )}
         </Stack>
       </Paper>
+
+      <RunConfigDialog
+        open={Boolean(runConfigTarget)}
+        serviceName={runConfigTarget}
+        serviceType={normalizedServices.find((entry) => entry.name === runConfigTarget)?.type || ""}
+        initialSettings={runConfig.services?.[runConfigTarget] || {}}
+        isRunning={Boolean(displayStates[runConfigTarget]?.running)}
+        saving={savingRunConfig}
+        onClose={() => setRunConfigTarget("")}
+        onSave={(draft, restartAfterSave) => handleSaveRunConfig(runConfigTarget, draft, restartAfterSave)}
+      />
 
       <Dialog open={Boolean(pendingMove)} onClose={() => setPendingMove(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 800 }}>Move service?</DialogTitle>

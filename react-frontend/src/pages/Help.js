@@ -89,7 +89,8 @@ const FEATURE_GROUPS = [
     items: [
       ["Live streaming", "The current log streams live while the service writes to it. The indicator shows Live, Idle or Stream error.", "Logs tab"],
       ["Several services at once", "Open services as tabs and switch between them. The left list shows which services are running (green dot) and lets you pin favourites to the top.", "Logs tab: service list and tabs"],
-      ["Daily files & history", "Each service writes one log file per day. Earlier days move to the archive and stay readable for 7 days.", "File dropdown in the log toolbar"],
+      ["One log per run", "Every start or restart writes a separate log, so runs never mix. The run picker lists runs by day with start time, how long each ran and its size; the viewer jumps to the current run automatically. How long earlier runs are kept is set in Admin › Logs.", "Run picker in the log toolbar"],
+      ["Log retention", "Choose whether earlier runs are archived or deleted when a service restarts, how many days archived runs are kept, and how many per service (defaults: archive, 3 days, 20 runs). See how much space they use and delete them all in one click.", "Admin › Logs"],
       ["Search in log", "Search the current file and step through matches with Previous / Next; the matching line is highlighted.", "Search box in the log toolbar"],
       ["Viewer tools", "Wrap long lines, copy the visible log, clear the file, reload it, and Focus mode to hide everything but the log.", "Icons in the log toolbar"],
       ["Git & build output", "Output from git pull and the build step is written into the service log, marked [GIT PULL], [BUILD] or [GIT PULL SKIPPED].", "In the service's log"],
@@ -104,6 +105,7 @@ const FEATURE_GROUPS = [
       ["Service editor", "Edit type, port, group, description, start / build / stop / health commands and docs / health endpoints. Each field is explained in Help › Configuration.", "Admin › Services"],
       ["Path modes", "Use a direct folder, or a base path plus sub-folder. The editor shows the final folder it resolves to.", "Admin › Services › Location"],
       ["Dependencies", "Choose the services that must start first from a searchable list.", "Admin › Services › Dependencies"],
+      ["Run configuration", "Add JVM options (Java), arguments and environment variables such as API keys for this machine only. Fields adapt to the service type. Values are kept out of the shared config, never committed, and applied without editing the start command.", "Dashboard: ⋮ › Run configuration… or the teal Run config chip; also Admin › Services"],
       ["Clone, rename, delete", "Clone copies every setting and picks the next free port. Rename updates every service that depends on it. Delete shows what would break. None of them touch the config file until you Save.", "Service list hover icons and editor header"],
       ["Validation", "Missing start command, duplicate ports, unknown dependencies and dependency cycles are listed in a red banner; click one to jump to it. Save stays blocked until they are fixed.", "Banner under the Admin header"],
       ["Save with confirmation", "Nothing is written to the config file until you click Save and confirm. The confirmation lists every added, removed and changed path and service. An \"Unsaved changes\" chip shows when there is something to save; Reload discards it.", "Admin header"],
@@ -265,7 +267,46 @@ const SERVICE_FIELDS = [
   },
 ];
 
+// Run configuration: per-machine extras, edited in Admin › Services › Run configuration, never committed.
+SERVICE_FIELDS.push(
+  {
+    name: "jvmArgs",
+    required: "No",
+    admin: "Services › Run configuration (Java only)",
+    what: "Extra JVM options for this service on this machine — heap size, system properties, debug agent.",
+    how: `Added when the service starts without changing the shared start command: merged into -Dspring-boot.run.jvmArguments for mvn spring-boot:run, placed after java for java commands, or put where the command has \${jvmArgs}.`,
+    examples: [["Heap", "-Xmx1g"], ["Profile", "-Dspring.profiles.active=local"], ["Debug", "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005"]],
+    tip: "Shown only for Java services. To check what a run actually used, look at the [RUN CONFIG] and [RUN COMMAND] lines at the top of its log.",
+  },
+  {
+    name: "args",
+    required: "No",
+    admin: "Services › Run configuration",
+    what: "Extra arguments passed to the application when it starts.",
+    how: `Java: passed via -Dspring-boot.run.arguments. npm: passed after -- to the script. Python and others: added to the end of the start command (or where the command has \${args}). Not available for Docker and database services.`,
+    examples: [["Java", "--server.port=9090"], ["Python", "--reload --workers 2"], ["npm", "--port 5174"]],
+  },
+  {
+    name: "env",
+    required: "No",
+    admin: "Services › Run configuration",
+    what: "Environment variables for the service on this machine — API keys, passwords, PYTHONPATH and similar.",
+    how: "Passed to the start, build, stop and health commands. Empty values are treated as not set. For Docker services, write -e NAME (without a value) in the start command and Docker takes the value from here.",
+    examples: [["Python", "OPENAI_API_KEY"], ["Python", "PYTHONPATH"], ["Docker", "CLICKHOUSE_PASSWORD"]],
+    tip: "Keep secrets here rather than in the start command — this file is never committed.",
+  }
+);
+
 const GLOBAL_FIELDS = [
+  {
+    name: "config.logs",
+    required: "No",
+    admin: "Admin › Logs",
+    what: "How long logs from earlier runs are kept.",
+    how: "previousRuns is \"archive\" (keep earlier runs within the limits) or \"delete\" (remove them when a new run starts). retentionDays and maxRuns limit archived runs per service; whichever is reached first applies. The current run is never deleted.",
+    examples: [["Defaults", '{ "previousRuns": "archive", "retentionDays": 3, "maxRuns": 20 }'], ["Keep only the latest", '{ "previousRuns": "delete" }']],
+    tip: "Settings apply immediately after Save — no backend restart needed.",
+  },
   {
     name: "config.basePaths",
     required: "No",
@@ -380,7 +421,7 @@ const TROUBLESHOOTING = [
     symptom: "The log view stays empty or stops updating.",
     steps: [
       "Check the indicator in the Logs tab: Live means streaming, Idle means nothing is open, Stream error means the connection dropped.",
-      "Only today's file streams live; files from earlier days are read-only snapshots. Pick the live file in the file dropdown.",
+      "Only the current run streams live; earlier runs are read-only. Pick \"Current run\" (green dot) in the run picker.",
       "Use the reload icon in the log toolbar. The service must be running and writing output.",
     ],
   },
@@ -731,6 +772,7 @@ const CONFIG_SECTIONS = [
   { key: "lifecycle", title: "Build & lifecycle", icon: <StartIcon />, color: "#16a34a", subtitle: "Build, stop and readiness behaviour", fields: ["build", "stopCommand", "healthCommand", "daemon"] },
   { key: "dependencies", title: "Dependencies", icon: <GitIcon />, color: "#0891b2", subtitle: "Start order between services", fields: ["dependsOn"] },
   { key: "endpoints", title: "Endpoints", icon: <LinkIcon />, color: "#d97706", subtitle: "Links shown on the service card", fields: ["docsPath", "healthPath"] },
+  { key: "run", title: "Run configuration", icon: <TerminalIcon />, color: "#0d9488", subtitle: "Per-machine extras: JVM options, arguments and secrets — never committed", fields: ["jvmArgs", "args", "env"] },
   { key: "git", title: "Git", icon: <CloudUploadIcon />, color: "#7c3aed", subtitle: "Pull and branch features", fields: ["gitAutoPull", "enableGit"] },
   { key: "global", title: "Global settings", icon: <AdminIcon />, color: "#475569", subtitle: "Settings under config, shared by all services", global: true },
   { key: "example", title: "Full example", icon: <TerminalIcon />, color: "#0f172a", subtitle: "A complete config with base paths and two services", example: true },

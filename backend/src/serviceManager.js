@@ -1,6 +1,7 @@
 const { spawn, exec } = require("child_process");
 const fs = require("fs");
 const logger = require("./logger");
+const runConfig = require("./runConfig");
 const {
   killByPort,
   waitForPort,
@@ -358,10 +359,15 @@ class ServiceManager {
 
     // Resolve placeholders in path and command using basePaths
     const resolvedDir = svc.path ? resolveHome(resolvePlaceholders(svc.path, this.basePaths)) : null;
-    const resolvedCommand = resolvePlaceholders(svc.command, this.basePaths);
+    // Run configuration (run-config.json): env vars, JVM args and program args for this machine.
+    const runSettings = runConfig.forService(name, svc.type);
+    const applied = runConfig.applyToCommand(resolvePlaceholders(svc.command, this.basePaths), runSettings);
+    const resolvedCommand = applied.command;
+    const runEnv = { ...process.env, ...applied.extraEnv, ...runSettings.env };
     
     const logFile = logger.createLogFile(name);
     const out = fs.openSync(logFile, "a");
+    fs.appendFileSync(logFile, runConfig.describeRun({ command: resolvedCommand, settings: runSettings, extraEnv: applied.extraEnv }));
     const gitAutoPull = svc.gitAutoPull !== false;
 
     const canPull = gitAutoPull && resolvedDir && await gitUtils.hasUpstream(resolvedDir);
@@ -399,7 +405,7 @@ class ServiceManager {
       await new Promise((resolve, reject) => {
         exec(
           resolvedBuild,
-          { cwd: resolvedDir, shell: true },
+          { cwd: resolvedDir, shell: true, env: runEnv },
           (err, stdout, stderr) => {
             fs.appendFileSync(logFile, `\n[BUILD STDOUT]\n${stdout || ""}`);
             fs.appendFileSync(logFile, `\n[BUILD STDERR]\n${stderr || ""}`);
@@ -456,7 +462,8 @@ class ServiceManager {
 
     const spawnOptions = {
       shell: true,
-      stdio: ["ignore", out, out]
+      stdio: ["ignore", out, out],
+      env: runEnv
     };
 
     if (resolvedDir) {
@@ -572,7 +579,7 @@ class ServiceManager {
       await new Promise((resolve, reject) => {
         exec(
           resolvedStopCommand,
-          { cwd: resolvedDir, shell: true, timeout: 30000 },
+          { cwd: resolvedDir, shell: true, timeout: 30000, env: { ...process.env, ...runConfig.forService(name, svc.type).env } },
           (err) => {
             if (err) {
               // If stopCommand returned an error, verify if port is already not in use (already stopped)
@@ -825,7 +832,7 @@ class ServiceManager {
       return new Promise((resolve) => {
         exec(
           resolvedHealthCommand,
-          { cwd: resolvedDir, shell: true },
+          { cwd: resolvedDir, shell: true, env: { ...process.env, ...runConfig.forService(name, svc.type).env } },
           (err) => {
             // If command exits with code 0, service is running
             resolve(!err);

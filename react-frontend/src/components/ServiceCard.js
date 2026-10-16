@@ -7,7 +7,6 @@ import {
   Chip,
   CircularProgress,
   Collapse,
-  Divider,
   IconButton,
   ListItemIcon,
   ListItemText,
@@ -27,13 +26,13 @@ import {
   DownloadRounded as DownloadRoundedIcon,
   FavoriteBorderRounded as FavoriteBorderIcon,
   Language as LanguageIcon,
-  Launch as LaunchIcon,
   MenuBookRounded as MenuBookIcon,
   MoreVert as MoreVertIcon,
   OpenInNew as OpenInNewIcon,
   PlayArrowRounded as PlayArrowIcon,
   RefreshRounded as RefreshIcon,
   Settings as SettingsIcon,
+  Tune as TuneIcon,
   SpeedRounded as SpeedIcon,
   StopRounded as StopIcon,
   Memory as MemoryIcon,
@@ -59,6 +58,9 @@ function ServiceCard({
   onBranchCheckout,
   onGitPull,
   onGitPush,
+  onEditRunConfig,
+  runConfigCount = 0,
+  buildMode = false,
   onFreePort,
   onViewLogs,
   onOpenHelp,
@@ -78,7 +80,6 @@ function ServiceCard({
   const [copiedLink, setCopiedLink] = useState(false);
   const links = useMemo(() => getServiceLinks(service), [service]);
   const primaryDocsLink = links.find((l) => l.isDocs);
-  const healthLink = links.find((l) => l.isHealth);
   const isNonHttp = links[0]?.isCopyOnly;
   const isFrontend = useMemo(() => isFrontendService(service), [service]);
   const docsBadgeLabel = useMemo(() => getDocsLabel(service), [service]);
@@ -236,6 +237,26 @@ function ServiceCard({
           <ListItemText primary="Clone in Admin" primaryTypographyProps={{ fontSize: "0.82rem", fontWeight: 600 }} />
         </MenuItem>
 
+        {onEditRunConfig ? (
+          <MenuItem
+            onClick={() => {
+              setMenuAnchorEl(null);
+              onEditRunConfig(service.name);
+            }}
+            sx={{ py: 0.75 }}
+          >
+            <ListItemIcon sx={{ minWidth: 28 }}>
+              <TuneIcon fontSize="small" sx={{ fontSize: 16 }} />
+            </ListItemIcon>
+            <ListItemText
+              primary="Run configuration…"
+              secondary={runConfigCount ? `${runConfigCount} value${runConfigCount === 1 ? "" : "s"} set` : "JVM options, arguments, env vars"}
+              primaryTypographyProps={{ fontSize: "0.82rem" }}
+              secondaryTypographyProps={{ fontSize: "0.7rem" }}
+            />
+          </MenuItem>
+        ) : null}
+
         <MenuItem
           onClick={() => {
             setMenuAnchorEl(null);
@@ -249,7 +270,8 @@ function ServiceCard({
           <ListItemText primary="Configure in Admin" primaryTypographyProps={{ fontSize: "0.82rem" }} />
         </MenuItem>
 
-        {service.enableGit !== false && status.git?.isGitRepo ? (
+        {/* The branch row has its own pull button; offer it here only while that row is hidden. */}
+        {!showGitBranches && service.enableGit !== false && status.git?.isGitRepo ? (
           <MenuItem
             onClick={() => {
               setMenuAnchorEl(null);
@@ -264,87 +286,6 @@ function ServiceCard({
           </MenuItem>
         ) : null}
 
-        <MenuItem
-          onClick={() => {
-            setMenuAnchorEl(null);
-            if (onViewLogs) onViewLogs(service.name);
-          }}
-          sx={{ py: 0.75 }}
-        >
-          <ListItemIcon sx={{ minWidth: 28 }}>
-            <LaunchIcon fontSize="small" sx={{ fontSize: 16 }} />
-          </ListItemIcon>
-          <ListItemText primary="View Logs" primaryTypographyProps={{ fontSize: "0.82rem" }} />
-        </MenuItem>
-
-        {status.running && service.port ? (
-          <>
-            <Divider sx={{ my: 0.5 }} />
-            <MenuItem
-              component="a"
-              href={`http://localhost:${service.port}/`}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => setMenuAnchorEl(null)}
-              sx={{ py: 0.75 }}
-            >
-              <ListItemIcon sx={{ minWidth: 28 }}>
-                <LanguageIcon fontSize="small" sx={{ fontSize: 16, color: "primary.main" }} />
-              </ListItemIcon>
-              <ListItemText
-                primary="Open Web UI / Root"
-                secondary={`localhost:${service.port}`}
-                primaryTypographyProps={{ fontSize: "0.82rem" }}
-                secondaryTypographyProps={{ fontSize: "0.68rem" }}
-              />
-              <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled", ml: 0.5 }} />
-            </MenuItem>
-
-            {primaryDocsLink ? (
-              <MenuItem
-                component="a"
-                href={primaryDocsLink.url}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setMenuAnchorEl(null)}
-                sx={{ py: 0.75 }}
-              >
-                <ListItemIcon sx={{ minWidth: 28 }}>
-                  <MenuBookIcon fontSize="small" sx={{ fontSize: 16, color: "#4f46e5" }} />
-                </ListItemIcon>
-                <ListItemText
-                  primary={primaryDocsLink.label}
-                  secondary={primaryDocsLink.path}
-                  primaryTypographyProps={{ fontSize: "0.82rem", color: "#4f46e5", fontWeight: 600 }}
-                  secondaryTypographyProps={{ fontSize: "0.68rem" }}
-                />
-                <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled", ml: 0.5 }} />
-              </MenuItem>
-            ) : null}
-
-            {healthLink ? (
-              <MenuItem
-                component="a"
-                href={healthLink.url}
-                target="_blank"
-                rel="noreferrer"
-                onClick={() => setMenuAnchorEl(null)}
-                sx={{ py: 0.75 }}
-              >
-                <ListItemIcon sx={{ minWidth: 28 }}>
-                  <FavoriteBorderIcon fontSize="small" sx={{ fontSize: 16, color: "#166534" }} />
-                </ListItemIcon>
-                <ListItemText
-                  primary="Health Endpoint"
-                  secondary={healthLink.path}
-                  primaryTypographyProps={{ fontSize: "0.82rem" }}
-                  secondaryTypographyProps={{ fontSize: "0.68rem" }}
-                />
-                <OpenInNewIcon sx={{ fontSize: 12, color: "text.disabled", ml: 0.5 }} />
-              </MenuItem>
-            ) : null}
-          </>
-        ) : null}
       </Menu>
 
       {/* Direct App & API Links Dropdown Menu */}
@@ -661,6 +602,28 @@ function ServiceCard({
           )
         ) : null}
 
+        {runConfigCount > 0 && onEditRunConfig ? (
+          <Tooltip title="Run configuration for this machine — click to edit">
+            <Chip
+              label={`Run config · ${runConfigCount}`}
+              size="small"
+              clickable
+              onClick={() => onEditRunConfig(service.name)}
+              icon={<TuneIcon sx={{ fontSize: "11px !important" }} />}
+              sx={{
+                height: 20,
+                fontSize: "0.68rem",
+                fontWeight: 600,
+                color: "#0f766e",
+                backgroundColor: "rgba(13,148,136,0.08)",
+                border: "1px solid rgba(13,148,136,0.3)",
+                "& .MuiChip-icon": { ml: 0.5, mr: -0.25, color: "#0f766e" },
+                "&:hover": { backgroundColor: "rgba(13,148,136,0.16)" },
+              }}
+            />
+          </Tooltip>
+        ) : null}
+
         {onViewLogs ? (
           <Tooltip title={`Open logs for ${service.name}`}>
             <Chip
@@ -688,14 +651,17 @@ function ServiceCard({
           </Tooltip>
         ) : null}
 
-        {service.hasBuild ? (
-          <Chip
-            label="Build"
-            size="small"
-            variant="outlined"
-            color="warning"
-            sx={{ height: 20, fontSize: "0.68rem", fontWeight: 600 }}
-          />
+        {/* Only while Build mode is on: shows which services will run their build step on start. */}
+        {buildMode && service.hasBuild ? (
+          <Tooltip title="Build mode is on: this service runs its build command before starting">
+            <Chip
+              label="Build"
+              size="small"
+              variant="outlined"
+              color="warning"
+              sx={{ height: 20, fontSize: "0.68rem", fontWeight: 600 }}
+            />
+          </Tooltip>
         ) : null}
       </Box>
 
