@@ -1,7 +1,6 @@
 import { cloneElement, useEffect, useMemo, useState } from "react";
 import {
   Box,
-  Button,
   Chip,
   InputAdornment,
   Paper,
@@ -12,7 +11,6 @@ import {
 } from "@mui/material";
 import {
   AccountTree as GitIcon,
-  ArrowForward as ArrowForwardIcon,
   Article as LogsIcon,
   BugReport as TroubleshootIcon,
   Checklist as FeaturesIcon,
@@ -32,6 +30,7 @@ import {
   TipsAndUpdates as TipIcon,
   Tune as ConfigIcon,
 } from "@mui/icons-material";
+import { CODE_FONT, SEARCH_INPUT_SX, TOP_BAR_HEIGHT } from "../theme/tokens";
 
 // Feature catalog: [title, what it does, where to find it].
 const FEATURE_GROUPS = [
@@ -40,10 +39,10 @@ const FEATURE_GROUPS = [
     icon: <StartIcon />,
     items: [
       ["Start, stop, restart", "Control a single service. The card shows live progress (queued, starting, stopping) and the result.", "▶ ■ ⟳ buttons at the bottom of each card"],
-      ["Bulk actions", "Start or stop every service at once, or tick several cards and act only on those. \"Select filtered\" ticks everything matching the current search and filters.", "Dashboard toolbar: Start all, Stop all, Select filtered"],
-      ["Dependency-aware start", "A service won't start while one of its dependencies is stopped — you'll see \"Start <service> first\". If a dependency is still starting, it waits (up to 120s) until it is ready: port open, health command passing and health endpoint OK (whichever are configured). A dependency with no port and no health check never blocks. Start all and presets start dependencies first; each service starts the moment its own dependencies are ready, so a full start takes as little time as possible. If a dependency fails, only the services that need it are marked \"Blocked by dependency failure\". Dependencies are set per service in Depends On.", "Admin › Services › Dependencies"],
+      ["Bulk actions", "Start or stop every service at once, or tick several cards and act only on those. The checkbox beside the search box ticks everything matching the current search and filters; a selection bar then shows Start / Stop / Restart selected. Start all and Stop all ask to confirm when they affect more than one service.", "Dashboard toolbar: Start all, Stop all, and the checkbox beside the search box"],
+      ["Dependency-aware start", "A service won't start while one of its dependencies is stopped — you'll see \"Start <service> first\". If a dependency is still starting, it waits (up to 120s) until it is ready: port open, health command passing and health endpoint OK (whichever are configured). A dependency with no port and no health check never blocks. Start all and presets start dependencies first; each service starts the moment its own dependencies are ready, so a full start takes as little time as possible. If a dependency fails, only the services that need it are marked \"Blocked by dependency failure\". Dependencies are set per service in Depends on.", "Admin › Services › Dependencies"],
       ["Presets", "Start a saved set of services in one click. Built-in presets are layers of the dependency map: Infrastructure only, Infrastructure + shared services, All backend services, and Full stack. Create your own by ticking cards and choosing \"Save as preset\", or edit, rename and delete presets in Admin › Presets.", "Dashboard toolbar: Preset + Run preset"],
-      ["Build mode", "When on, each start runs the service's build command first (e.g. mvn clean install). If the build fails the service is not started.", "Dashboard toolbar: Build on / Build off"],
+      ["Build mode", "When on, each start runs the service's build command first (e.g. mvn clean install). If the build fails the service is not started.", "Dashboard toolbar: View › Build before start"],
       ["Automatic port cleanup", "Before starting a service, Struo stops whatever is still holding its port, so stale processes don't block startup. Stop also clears the port.", "Automatic — needs a port in the service config"],
       ["Startup readiness", "After starting, Struo waits up to 60 seconds for the port to open and runs the health command if one is configured, then marks the service Running or Healthy.", "Automatic — configure port / healthCommand"],
     ],
@@ -55,8 +54,8 @@ const FEATURE_GROUPS = [
       ["Automatic refresh", "Statuses update every 5 seconds and the service list every 30 seconds — no manual refresh needed. Only cards whose data changed are redrawn.", "Always on"],
       ["Status at a glance", "Each card shows Running, Stopped, Waiting or Failed, plus health. The card border turns green when running and red on failure.", "Status chip on each card"],
       ["Search & filters", "Find services by name, or filter by type, group or status — including \"Needs attention\" for failed or unhealthy services.", "Dashboard toolbar: search box and Filters"],
-      ["Grouped view", "Show services under their group headings, collapse groups you don't need, and drag a card onto another group to move it (you confirm before the config is changed).", "Dashboard toolbar: Group services"],
-      ["Live Resources", "Show CPU, memory and uptime for each running service, updated every few seconds.", "Dashboard toolbar: Live Resources"],
+      ["Grouped view", "Show services under their group headings, collapse groups you don't need, and drag a card onto another group to move it (you confirm before the config is changed).", "Dashboard toolbar: View › Group services"],
+      ["Live resources", "Show CPU, memory and uptime for each running service, updated every few seconds.", "Dashboard toolbar: View › Live resources"],
       ["Clear failure reasons", "Failures are labelled (Build failed, Git pull failed, Startup timed out, Port issue, …) with the error text, a Logs button and a Help button that opens the matching troubleshooting guide.", "Red box at the bottom of a failed card"],
     ],
   },
@@ -80,7 +79,7 @@ const FEATURE_GROUPS = [
       ["Change indicators", "↓ commits behind the remote, ↑ commits ahead, and * uncommitted changes, so you know when to pull or push.", "Next to the branch name"],
       ["Git pull", "Pull the latest commits for the current branch, optionally restarting the service. The button turns blue when there are new commits.", "Download button next to the branch"],
       ["Auto pull on start", "Each start pulls first so you run the latest code. Branches that only exist locally are skipped, and the skip is noted in the log.", "Automatic — turn off with gitAutoPull: false"],
-      ["Publish local branches", "Branches not on the remote show a purple \"local\" badge, and the pull button becomes Push (git push -u) to publish them.", "Purple cloud button next to the branch"],
+      ["Publish local branches", "Branches not on the remote show a crossed-out cloud icon; Pull is disabled and the highlighted Push button (git push -u) publishes them.", "Push button next to the branch"],
     ],
   },
   {
@@ -89,8 +88,8 @@ const FEATURE_GROUPS = [
     items: [
       ["Live streaming", "The current log streams live while the service writes to it. The indicator shows Live, Idle or Stream error.", "Logs tab"],
       ["Several services at once", "Open services as tabs and switch between them. The left list shows which services are running (green dot) and lets you pin favourites to the top.", "Logs tab: service list and tabs"],
-      ["One log per run", "Every start or restart writes a separate log, so runs never mix. The run picker lists runs by day with start time, how long each ran and its size; the viewer jumps to the current run automatically. How long earlier runs are kept is set in Admin › Logs.", "Run picker in the log toolbar"],
-      ["Log retention", "Choose whether earlier runs are archived or deleted when a service restarts, how many days archived runs are kept, and how many per service (defaults: archive, 3 days, 20 runs). See how much space they use and delete them all in one click.", "Admin › Logs"],
+      ["One log per run", "Every start or restart writes a separate log, so runs never mix. The run picker lists runs by day with start time, how long each ran and its size; the viewer jumps to the current run automatically. How long earlier runs are kept is set in Admin › Log retention.", "Run picker in the log toolbar"],
+      ["Log retention", "Choose whether earlier runs are archived or deleted when a service restarts, how many days archived runs are kept, and how many per service (defaults: archive, 3 days, 20 runs). See how much space they use and delete them all in one click.", "Admin › Log retention"],
       ["Search in log", "Search the current file and step through matches with Previous / Next; the matching line is highlighted.", "Search box in the log toolbar"],
       ["Viewer tools", "Wrap long lines, copy the visible log, clear the file, reload it, and Focus mode to hide everything but the log.", "Icons in the log toolbar"],
       ["Git & build output", "Output from git pull and the build step is written into the service log, marked [GIT PULL], [BUILD] or [GIT PULL SKIPPED].", "In the service's log"],
@@ -191,7 +190,7 @@ const SERVICE_FIELDS = [
     what: "The command that compiles or installs the service.",
     how: "Runs before the start command, but only while the Dashboard's Build toggle is on. If the build fails the service is not started; output appears in the log under [BUILD].",
     examples: [["Java", "mvn clean install -DskipTests"], ["npm", "npm install"], ["Python", "pip install -r requirements.txt"]],
-    tip: "Keep Build off for quick restarts; turn it on after pulling dependency or schema changes.",
+    tip: "Keep Build before start off for quick restarts; turn it on after pulling dependency or schema changes.",
   },
   {
     name: "stopCommand",
@@ -214,7 +213,7 @@ const SERVICE_FIELDS = [
   {
     name: "dependsOn",
     required: "No",
-    admin: "Dependencies › Depends On",
+    admin: "Dependencies › Depends on",
     what: "Services that must be running before this one starts.",
     how: "Starting this service starts its dependencies first, in order. If a dependency fails, this service is blocked. Admin rejects unknown names and dependency cycles.",
     examples: [["One dependency", '["config-service"]'], ["Several", '["config-service", "redis"]']],
@@ -310,7 +309,7 @@ const GLOBAL_FIELDS = [
   {
     name: "config.logs",
     required: "No",
-    admin: "Admin › Logs",
+    admin: "Admin › Log retention",
     what: "How long logs from earlier runs are kept.",
     how: "previousRuns is \"archive\" (keep earlier runs within the limits) or \"delete\" (remove them when a new run starts). retentionDays and maxRuns limit archived runs per service; whichever is reached first applies. The current run is never deleted.",
     examples: [["Defaults", '{ "previousRuns": "archive", "retentionDays": 3, "maxRuns": 20 }'], ["Keep only the latest", '{ "previousRuns": "delete" }']],
@@ -369,13 +368,28 @@ const TROUBLESHOOTING = [
     title: "Service won't start",
     icon: <ErrorIcon />,
     color: "#dc2626",
-    symptom: "The card turns red with \"Command failed\", \"Operation failed\" or \"Start <service> first\".",
+    symptom: "The card turns red with \"Command failed\" or \"Operation failed\".",
     steps: [
-      "\"Start <service> first\" means a service it depends on isn't running. Start that one first, or use Start all / Run preset, which start dependencies in the right order.",
+      "Seeing \"Start <service> first\" instead? See Dependencies not running.",
       "Open the service log (Logs button on the red box) — the real error is usually in the last lines.",
       "Check the service path exists. Admin › Services › Location shows the folder it resolves to.",
       "Run the start command yourself in a terminal from that folder. If it fails there, fix it there first.",
       "Make sure the required tools are installed and on your PATH (Java + Maven, Python, Node.js, …).",
+    ],
+  },
+  {
+    title: "Dependencies not running",
+    icon: <LinkIcon />,
+    color: "#2563eb",
+    symptom: "The card turns red with \"Start <service>, <service> first\" and the service doesn't start.",
+    steps: [
+      "The message lists the services this one depends on that are stopped, e.g. \"Start neo4j, workflow-service first\". Nothing is wrong with this service itself.",
+      "Find each listed service on the Dashboard and check its status pill. It must be Running — Stopped or Failed blocks the start.",
+      "Start the stopped ones, then start this service again. Or use Start selected / Start all / Run preset, which start dependencies first and in the right order.",
+      "If a dependency shows Failed, fix that one first: use its Logs and Help buttons. Starting this service won't work until it runs.",
+      "Dependencies that are still Starting are waited for (up to 2 minutes); only stopped ones fail straight away.",
+      "To see the full dependency list, hover the \"Needs N\" pill on the card. If the list is wrong, edit Depends on in Admin › Services.",
+      "To start without these checks, turn off Dependency check in Admin and save.",
     ],
   },
   {
@@ -410,7 +424,7 @@ const TROUBLESHOOTING = [
     steps: [
       "Struo waited 60 seconds for the service's port to open. Check the log for errors during startup.",
       "Make sure the port in the config is the port the app actually listens on.",
-      "Slow first start (e.g. downloading dependencies)? Run the build once with Build on, then start again.",
+      "Slow first start (e.g. downloading dependencies)? Run the build once with Build before start on, then start again.",
     ],
   },
   {
@@ -447,14 +461,14 @@ const TROUBLESHOOTING = [
     ],
   },
   {
-    title: "Branch shows a \"local\" badge",
+    title: "Branch shows a crossed-out cloud",
     icon: <CloudUploadIcon />,
     color: "#7c3aed",
-    symptom: "A purple \"local\" badge appears next to the branch name.",
+    symptom: "A crossed-out cloud icon appears next to the branch name.",
     steps: [
       "The branch exists only on your machine, so git pull is skipped when the service starts (this is expected).",
-      "To publish it, click the purple Push button next to the branch — it runs git push -u and sets the upstream.",
-      "After pushing, the badge disappears and the normal Pull button comes back.",
+      "To publish it, click the highlighted Push button next to the branch — it runs git push -u and sets the upstream.",
+      "After pushing, the icon disappears and the Pull button is enabled.",
     ],
   },
   {
@@ -505,33 +519,18 @@ function matches(term, ...values) {
   return values.some((value) => String(value).toLowerCase().includes(term));
 }
 
-// App tab indexes for "Open …" buttons.
-const NAV = {
-  dashboard: { tab: 0, label: "Dashboard" },
-  logs: { tab: 1, label: "Logs" },
-  admin: { tab: 2, label: "Admin" },
-};
-
-const FEATURE_GO_TO = {
-  "Service Control": NAV.dashboard,
-  "Dashboard & Monitoring": NAV.dashboard,
-  "Quick Links on Cards": NAV.dashboard,
-  "Git Integration": NAV.dashboard,
-  Logs: NAV.logs,
-  "Configuration (Admin)": NAV.admin,
-};
-
-// Stable ids (used by "Help" links on failed service cards) and "Open …" targets per topic.
+// Stable ids per topic, used by "Help" links on failed service cards.
 const TROUBLESHOOTING_META = {
-  "Service won't start": ["wont-start", NAV.logs],
-  "Port already in use": ["port", NAV.dashboard],
-  "Git pull failed on start": ["git-pull", NAV.dashboard],
-  "Startup timed out": ["timeout", NAV.logs],
-  "Status unavailable or not healthy": ["health", NAV.admin],
-  "Logs not streaming": ["logs", NAV.logs],
-  "Can't save configuration": ["save", NAV.admin],
-  'Branch shows a "local" badge': ["local-branch", NAV.dashboard],
-  "Running on Windows": ["windows", null],
+  "Service won't start": "wont-start",
+  "Dependencies not running": "dependencies",
+  "Port already in use": "port",
+  "Git pull failed on start": "git-pull",
+  "Startup timed out": "timeout",
+  "Status unavailable or not healthy": "health",
+  "Logs not streaming": "logs",
+  "Can't save configuration": "save",
+  "Branch shows a crossed-out cloud": "local-branch",
+  "Running on Windows": "windows",
 };
 
 function GettingStarted() {
@@ -585,7 +584,7 @@ function NumberBadge({ value, color = "#2563eb", gradient = false, size = 28 }) 
 
 // Shared layout for all Help tabs: a sidebar of sections and a detail panel for the selected one.
 // sections: [{ key, title, subtitle, icon, color, count }]
-function SectionHeader({ section, onNavigate, size = 44 }) {
+function SectionHeader({ section, size = 44 }) {
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, mb: 2.5, flexWrap: "wrap" }}>
       <IconTile icon={section.icon} color={section.color} size={size} />
@@ -597,25 +596,14 @@ function SectionHeader({ section, onNavigate, size = 44 }) {
           <Typography variant="body2" sx={{ color: "text.secondary" }}>{section.subtitle}</Typography>
         ) : null}
       </Box>
-      {section.goTo && onNavigate ? (
-        <Button
-          size="small"
-          variant="outlined"
-          endIcon={<ArrowForwardIcon />}
-          onClick={() => onNavigate(section.goTo.tab)}
-          sx={{ flexShrink: 0 }}
-        >
-          Open {section.goTo.label}
-        </Button>
-      ) : null}
     </Box>
   );
 }
 
 // Shared layout for all Help tabs: a sidebar of sections and a detail panel for the selected one.
 // While searching (flat), every matching section is listed in one scrollable column instead.
-// sections: [{ key, title, subtitle, icon, color, count, goTo }]
-function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelect, flat, onNavigate }) {
+// sections: [{ key, title, subtitle, icon, color, count }]
+function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelect, flat }) {
   if (sections.length === 0) {
     return <Typography variant="body2" sx={{ color: "text.secondary", p: 2.5 }}>{emptyText}</Typography>;
   }
@@ -635,7 +623,7 @@ function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelec
               backgroundColor: "background.paper",
             }}
           >
-            <SectionHeader section={section} onNavigate={onNavigate} size={36} />
+            <SectionHeader section={section} size={36} />
             {renderDetail(section)}
           </Box>
         ))}
@@ -703,7 +691,7 @@ function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelec
                 <Chip
                   size="small"
                   label={section.count}
-                  sx={{ height: 20, fontWeight: 700, color: active ? color : "text.secondary", backgroundColor: active ? "#fff" : "rgba(148,163,184,0.16)" }}
+                  sx={{ fontWeight: 700, color: active ? color : "text.secondary", backgroundColor: active ? "#fff" : "rgba(148,163,184,0.16)" }}
                 />
               ) : null}
             </Box>
@@ -712,7 +700,12 @@ function SidebarDetail({ sections, renderDetail, emptyText, selectedKey, onSelec
       </Box>
 
       <Box sx={{ minHeight: 0, overflow: "auto", p: { xs: 2, md: 3 } }}>
-        <SectionHeader section={selected} onNavigate={onNavigate} />
+        {/* The sidebar already shows the icon, title and count; only add what it doesn't. */}
+        {selected.subtitle ? (
+          <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
+            {selected.subtitle}
+          </Typography>
+        ) : null}
         {renderDetail(selected)}
       </Box>
     </Box>
@@ -727,7 +720,7 @@ const itemCardSx = (color) => ({
   "&:hover": { borderColor: `${color}66`, boxShadow: `0 8px 20px ${color}14` },
 });
 
-const codeFont = '"Monaco", "Menlo", "Ubuntu Mono", monospace';
+const codeFont = CODE_FONT;
 
 function FeaturesTab({ term, ...navProps }) {
   const sections = FEATURE_GROUPS
@@ -741,10 +734,8 @@ function FeaturesTab({ term, ...navProps }) {
     .map((group) => ({
       ...group,
       key: group.title,
-      goTo: FEATURE_GO_TO[group.title],
       color: GROUP_COLORS[group.title] || "#2563eb",
       count: group.items.length,
-      subtitle: `${group.items.length} feature${group.items.length === 1 ? "" : "s"}`,
     }));
 
   return (
@@ -800,10 +791,10 @@ function FieldCard({ field, color }) {
           label={required === "Yes" ? "Required" : required === "Recommended" ? "Recommended" : "Optional"}
           color={required === "Yes" ? "error" : required === "Recommended" ? "warning" : "default"}
           variant={required === "No" ? "outlined" : "filled"}
-          sx={{ height: 20, fontSize: "0.68rem", fontWeight: 700 }}
+          sx={{ fontSize: "0.68rem", fontWeight: 700 }}
         />
         {defaultValue ? (
-          <Chip size="small" variant="outlined" label={`Default: ${defaultValue}`} sx={{ height: 20, fontSize: "0.68rem", fontFamily: codeFont }} />
+          <Chip size="small" variant="outlined" label={`Default: ${defaultValue}`} sx={{ fontSize: "0.68rem", fontFamily: codeFont }} />
         ) : null}
         <Box sx={{ flex: 1 }} />
         <Typography sx={{ fontSize: "0.72rem", color: "text.secondary" }}>
@@ -883,8 +874,7 @@ function ConfigurationTab({ term, ...navProps }) {
         .filter((field) => field && matches(term, section.title, ...fieldText(field)));
       return rows.length ? { ...section, rows, count: rows.length } : null;
     })
-    .filter(Boolean)
-    .map((section) => ({ ...section, goTo: NAV.admin }));
+    .filter(Boolean);
 
   return (
     <SidebarDetail
@@ -932,8 +922,7 @@ function TroubleshootingTab({ term, ...navProps }) {
     .filter((topic) => matches(term, topic.title, topic.symptom, ...topic.steps))
     .map((topic) => ({
       ...topic,
-      key: TROUBLESHOOTING_META[topic.title]?.[0] || topic.title,
-      goTo: TROUBLESHOOTING_META[topic.title]?.[1] || null,
+      key: TROUBLESHOOTING_META[topic.title] || topic.title,
       tips: topic.steps,
       count: topic.steps.length,
       subtitle: `What you see: ${topic.symptom}`,
@@ -968,7 +957,7 @@ function TroubleshootingTab({ term, ...navProps }) {
 
 const HELP_TABS = ["features", "configuration", "troubleshooting"];
 
-const Help = ({ target, onNavigate }) => {
+const Help = ({ target }) => {
   const [currentTab, setCurrentTab] = useState(0);
   const [search, setSearch] = useState("");
   const [selection, setSelection] = useState({});
@@ -987,7 +976,6 @@ const Help = ({ target, onNavigate }) => {
     selectedKey: selection[tab],
     onSelect: (key) => setSelection((previous) => ({ ...previous, [tab]: key })),
     flat: Boolean(term),
-    onNavigate,
   });
 
   return (
@@ -1012,7 +1000,7 @@ const Help = ({ target, onNavigate }) => {
           flexWrap: "wrap",
           columnGap: 1,
           px: 1,
-          minHeight: 44,
+          minHeight: TOP_BAR_HEIGHT,
           borderBottom: "1px solid rgba(148,163,184,0.16)",
           backgroundColor: "rgba(248,250,252,0.88)",
         }}
@@ -1021,8 +1009,8 @@ const Help = ({ target, onNavigate }) => {
           value={currentTab}
           onChange={(_, value) => setCurrentTab(value)}
           sx={{
-            minHeight: 44,
-            "& .MuiTab-root": { minHeight: 44, textTransform: "none", fontWeight: 700, px: 1.5 },
+            minHeight: TOP_BAR_HEIGHT,
+            "& .MuiTab-root": { minHeight: TOP_BAR_HEIGHT, textTransform: "none", fontWeight: 700, px: 1.5 },
           }}
         >
           <Tab icon={<FeaturesIcon fontSize="small" />} iconPosition="start" label="Features" />
@@ -1041,7 +1029,7 @@ const Help = ({ target, onNavigate }) => {
                 <SearchIcon sx={{ fontSize: "1rem" }} />
               </InputAdornment>
             ),
-            sx: { height: 30, fontSize: "0.85rem", borderRadius: 999, backgroundColor: "background.paper" },
+            sx: { ...SEARCH_INPUT_SX, backgroundColor: "background.paper" },
           }}
           sx={{ width: { xs: "100%", sm: 260 }, py: 0.5, pr: 0.5 }}
         />

@@ -33,12 +33,14 @@ import {
 } from "@mui/material";
 import {
   Add as AddIcon,
+  Code as CodeIcon,
   AutoAwesome as AutoAwesomeIcon,
   ContentCopy as ContentCopyIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
   FolderOpen as FolderOpenIcon,
-  Refresh as RefreshIcon,
+  SyncRounded as SyncIcon,
+  SettingsBackupRestore as ReloadConfigIcon,
   Save as SaveIcon,
   Search as SearchIcon,
   Settings as SettingsIcon,
@@ -51,6 +53,10 @@ import api from "../services/api";
 import { validateConfiguration } from "../utils/configValidation";
 import { getEffectivePresets, getStartupDependencies, normalizeService } from "../utils/serviceUtils";
 import { RunConfigSection, cleanRunConfig, summarizeRunConfigChanges } from "../components/RunConfigEditor";
+import StatusDot from "../components/StatusDot";
+import EmptyState from "../components/EmptyState";
+import useServiceRunningStates from "../hooks/useServiceRunningStates";
+import { CODE_FONT, SEARCH_INPUT_SX, TOP_BAR_HEIGHT } from "../theme/tokens";
 
 const panelSx = {
   borderRadius: 3,
@@ -122,7 +128,7 @@ function getServiceGroups(services) {
   return Array.from(groupMap.entries()).sort(([a], [b]) => a.localeCompare(b));
 }
 
-function ServiceListItem({ serviceName, service, isSelected, hasError, onSelect, onDelete, onClone }) {
+function ServiceListItem({ serviceName, service, running, isSelected, hasError, onSelect, onDelete, onClone }) {
   return (
     <Box
       onClick={onSelect}
@@ -139,13 +145,27 @@ function ServiceListItem({ serviceName, service, isSelected, hasError, onSelect,
         "&:hover": {
           backgroundColor: isSelected ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.08)",
         },
-        "&:hover .service-actions": { opacity: 1 },
+        "&:hover .service-actions, &:focus-within .service-actions": { opacity: 1 },
       }}
     >
       <Box sx={{ flex: 1, minWidth: 0 }}>
         <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
-          <Tooltip title={service.description || ""} placement="right" enterDelay={500}>
-            <Typography variant="body2" noWrap sx={{ fontWeight: isSelected ? 700 : 600, fontSize: "0.82rem", minWidth: 0 }}>
+          <StatusDot running={running} />
+          <Tooltip title={service.description || ""} placement="right">
+            <Typography
+              variant="body2"
+              title={serviceName}
+              sx={{
+                fontWeight: isSelected ? 700 : 600,
+                fontSize: "0.82rem",
+                minWidth: 0,
+                overflow: "hidden",
+                overflowWrap: "anywhere",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+              }}
+            >
               {serviceName}
             </Typography>
           </Tooltip>
@@ -157,7 +177,7 @@ function ServiceListItem({ serviceName, service, isSelected, hasError, onSelect,
             </Typography>
           ) : null}
           {service.port ? (
-            <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "0.68rem", fontFamily: "monospace", flexShrink: 0 }}>
+            <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "0.68rem", fontFamily: CODE_FONT, flexShrink: 0 }}>
               :{service.port}
             </Typography>
           ) : null}
@@ -175,6 +195,7 @@ function ServiceListItem({ serviceName, service, isSelected, hasError, onSelect,
         <Tooltip title="Clone service">
           <IconButton
             size="small"
+            aria-label={`Clone ${serviceName}`}
             onClick={(event) => {
               event.stopPropagation();
               if (onClone) onClone();
@@ -188,6 +209,7 @@ function ServiceListItem({ serviceName, service, isSelected, hasError, onSelect,
           <IconButton
             size="small"
             color="error"
+            aria-label={`Delete ${serviceName}`}
             onClick={(event) => {
               event.stopPropagation();
               onDelete();
@@ -233,7 +255,7 @@ function BasePathRow({ pathKey, pathValue, usageCount, onChange, onDelete, onBro
               border: 0,
               background: "none",
               cursor: "pointer",
-              fontFamily: "monospace",
+              fontFamily: CODE_FONT,
               fontSize: "0.7rem",
               color: "text.secondary",
               "&:hover": { color: "primary.main" },
@@ -249,13 +271,13 @@ function BasePathRow({ pathKey, pathValue, usageCount, onChange, onDelete, onBro
         fullWidth
         value={pathValue}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="~/Workspace/codebase/lextr"
+        placeholder="~/projects"
         InputProps={{
-          sx: { fontFamily: "monospace", fontSize: "0.82rem" },
+          sx: { fontFamily: CODE_FONT, fontSize: "0.82rem" },
           endAdornment: (
             <InputAdornment position="end">
               <Tooltip title="Browse folder">
-                <IconButton size="small" edge="end" onClick={onBrowse}>
+                <IconButton size="small" edge="end" aria-label={`Browse folder for ${pathKey}`} onClick={onBrowse}>
                   <FolderOpenIcon fontSize="small" />
                 </IconButton>
               </Tooltip>
@@ -267,13 +289,13 @@ function BasePathRow({ pathKey, pathValue, usageCount, onChange, onDelete, onBro
         <Chip
           size="small"
           variant="outlined"
-          label={`${usageCount} svc`}
+          label={`Used by ${usageCount}`}
           color={usageCount > 0 ? "primary" : "default"}
-          sx={{ height: 22, minWidth: 56, flexShrink: 0 }}
+          sx={{ height: 22, minWidth: 72, flexShrink: 0 }}
         />
       </Tooltip>
       <Tooltip title="Delete path">
-        <IconButton size="small" color="error" onClick={onDelete} sx={{ flexShrink: 0 }}>
+        <IconButton size="small" color="error" aria-label={`Delete path ${pathKey}`} onClick={onDelete} sx={{ flexShrink: 0 }}>
           <DeleteIcon fontSize="small" />
         </IconButton>
       </Tooltip>
@@ -391,7 +413,7 @@ function ServiceEditor({
     }
   };
 
-  const monoInputSx = { fontFamily: "monospace", fontSize: "0.82rem" };
+  const monoInputSx = { fontFamily: CODE_FONT, fontSize: "0.82rem" };
   const toggleButtonSx = { py: 0.25, px: 1.25, textTransform: "none", fontSize: "0.75rem" };
 
   return (
@@ -414,16 +436,16 @@ function ServiceEditor({
         </Typography>
         {onRename && (
           <Tooltip title="Rename service">
-            <IconButton size="small" onClick={onRename} sx={{ color: "text.secondary" }}>
+            <IconButton size="small" aria-label={`Rename ${serviceName}`} onClick={onRename} sx={{ color: "text.secondary" }}>
               <EditIcon sx={{ fontSize: 16 }} />
             </IconButton>
           </Tooltip>
         )}
-        <Chip size="small" label={service.type || "type missing"} color={service.type ? "default" : "warning"} sx={{ height: 22 }} />
-        {service.port ? <Chip size="small" variant="outlined" label={`:${service.port}`} sx={{ height: 22, fontFamily: "monospace" }} /> : null}
-        {service.group ? <Chip size="small" variant="outlined" label={service.group} sx={{ height: 22 }} /> : null}
+        <Chip size="small" label={service.type || "type missing"} color={service.type ? "default" : "warning"} />
+        {service.port ? <Chip size="small" variant="outlined" label={`:${service.port}`} sx={{ fontFamily: CODE_FONT }} /> : null}
+        {service.group ? <Chip size="small" variant="outlined" label={service.group} /> : null}
         {errorCount > 0 ? (
-          <Chip size="small" color="error" label={`${errorCount} issue${errorCount === 1 ? "" : "s"}`} sx={{ height: 22 }} />
+          <Chip size="small" color="error" label={`${errorCount} issue${errorCount === 1 ? "" : "s"}`} />
         ) : null}
         <Box sx={{ flex: 1 }} />
         {onClone && (
@@ -437,7 +459,7 @@ function ServiceEditor({
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1fr) minmax(0, 1fr)" },
+            gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) minmax(0, 1fr)" },
             columnGap: 4,
             alignItems: "start",
           }}
@@ -447,10 +469,10 @@ function ServiceEditor({
             <Grid container spacing={1.5}>
               <Grid item xs={12} sm={4}>
                 <FormControl fullWidth size="small">
-                  <InputLabel>Service Type</InputLabel>
+                  <InputLabel>Service type</InputLabel>
                   <Select
                     value={service.type || ""}
-                    label="Service Type"
+                    label="Service type"
                     onChange={(event) => onServiceChange(serviceName, "type", event.target.value)}
                   >
                     {serviceTypeOptions.map((type) => (
@@ -523,10 +545,10 @@ function ServiceEditor({
               <TextField
                 fullWidth
                 size="small"
-                label="Service Path"
+                label="Service path"
                 value={service.path || ""}
                 onChange={(event) => onServiceChange(serviceName, "path", event.target.value)}
-                placeholder={runtimePlatform === "win32" ? "C:\\Workspace\\codebase\\lextr\\service-name" : "~/Workspace/codebase/lextr/service-name"}
+                placeholder={runtimePlatform === "win32" ? "C:\\projects\\my-service" : "~/projects/my-service"}
                 error={hasFieldError("path")}
                 helperText={getFieldError("path") || undefined}
                 InputProps={{
@@ -535,7 +557,7 @@ function ServiceEditor({
                     <InputAdornment position="end">
                       <Tooltip title="Browse folder">
                         <span>
-                          <IconButton size="small" edge="end" onClick={browseForServicePath} disabled={servicePathBusy}>
+                          <IconButton size="small" edge="end" aria-label="Browse folder" onClick={browseForServicePath} disabled={servicePathBusy}>
                             {servicePathBusy ? <CircularProgress size={16} /> : <FolderOpenIcon fontSize="small" />}
                           </IconButton>
                         </span>
@@ -549,10 +571,10 @@ function ServiceEditor({
                 <Grid container spacing={1.5}>
                   <Grid item xs={12} sm={4}>
                     <FormControl fullWidth size="small">
-                      <InputLabel>Base Path</InputLabel>
+                      <InputLabel>Base path</InputLabel>
                       <Select
                         value={pathTemplateKey}
-                        label="Base Path"
+                        label="Base path"
                         renderValue={(value) => value}
                         onChange={(event) => handleTemplateBaseChange(event.target.value)}
                       >
@@ -560,7 +582,7 @@ function ServiceEditor({
                           <MenuItem key={key} value={key}>
                             <Box sx={{ minWidth: 0 }}>
                               <Typography variant="body2">{key}</Typography>
-                              <Typography variant="caption" sx={{ color: "text.secondary", fontFamily: "monospace" }}>
+                              <Typography variant="caption" sx={{ color: "text.secondary", fontFamily: CODE_FONT }}>
                                 {basePaths[key]}
                               </Typography>
                             </Box>
@@ -573,7 +595,7 @@ function ServiceEditor({
                     <TextField
                       fullWidth
                       size="small"
-                      label="Sub Path"
+                      label="Sub path"
                       value={pathSuffix}
                       onChange={(event) => handleTemplateSuffixChange(event.target.value)}
                       placeholder={runtimePlatform === "win32" ? "services\\config-service" : "services/config-service"}
@@ -586,7 +608,7 @@ function ServiceEditor({
                   component="div"
                   sx={{
                     mt: 0.75,
-                    fontFamily: "monospace",
+                    fontFamily: CODE_FONT,
                     wordBreak: "break-all",
                     color: hasFieldError("path") ? "error.main" : "text.secondary",
                   }}
@@ -607,7 +629,7 @@ function ServiceEditor({
                 <TextField
                   fullWidth
                   size="small"
-                  label="API Docs Path"
+                  label="API docs path"
                   value={service.docsPath || ""}
                   onChange={(event) => onServiceChange(serviceName, "docsPath", event.target.value)}
                   placeholder="Auto-detected if empty, e.g. /swagger-ui/index.html"
@@ -618,7 +640,7 @@ function ServiceEditor({
                 <TextField
                   fullWidth
                   size="small"
-                  label="Health Check Path"
+                  label="Health check path"
                   value={service.healthPath || ""}
                   onChange={(event) => onServiceChange(serviceName, "healthPath", event.target.value)}
                   placeholder="Auto-detected if empty, e.g. /actuator/health"
@@ -636,7 +658,7 @@ function ServiceEditor({
                 <TextField
                   fullWidth
                   size="small"
-                  label="Start Command"
+                  label="Start command"
                   required
                   value={service.command || ""}
                   onChange={(event) => onServiceChange(serviceName, "command", event.target.value)}
@@ -650,7 +672,7 @@ function ServiceEditor({
                 <TextField
                   fullWidth
                   size="small"
-                  label="Build Command"
+                  label="Build command"
                   value={service.build || ""}
                   onChange={(event) => onServiceChange(serviceName, "build", event.target.value)}
                   placeholder="Runs when build mode is on, e.g. mvn clean install -DskipTests"
@@ -661,7 +683,7 @@ function ServiceEditor({
                 <TextField
                   fullWidth
                   size="small"
-                  label="Stop Command"
+                  label="Stop command"
                   value={service.stopCommand || ""}
                   onChange={(event) => onServiceChange(serviceName, "stopCommand", event.target.value)}
                   placeholder="Optional, e.g. redis-cli shutdown"
@@ -672,7 +694,7 @@ function ServiceEditor({
                 <TextField
                   fullWidth
                   size="small"
-                  label="Health Check Command"
+                  label="Health check command"
                   value={service.healthCommand || ""}
                   onChange={(event) => onServiceChange(serviceName, "healthCommand", event.target.value)}
                   placeholder="Optional, e.g. curl -f http://localhost:8080/actuator/health"
@@ -700,7 +722,7 @@ function ServiceEditor({
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Depends On"
+                  label="Depends on"
                   placeholder={dependsOnValue.length ? "" : "None — starts without waiting"}
                   error={hasFieldError("dependsOn")}
                   helperText={getFieldError("dependsOn") || "These services start first, in order, before this one."}
@@ -833,8 +855,22 @@ function getSuggestedPort(originalPort, existingServices) {
   return nextPort <= 65535 ? nextPort : "";
 }
 
-const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
-  const [currentTab, setCurrentTab] = useState(0);
+const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = true }) => {
+  const [currentTab, setCurrentTab] = useState(1); // Services is the main task
+  const [groupChip, setGroupChip] = useState(""); // group filter for the services list ("" = all)
+  const [confirmReloadOpen, setConfirmReloadOpen] = useState(false);
+  const [confirmResetPresetsOpen, setConfirmResetPresetsOpen] = useState(false);
+  const [jsonText, setJsonText] = useState(""); // Advanced › JSON draft text
+  const [jsonTouched, setJsonTouched] = useState(false); // edited but not applied yet
+  const jsonParseError = useMemo(() => {
+    if (!jsonText) return "";
+    try {
+      JSON.parse(jsonText);
+      return "";
+    } catch (error) {
+      return error.message;
+    }
+  }, [jsonText]);
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -883,11 +919,15 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   const runtimePlatform = runtimeInfo?.platform || "unknown";
 
   const groupedServices = useMemo(() => getServiceGroups(services), [services]);
+  const serviceRefs = useMemo(() => Object.keys(services).map((name) => ({ name })), [services]);
+  // Running dots in the service list; polls only while Admin › Services is visible.
+  const runningStates = useServiceRunningStates(serviceRefs, isActive && currentTab === 1);
 
   const filteredServices = useMemo(() => {
     const term = serviceFilter.trim().toLowerCase();
-    if (!term) return Object.entries(services);
-    return Object.entries(services).filter(([serviceName, service]) => {
+    const inGroup = ([, service]) => !groupChip || (service.group?.trim() || "Ungrouped") === groupChip;
+    if (!term) return Object.entries(services).filter(inGroup);
+    return Object.entries(services).filter(inGroup).filter(([serviceName, service]) => {
       return [
         serviceName,
         service.group,
@@ -898,7 +938,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(term));
     });
-  }, [serviceFilter, services]);
+  }, [serviceFilter, groupChip, services]);
 
   const showSnackbar = useCallback((message, severity = "info") => {
     setSnackbarMessage(message);
@@ -1125,6 +1165,16 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   );
   const isDirty = isConfigDirty || isRunConfigDirty;
 
+  useEffect(() => {
+    if (!isDirty && !jsonTouched) return undefined;
+    const warn = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isDirty, jsonTouched]);
+
   const errorIssues = useMemo(
     () => validationResult.issues.filter((issue) => issue.severity === "error"),
     [validationResult]
@@ -1154,6 +1204,53 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
 
   // Saves base paths and services together so edits on either tab are never left behind.
   // Only called after the user confirms in the save dialog.
+  // The configuration as it would be saved right now (saved file + unsaved edits).
+  const buildDraftConfig = () => ({
+    ...config,
+    config: (() => {
+      const { logs: _previousLogs, presets: _previousPresets, dependencyCheck: _previousCheck, ...restConfig } = config.config || {};
+      const cleanedLogs = Object.fromEntries(
+        Object.entries(logSettings).filter(([, value]) => value !== undefined && value !== "")
+      );
+      return {
+        ...restConfig,
+        basePaths,
+        ...(Object.keys(cleanedLogs).length ? { logs: cleanedLogs } : {}),
+        ...(presets ? { presets } : {}),
+        ...(dependencyCheck ? {} : { dependencyCheck: false }),
+      };
+    })(),
+    services,
+  });
+
+  // Advanced JSON tab: edit the draft as text, then apply it to the editor; Save still reviews and writes it.
+  const openJsonDraft = () => {
+    setJsonText(JSON.stringify(buildDraftConfig(), null, 2));
+    setJsonTouched(false);
+  };
+
+  const applyJsonDraft = () => {
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (error) {
+      showSnackbar(`Invalid JSON: ${error.message}`, "error");
+      return;
+    }
+    if (!parsed || typeof parsed !== "object" || !parsed.services || typeof parsed.services !== "object" || Array.isArray(parsed.services)) {
+      showSnackbar('The JSON needs a "services" object', "error");
+      return;
+    }
+    const nextConfig = parsed.config || {};
+    setBasePaths(nextConfig.basePaths || {});
+    setLogSettings(nextConfig.logs || {});
+    setPresets(nextConfig.presets && Object.keys(nextConfig.presets).length ? nextConfig.presets : null);
+    setDependencyCheck(nextConfig.dependencyCheck !== false);
+    setServices(parsed.services);
+    setJsonTouched(false);
+    showSnackbar("JSON applied to the editor — review and Save to write it", "success");
+  };
+
   const saveConfig = async () => {
     setConfirmSaveOpen(false);
     if (validationResult.hasErrors) {
@@ -1162,23 +1259,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     }
     setSaving(true);
     try {
-      const updatedConfig = {
-        ...config,
-        config: (() => {
-          const { logs: _previousLogs, presets: _previousPresets, dependencyCheck: _previousCheck, ...restConfig } = config.config || {};
-          const cleanedLogs = Object.fromEntries(
-            Object.entries(logSettings).filter(([, value]) => value !== undefined && value !== "")
-          );
-          return {
-            ...restConfig,
-            basePaths,
-            ...(Object.keys(cleanedLogs).length ? { logs: cleanedLogs } : {}),
-            ...(presets ? { presets } : {}),
-            ...(dependencyCheck ? {} : { dependencyCheck: false }),
-          };
-        })(),
-        services,
-      };
+      const updatedConfig = buildDraftConfig();
       if (isConfigDirty) {
         await api.put("/config", updatedConfig);
         setConfig(updatedConfig);
@@ -1297,6 +1378,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     setPresetNameError("");
     setPresets(Object.fromEntries(Object.entries(effectivePresets).map(([name, list]) => [name === oldName ? newName : name, list])));
     setSelectedPresetName(newName);
+    showSnackbar(`Preset renamed to "${newName}" — Save to keep it`, "info");
   };
 
   const addPreset = () => {
@@ -1418,11 +1500,20 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     });
   };
 
+  const newServiceKey = newServiceName.trim().replace(/\s+/g, "-");
+  const newServiceError = !newServiceKey
+    ? ""
+    : services[newServiceKey]
+    ? `A service named "${newServiceKey}" already exists`
+    : "";
+
   const addNewService = () => {
-    if (!newServiceName.trim()) return;
+    if (!newServiceKey || newServiceError) return;
+    setServiceFilter("");
+    setGroupChip("");
     setServices((prev) => ({
       ...prev,
-      [newServiceName.trim()]: {
+      [newServiceKey]: {
         type: "",
         port: "",
         path: "",
@@ -1435,10 +1526,10 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
         description: "",
       },
     }));
-    setSelectedService(newServiceName.trim());
+    setSelectedService(newServiceKey);
     setNewServiceName("");
     setAddServiceDialog(false);
-    showSnackbar(`Service "${newServiceName.trim()}" added`, "success");
+    showSnackbar(`Service "${newServiceKey}" added — Save to keep it`, "success");
   };
 
   const confirmPendingDelete = () => {
@@ -1526,18 +1617,22 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
           flexWrap: "wrap",
           columnGap: 1,
           px: 1,
-          minHeight: 44,
+          minHeight: TOP_BAR_HEIGHT,
           borderBottom: "1px solid rgba(148,163,184,0.16)",
           backgroundColor: "rgba(248,250,252,0.88)",
         }}
       >
         <Tabs
           value={currentTab}
-          onChange={(_, value) => setCurrentTab(value)}
+          onChange={(_, value) => {
+            // Fresh JSON view of the current draft, unless there are un-applied JSON edits.
+            if (value === 4 && !jsonTouched) openJsonDraft();
+            setCurrentTab(value);
+          }}
           sx={{
-            minHeight: 44,
+            minHeight: TOP_BAR_HEIGHT,
             "& .MuiTab-root": {
-              minHeight: 44,
+              minHeight: TOP_BAR_HEIGHT,
               textTransform: "none",
               fontWeight: 700,
               px: 1.5,
@@ -1546,19 +1641,20 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
         >
           <Tab icon={<StorageIcon fontSize="small" />} iconPosition="start" label={`Paths (${Object.keys(basePaths).length})`} />
           <Tab icon={<SettingsIcon fontSize="small" />} iconPosition="start" label={`Services (${Object.keys(services).length})`} />
-          <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Logs" />
+          <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Log retention" />
           <Tab icon={<PresetsIcon fontSize="small" />} iconPosition="start" label={`Presets (${presetNames.length})`} />
+          <Tab icon={<CodeIcon fontSize="small" />} iconPosition="start" label="JSON" />
         </Tabs>
 
         <Box sx={{ flex: 1 }} />
 
         <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 0.5, pr: 0.5 }}>
-          {isDirty ? <Chip size="small" color="warning" variant="outlined" label="Unsaved changes" sx={{ height: 24 }} /> : null}
+          {isDirty ? <Chip size="small" color="warning" variant="outlined" label="Unsaved changes" /> : null}
           <Tooltip
             title={
               dependencyCheck
-                ? "On: a service won't start while a dependency is stopped, and waits for dependencies that are still starting."
-                : "Off: services start without checking their dependencies (start order is still followed)."
+                ? "On: a service won't start while a dependency is stopped, and waits for dependencies that are still starting. Applies after Save."
+                : "Off: services start without checking their dependencies (start order is still followed). Applies after Save."
             }
           >
             <FormControlLabel
@@ -1573,14 +1669,19 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
               {runtimeInfo?.overrideActive ? " • Override active" : ""}
             </Typography>
           ) : null}
-          <Tooltip title={isDirty ? "Reload configuration (discards unsaved changes)" : "Reload configuration"}>
+          <Tooltip title={isDirty ? "Reload saved configuration (discards unsaved changes)" : "Reload saved configuration"}>
             <span>
-              <IconButton size="small" onClick={() => loadConfig()} disabled={refreshing || saving}>
-                {refreshing ? <CircularProgress size={16} /> : <RefreshIcon fontSize="small" />}
+              <IconButton
+                size="small"
+                aria-label="Reload saved configuration"
+                onClick={() => (isDirty ? setConfirmReloadOpen(true) : loadConfig())}
+                disabled={refreshing || saving}
+              >
+                {refreshing ? <CircularProgress size={16} /> : <ReloadConfigIcon fontSize="small" />}
               </IconButton>
             </span>
           </Tooltip>
-          {currentTab !== 2 ? (
+          {currentTab !== 2 && currentTab !== 4 ? (
             <Button
               size="small"
               variant="outlined"
@@ -1721,21 +1822,20 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                         <SearchIcon sx={{ fontSize: "1rem" }} />
                       </InputAdornment>
                     ),
-                    sx: { height: 32, fontSize: "0.8rem", borderRadius: 999 },
+                    sx: SEARCH_INPUT_SX,
                   }}
                 />
                 <Stack direction="row" spacing={0.5} sx={{ mt: 0.75 }} flexWrap="wrap" useFlexGap>
-                  {groupedServices.slice(0, 6).map(([groupName, groupServices]) => (
+                  {groupedServices.map(([groupName, groupServices]) => (
                     <Chip
                       key={groupName}
                       size="small"
                       label={`${groupName} · ${groupServices.length}`}
-                      variant={serviceFilter === groupName ? "filled" : "outlined"}
-                      color={serviceFilter === groupName ? "primary" : "default"}
-                      onClick={() =>
-                        setServiceFilter(groupName === "Ungrouped" || serviceFilter === groupName ? "" : groupName)
-                      }
-                      sx={{ height: 22, fontSize: "0.7rem" }}
+                      variant={groupChip === groupName ? "filled" : "outlined"}
+                      color={groupChip === groupName ? "primary" : "default"}
+                      aria-pressed={groupChip === groupName}
+                      onClick={() => setGroupChip((previous) => (previous === groupName ? "" : groupName))}
+                      sx={{ fontSize: "0.7rem" }}
                     />
                   ))}
                 </Stack>
@@ -1743,20 +1843,14 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
 
               <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
                 {filteredServices.length === 0 ? (
-                  <Box sx={{ p: 3, textAlign: "center" }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.75 }}>
-                      No services match this filter
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                      Try a different search term or clear the filter.
-                    </Typography>
-                  </Box>
+                  <EmptyState title="No services match this filter" hint="Try a different search term or clear the filter." />
                 ) : (
                   filteredServices.map(([serviceName, service]) => (
                     <ServiceListItem
                       key={serviceName}
                       serviceName={serviceName}
                       service={service}
+                      running={Boolean(runningStates[serviceName])}
                       isSelected={selectedService === serviceName}
                       hasError={servicesWithErrors.has(serviceName)}
                       onSelect={() => setSelectedService(serviceName)}
@@ -1787,16 +1881,8 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                   validationIssues={validationResult.issues}
                 />
               ) : (
-                <Box sx={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", p: 4 }}>
-                  <Box sx={{ textAlign: "center", maxWidth: 420 }}>
-                    <SettingsIcon sx={{ fontSize: 52, opacity: 0.28, mb: 2 }} />
-                    <Typography variant="h6" sx={{ fontWeight: 800, mb: 1 }}>
-                      Pick a service to edit
-                    </Typography>
-                    <Typography variant="body2" sx={{ color: "text.secondary" }}>
-                      Select a service on the left, or add a new one.
-                    </Typography>
-                  </Box>
+                <Box sx={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <EmptyState icon={<SettingsIcon />} title="No service selected" hint="Pick a service on the left, or add a new one." />
                 </Box>
               )}
             </Box>
@@ -1873,9 +1959,9 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
               <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2.5, p: 2.5 }}>
                 <Stack direction="row" alignItems="center" justifyContent="space-between">
                   <Typography variant="subtitle1" sx={{ fontWeight: 800 }}>Old logs on disk</Typography>
-                  <Tooltip title="Refresh">
-                    <IconButton size="small" onClick={loadArchiveStats}>
-                      <RefreshIcon fontSize="small" />
+                  <Tooltip title="Reload">
+                    <IconButton size="small" aria-label="Reload old log stats" onClick={loadArchiveStats}>
+                      <SyncIcon fontSize="small" />
                     </IconButton>
                   </Tooltip>
                 </Stack>
@@ -1952,7 +2038,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                     : "Built-in presets (based on service groups). Editing any preset saves all of them to the configuration."}
                 </Typography>
                 {presets ? (
-                  <Button size="small" sx={{ mt: 0.5, px: 0 }} onClick={() => setPresets(null)}>
+                  <Button size="small" sx={{ mt: 0.5, px: 0 }} onClick={() => setConfirmResetPresetsOpen(true)}>
                     Reset to built-in presets
                   </Button>
                 ) : null}
@@ -1988,7 +2074,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                       <Typography sx={{ flex: 1, fontSize: "0.85rem", fontWeight: active ? 700 : 600 }} noWrap>
                         {name}
                       </Typography>
-                      <Chip size="small" label={effectivePresets[name].length} sx={{ height: 20, fontWeight: 700 }} />
+                      <Chip size="small" label={effectivePresets[name].length} sx={{ fontWeight: 700 }} />
                     </Box>
                   );
                 })}
@@ -2084,10 +2170,58 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
           </Box>
         )}
 
+        {currentTab === 4 && (
+          <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", p: { xs: 2, md: 2.5 }, gap: 1.25 }}>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+              <Typography variant="body2" sx={{ color: "text.secondary", flex: 1, minWidth: 240 }}>
+                Advanced: edit the whole configuration as JSON. <strong>Apply to editor</strong> loads it into the forms;
+                nothing is written until you <strong>Save</strong> and confirm the changes.
+              </Typography>
+              {jsonTouched ? <Chip size="small" color="warning" variant="outlined" label="Not applied" /> : null}
+              <Button
+                size="small"
+                onClick={() => {
+                  try {
+                    setJsonText(JSON.stringify(JSON.parse(jsonText), null, 2));
+                  } catch (error) {
+                    showSnackbar(`Invalid JSON: ${error.message}`, "error");
+                  }
+                }}
+              >
+                Format
+              </Button>
+              <Button size="small" onClick={openJsonDraft} disabled={!jsonTouched}>
+                Discard JSON edits
+              </Button>
+              <Button size="small" variant="contained" onClick={applyJsonDraft} disabled={!jsonTouched || Boolean(jsonParseError)}>
+                Apply to editor
+              </Button>
+            </Stack>
+            <TextField
+              multiline
+              fullWidth
+              value={jsonText}
+              onChange={(event) => {
+                setJsonText(event.target.value);
+                setJsonTouched(true);
+              }}
+              error={Boolean(jsonParseError)}
+              helperText={jsonParseError || " "}
+              inputProps={{ spellCheck: false, "aria-label": "Configuration JSON" }}
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                "& .MuiInputBase-root": { height: "100%", alignItems: "flex-start", overflow: "auto" },
+                "& textarea": { fontFamily: CODE_FONT, fontSize: "0.8rem", lineHeight: 1.5 },
+              }}
+            />
+          </Box>
+        )}
+
       </Box>
 
       <Dialog open={addPathDialog} onClose={closePathDialog} maxWidth="md" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800 }}>Add Base Path</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>Add base path</DialogTitle>
 
         <DialogContent sx={{ pt: 1 }}>
           <Grid container spacing={2} sx={{ pt: 1 }}>
@@ -2095,7 +2229,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
               <Stack spacing={2}>
                 <TextField
                   autoFocus
-                  label="Path Key"
+                  label="Path key"
                   value={newPathKey}
                   onChange={(event) => setNewPathKey(event.target.value.replace(/\s+/g, "-"))}
                   placeholder="java, frontend, microservices"
@@ -2141,7 +2275,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                 {newPathMode === "browse" && (
                   <Stack spacing={1.5}>
                     <TextField
-                      label="Selected Directory"
+                      label="Selected directory"
                       value={newPathValue}
                       onChange={(event) => setNewPathValue(event.target.value)}
                       placeholder="Use Browse to pick a local folder"
@@ -2155,10 +2289,10 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
 
                 {newPathMode === "manual" && (
                   <TextField
-                    label="Directory Path"
+                    label="Directory path"
                     value={newPathValue}
                     onChange={(event) => setNewPathValue(event.target.value)}
-                    placeholder={runtimePlatform === "win32" ? "C:\\Workspace\\codebase\\lextr" : "~/Workspace/codebase/lextr"}
+                    placeholder={runtimePlatform === "win32" ? "C:\\projects" : "~/projects"}
                     helperText="Absolute path or home-relative path."
                     sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
                   />
@@ -2168,10 +2302,10 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                   <Grid container spacing={1.5}>
                     <Grid item xs={12} md={5}>
                       <FormControl fullWidth>
-                        <InputLabel>Existing Base Path</InputLabel>
+                        <InputLabel>Existing base path</InputLabel>
                         <Select
                           value={newPathTemplateBase}
-                          label="Existing Base Path"
+                          label="Existing base path"
                           onChange={(event) => setNewPathTemplateBase(event.target.value)}
                           sx={{ borderRadius: 2.5 }}
                         >
@@ -2186,7 +2320,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                     <Grid item xs={12} md={7}>
                       <TextField
                         fullWidth
-                        label="Sub Path"
+                        label="Sub path"
                         value={newPathSuffix}
                         onChange={(event) => setNewPathSuffix(event.target.value)}
                         placeholder={runtimePlatform === "win32" ? "services\\shared" : "services/shared"}
@@ -2220,7 +2354,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                       backgroundColor: "rgba(15,23,42,0.03)",
                     }}
                   >
-                    <Typography variant="body2" sx={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                    <Typography variant="body2" sx={{ fontFamily: CODE_FONT, wordBreak: "break-all" }}>
                       {newPathMode === "template" && newPathTemplateBase
                         ? `${basePaths[newPathTemplateBase] || ""}${newPathSuffix ? `${getPlatformPathSeparator(runtimePlatform)}${normalizePathSuffix(newPathSuffix, runtimePlatform)}` : ""}`
                         : newPathValue || "Choose a path source to preview the value"}
@@ -2232,7 +2366,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                   </Typography>
                   <Chip
                     label={newPathKey ? tokenForBasePath(newPathKey) : String.raw`\${basePaths.your-key}`}
-                    sx={{ width: "fit-content", fontFamily: "monospace" }}
+                    sx={{ width: "fit-content", fontFamily: CODE_FONT }}
                   />
 
                   <Alert severity="info" sx={{ borderRadius: 2.5 }}>
@@ -2244,7 +2378,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
           </Grid>
         </DialogContent>
 
-        <DialogActions sx={{ p: 3, pt: 1.5 }}>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={closePathDialog}>Cancel</Button>
           <Button
             variant="contained"
@@ -2258,29 +2392,37 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
               )
             }
           >
-            Add Base Path
+            Add base path
           </Button>
         </DialogActions>
       </Dialog>
 
       <Dialog open={addServiceDialog} onClose={() => setAddServiceDialog(false)} maxWidth="sm" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800 }}>Add New Service</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>Add new service</DialogTitle>
         <DialogContent>
           <TextField
             autoFocus
             fullWidth
-            label="Service Name"
+            label="Service name"
             margin="dense"
             value={newServiceName}
-            onChange={(event) => setNewServiceName(event.target.value)}
+            onChange={(event) => setNewServiceName(event.target.value.replace(/\s+/g, "-"))}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                addNewService();
+              }
+            }}
+            error={Boolean(newServiceError)}
+            helperText={newServiceError || "Spaces become dashes, e.g. billing-service"}
             placeholder="my-new-service"
             sx={{ "& .MuiOutlinedInput-root": { borderRadius: 2.5 } }}
           />
         </DialogContent>
-        <DialogActions sx={{ p: 3, pt: 1.5 }}>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setAddServiceDialog(false)}>Cancel</Button>
-          <Button variant="contained" onClick={addNewService}>
-            Add Service
+          <Button variant="contained" onClick={addNewService} disabled={!newServiceKey || Boolean(newServiceError)}>
+            Add service
           </Button>
         </DialogActions>
       </Dialog>
@@ -2299,7 +2441,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                   label={change.kind === "added" ? "Added" : change.kind === "removed" ? "Removed" : "Changed"}
                   color={change.kind === "added" ? "success" : change.kind === "removed" ? "error" : "warning"}
                   variant="outlined"
-                  sx={{ height: 20, fontSize: "0.68rem", fontWeight: 700, minWidth: 72, flexShrink: 0 }}
+                  sx={{ fontSize: "0.68rem", fontWeight: 700, minWidth: 72, flexShrink: 0 }}
                 />
                 <Typography variant="body2" sx={{ wordBreak: "break-word" }}>{change.text}</Typography>
               </Stack>
@@ -2367,8 +2509,55 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={confirmResetPresetsOpen} onClose={() => setConfirmResetPresetsOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Reset to built-in presets?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            Your custom presets are replaced by the built-in ones (one per service group).
+          </Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 1 }}>
+            The change is applied when you click Save. Reload discards it.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setConfirmResetPresetsOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setConfirmResetPresetsOpen(false);
+              setPresets(null);
+            }}
+          >
+            Reset presets
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={confirmReloadOpen} onClose={() => setConfirmReloadOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Discard unsaved changes?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            Reloading replaces your edits with the saved configuration. This can't be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setConfirmReloadOpen(false)}>Keep editing</Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setConfirmReloadOpen(false);
+              loadConfig();
+            }}
+          >
+            Discard and reload
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={renameDialogOpen} onClose={() => setRenameDialogOpen(false)} maxWidth="xs" fullWidth>
-        <DialogTitle sx={{ fontWeight: 800 }}>Rename Service</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 800 }}>Rename service</DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             Renaming <strong>{serviceToRename}</strong> will update the service key and its dependency references.
@@ -2376,7 +2565,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
           <TextField
             autoFocus
             fullWidth
-            label="New Service Name"
+            label="New service name"
             value={newRenamedName}
             onChange={(e) => setNewRenamedName(e.target.value.replace(/\s+/g, "-"))}
             placeholder="e.g. auth-service-v2"
@@ -2397,9 +2586,9 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
 
       <Snackbar
         open={snackbarOpen}
-        autoHideDuration={4000}
+        autoHideDuration={snackbarSeverity === "error" ? null : 4000}
         onClose={() => setSnackbarOpen(false)}
-        anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+        anchorOrigin={{ vertical: "bottom", horizontal: "left" }}
       >
         <Alert onClose={() => setSnackbarOpen(false)} severity={snackbarSeverity} sx={{ borderRadius: 2.5 }}>
           {snackbarMessage}

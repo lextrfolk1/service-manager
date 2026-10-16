@@ -4,6 +4,10 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   InputAdornment,
   MenuItem,
@@ -17,9 +21,10 @@ import {
   Typography,
 } from "@mui/material";
 import {
-  Clear as ClearIcon,
+  DeleteSweepOutlined as ClearLogIcon,
   History as HistoryIcon,
   Inventory2Outlined as LegacyLogIcon,
+  Check as CheckIcon,
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
   Close as CloseIcon,
@@ -27,12 +32,16 @@ import {
   Fullscreen as FullscreenIcon,
   FullscreenExit as FullscreenExitIcon,
   PushPin as PushPinIcon,
-  Refresh as RefreshIcon,
   Search as SearchIcon,
+  SyncRounded as ReloadIcon,
+  VerticalAlignBottomRounded as FollowIcon,
   WrapText as WrapTextIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 import useServiceRunningStates from "../hooks/useServiceRunningStates";
+import { CODE_FONT, SEARCH_INPUT_SX, STATUS_COLORS, TOP_BAR_HEIGHT } from "../theme/tokens";
+import StatusDot from "../components/StatusDot";
+import EmptyState from "../components/EmptyState";
 
 const SEARCH_DEBOUNCE_MS = 400;
 const SEARCH_MIN_CHARS = 2;
@@ -151,11 +160,26 @@ function prettifyStatus(status) {
   }
 }
 
+function serviceInitials(name = "") {
+  const parts = name.split(/[-_\s.]+/).filter((part) => part && !/^(service|svc|app)$/i.test(part));
+  const letters = (parts.length ? parts : [name]).map((part) => part[0]).join("");
+  return (letters.length > 1 ? letters : name.slice(0, 2)).slice(0, 3).toUpperCase();
+}
+
 function ExplorerItem({ service, active, pinned, running, onOpen, onPin }) {
   return (
-    <Tooltip title={service.description || service.path || ""} placement="right" enterDelay={500}>
+    <Tooltip title={service.description || service.path || ""} placement="right">
       <Box
+        role="button"
+        tabIndex={0}
+        aria-current={active ? "true" : undefined}
         onClick={onOpen}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onOpen();
+          }
+        }}
         sx={{
           display: "flex",
           alignItems: "center",
@@ -170,25 +194,25 @@ function ExplorerItem({ service, active, pinned, running, onOpen, onPin }) {
           "&:hover": {
             backgroundColor: active ? "rgba(37,99,235,0.14)" : "rgba(15,23,42,0.05)",
           },
-          "&:hover .explorer-pin": { opacity: 1 },
+          "&:hover .explorer-pin, &:focus-within .explorer-pin": { opacity: 1 },
+          "&:focus-visible": { outline: "2px solid rgba(37,99,235,0.5)", outlineOffset: -2 },
         }}
       >
-        <Box
-          component="span"
-          aria-label={running ? "Running" : "Stopped"}
-          sx={{
-            width: 7,
-            height: 7,
-            borderRadius: "50%",
-            flexShrink: 0,
-            backgroundColor: running ? "#10b981" : "rgba(148,163,184,0.6)",
-            boxShadow: running ? "0 0 0 2px rgba(16,185,129,0.18)" : "none",
-          }}
-        />
+        <StatusDot running={running} />
         <Typography
           variant="body2"
-          noWrap
-          sx={{ flex: 1, minWidth: 0, fontSize: "0.8rem", fontWeight: active ? 700 : 500 }}
+          title={service.name}
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: "0.8rem",
+            fontWeight: active ? 700 : 500,
+            overflow: "hidden",
+            overflowWrap: "anywhere",
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+          }}
         >
           {service.name}
         </Typography>
@@ -206,7 +230,7 @@ function ExplorerItem({ service, active, pinned, running, onOpen, onPin }) {
             onPin();
           }}
           color={pinned ? "primary" : "default"}
-          sx={{ p: 0.25, opacity: pinned ? 1 : 0.35 }}
+          sx={{ p: 0.25, opacity: pinned ? 1 : 0.6 }}
         >
           <PushPinIcon sx={{ fontSize: "0.9rem" }} />
         </IconButton>
@@ -218,19 +242,10 @@ function ExplorerItem({ service, active, pinned, running, onOpen, onPin }) {
 function OpenServiceTabLabel({ serviceName, running, onClose }) {
   return (
     <Stack direction="row" spacing={0.75} alignItems="center" sx={{ minWidth: 0 }}>
-      <Box
-        component="span"
-        aria-label={running ? "Running" : "Stopped"}
-        sx={{
-          width: 7,
-          height: 7,
-          borderRadius: "50%",
-          flexShrink: 0,
-          backgroundColor: running ? "#10b981" : "rgba(148,163,184,0.7)",
-        }}
-      />
+      <StatusDot running={running} />
       <Typography
         variant="body2"
+        title={serviceName}
         sx={{
           fontWeight: 700,
           maxWidth: 160,
@@ -241,16 +256,32 @@ function OpenServiceTabLabel({ serviceName, running, onClose }) {
       >
         {serviceName}
       </Typography>
-      <IconButton
-        size="small"
+      <Box
+        component="span"
+        role="button"
+        tabIndex={0}
+        aria-label={`Close ${serviceName} logs`}
         onClick={(event) => {
           event.stopPropagation();
           onClose();
         }}
-        sx={{ p: 0.25 }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+        sx={{
+          display: "inline-flex",
+          p: 0.25,
+          borderRadius: "50%",
+          color: "text.secondary",
+          "&:hover": { bgcolor: "rgba(15,23,42,0.08)", color: "text.primary" },
+        }}
       >
         <CloseIcon sx={{ fontSize: "0.95rem" }} />
-      </IconButton>
+      </Box>
     </Stack>
   );
 }
@@ -266,6 +297,9 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [logContent, setLogContent] = useState("(select a service to load logs)");
   const [serviceSearchState, setServiceSearchState] = useState({});
   const [wrapped, setWrapped] = useState(false);
+  const [following, setFollowing] = useState(true); // keep the view pinned to the newest line
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false);
+  const [copyState, setCopyState] = useState(""); // "" | "copied" | "failed" — brief feedback on the Copy button
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [maximized, setMaximized] = useState(false);
@@ -407,6 +441,19 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     await api.post(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/clear`);
     setLogContent("");
   }, [currentService, selectedLogFile]);
+
+  // Follow mode: stay at the newest line while new output arrives; scrolling up pauses it.
+  useEffect(() => {
+    const element = logContentRef.current;
+    if (!element || !following || debouncedSearchQuery) return;
+    element.scrollTop = element.scrollHeight;
+  }, [logContent, following, debouncedSearchQuery]);
+
+  const handleLogScroll = useCallback((event) => {
+    const element = event.currentTarget;
+    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+    setFollowing((previous) => (previous === atBottom ? previous : atBottom));
+  }, []);
 
   const startStreaming = useCallback(() => {
     stopStreaming();
@@ -560,9 +607,11 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const copyLogs = async () => {
     try {
       await navigator.clipboard.writeText(logContent);
+      setCopyState("copied");
     } catch {
-      // ignore
+      setCopyState("failed");
     }
+    setTimeout(() => setCopyState(""), 2000);
   };
 
   const jumpToMatch = useCallback((lineNumber) => {
@@ -695,7 +744,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             ml: -1,
           }}
         >
-          {isSelected ? highlightLogLine(line, debouncedSearchQuery) : (line || "\u00A0")}
+          {highlightLogLine(line, debouncedSearchQuery)}
         </Box>
       );
     });
@@ -708,13 +757,20 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         placeholder="Search inside current log"
         value={searchQuery}
         onChange={(event) => updateCurrentSearchState({ searchQuery: event.target.value })}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            moveToSearchResult(event.shiftKey ? "previous" : "next");
+          }
+        }}
+        inputProps={{ "aria-label": "Search inside current log (Enter: next match, Shift+Enter: previous)" }}
         InputProps={{
           startAdornment: (
             <InputAdornment position="start">
               <SearchIcon sx={{ fontSize: "1rem" }} />
             </InputAdornment>
           ),
-          sx: { height: 30, fontSize: "0.8rem", borderRadius: 999 },
+          sx: SEARCH_INPUT_SX,
         }}
         sx={{ width: { xs: "100%", sm: 240 } }}
       />
@@ -748,17 +804,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     }
   };
 
-  const compactChipSx = { height: 22, fontSize: "0.7rem" };
-
-  const renderStreamChip = () => (
-    <Chip
-      size="small"
-      label={streamChip.label}
-      color={streamChip.color}
-      variant={streamChip.color === "default" ? "outlined" : "filled"}
-      sx={compactChipSx}
-    />
-  );
+  const compactChipSx = { fontSize: "0.7rem" };
 
   const renderFocusToggle = () => (
     <Tooltip title={maximized ? "Exit focus mode" : "Focus log area"}>
@@ -775,7 +821,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         alignItems: "center",
         gap: 1,
         px: 1,
-        minHeight: 40,
+        minHeight: TOP_BAR_HEIGHT,
         flexShrink: 0,
         borderBottom: "1px solid rgba(148,163,184,0.16)",
         backgroundColor: "rgba(248,250,252,0.88)",
@@ -835,7 +881,6 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       </Tabs>
 
       <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
-        {renderStreamChip()}
         {renderFocusToggle()}
       </Stack>
     </Box>
@@ -865,9 +910,9 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         >
           <Chip
             size="small"
-            label={isArchivedSelection ? "Previous run" : "Live run"}
-            color={isArchivedSelection ? "default" : "success"}
-            variant={isArchivedSelection ? "outlined" : "filled"}
+            label={isArchivedSelection ? "Previous run" : streamChip.label}
+            color={isArchivedSelection ? "default" : streamChip.color}
+            variant={isArchivedSelection || streamChip.color === "default" ? "outlined" : "filled"}
             sx={compactChipSx}
           />
         </Tooltip>
@@ -892,7 +937,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               );
             }
             const kindStyles = {
-              current: { color: "#059669", background: "rgba(16,185,129,0.08)", border: "#10b981" },
+              current: { color: "#059669", background: "rgba(16,185,129,0.08)", border: STATUS_COLORS.running },
               run: { color: "#2563eb", background: "transparent", border: "transparent" },
               legacy: { color: "#94a3b8", background: "transparent", border: "transparent" },
             }[option.kind];
@@ -918,7 +963,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               >
                 <Box sx={{ mt: 0.25, color: kindStyles.color, display: "flex" }}>
                   {option.kind === "current" ? (
-                    <Box sx={{ width: 9, height: 9, m: "3px", borderRadius: "50%", backgroundColor: "#10b981", boxShadow: "0 0 0 3px rgba(16,185,129,0.2)" }} />
+                    <Box sx={{ width: 9, height: 9, m: "3px", borderRadius: "50%", backgroundColor: STATUS_COLORS.running, boxShadow: "0 0 0 3px rgba(18,183,106,0.2)" }} />
                   ) : option.kind === "run" ? (
                     <HistoryIcon sx={{ fontSize: 15 }} />
                   ) : (
@@ -955,20 +1000,37 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       <Box sx={{ flex: 1 }} />
 
       {renderSearchControls()}
-      <Tooltip title="Refresh log">
-        <IconButton size="small" onClick={refreshCurrentLog}>
-          <RefreshIcon fontSize="small" />
+      <Tooltip title={following ? "Following new lines — scroll up to pause" : "Jump to latest and follow new lines"}>
+        <IconButton
+          size="small"
+          color={following ? "primary" : "default"}
+          aria-pressed={following}
+          aria-label="Follow new lines"
+          onClick={() => {
+            setFollowing(true);
+            if (logContentRef.current) logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
+          }}
+        >
+          <FollowIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-      <Tooltip title="Copy visible content">
-        <IconButton size="small" onClick={copyLogs}>
-          <ContentCopyIcon fontSize="small" />
+      <Tooltip title="Reload log">
+        <IconButton size="small" aria-label="Reload log" onClick={refreshCurrentLog}>
+          <ReloadIcon fontSize="small" />
         </IconButton>
       </Tooltip>
-      <Tooltip title="Clear current file">
+      <Tooltip
+        open={copyState ? true : undefined}
+        title={copyState === "copied" ? "Copied" : copyState === "failed" ? "Couldn't copy — clipboard blocked" : "Copy log"}
+      >
+        <IconButton size="small" aria-label="Copy log" onClick={copyLogs} color={copyState === "failed" ? "error" : "default"}>
+          {copyState === "copied" ? <CheckIcon fontSize="small" sx={{ color: "success.main" }} /> : <ContentCopyIcon fontSize="small" />}
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="Clear log">
         <span>
-          <IconButton size="small" onClick={clearCurrentLog} disabled={!selectedLogFile}>
-            <ClearIcon fontSize="small" />
+          <IconButton size="small" aria-label="Clear log" onClick={() => setConfirmClearOpen(true)} disabled={!selectedLogFile}>
+            <ClearLogIcon fontSize="small" />
           </IconButton>
         </span>
       </Tooltip>
@@ -980,7 +1042,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} sx={{ mb: 0.75 }}>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
           <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
-            Search Results
+            Search results
           </Typography>
           <Chip
             size="small"
@@ -992,10 +1054,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             sx={compactChipSx}
           />
         </Stack>
-        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
-          {searchLoading
-            ? `Searching ${selectedLogFile}…`
-            : `Full log remains unchanged • ${selectedLogFile} • debounced ${SEARCH_DEBOUNCE_MS}ms`}
+        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+          Enter: next match · Shift+Enter: previous
         </Typography>
       </Stack>
       {searchError ? (
@@ -1011,7 +1071,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             <Typography
               variant="body2"
               noWrap
-              sx={{ flex: 1, minWidth: 0, fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace', fontSize: "0.75rem" }}
+              sx={{ flex: 1, minWidth: 0, fontFamily: CODE_FONT, fontSize: "0.75rem" }}
             >
               {selectedMatch.preview ? highlightMatchPreview(selectedMatch.preview, debouncedSearchQuery) : "(empty line)"}
             </Typography>
@@ -1088,7 +1148,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                 alignItems: "center",
                 gap: 0.5,
                 px: 1,
-                minHeight: 40,
+                minHeight: TOP_BAR_HEIGHT,
                 flexShrink: 0,
                 borderBottom: "1px solid rgba(148,163,184,0.16)",
               }}
@@ -1106,7 +1166,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                         <SearchIcon sx={{ fontSize: "1rem" }} />
                       </InputAdornment>
                     ),
-                    sx: { height: 30, fontSize: "0.8rem", borderRadius: 999 },
+                    sx: SEARCH_INPUT_SX,
                   }}
                 />
               ) : null}
@@ -1137,12 +1197,12 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                   />
                 ))}
                 {filteredServices.length === 0 ? (
-                  <Alert severity="info">No services match this filter.</Alert>
+                  <EmptyState title="No services match this filter" hint="Try a different search term." sx={{ p: 2 }} />
                 ) : null}
               </Box>
             ) : (
               <Box sx={{ flexGrow: 1, overflow: "auto", p: 0.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 0.5 }}>
-                {filteredServices.slice(0, 18).map((service) => (
+                {filteredServices.map((service) => (
                   <Tooltip
                     key={service.name}
                     title={`${service.name} (${runningServices[service.name] ? "running" : "stopped"})`}
@@ -1154,23 +1214,14 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                       clickable
                       color={currentService === service.name ? "primary" : "default"}
                       variant={currentService === service.name ? "filled" : "outlined"}
-                      label={service.name.slice(0, 2).toUpperCase()}
+                      label={serviceInitials(service.name)}
+                      aria-label={service.name}
                       onClick={() => openServiceFromExplorer(service.name)}
                       sx={{ width: 36, "& .MuiChip-label": { px: 0 } }}
                     />
-                    <Box
-                      component="span"
-                      sx={{
-                        position: "absolute",
-                        top: -1,
-                        right: -1,
-                        width: 7,
-                        height: 7,
-                        borderRadius: "50%",
-                        border: "1px solid #fff",
-                        backgroundColor: runningServices[service.name] ? "#10b981" : "rgba(148,163,184,0.8)",
-                        pointerEvents: "none",
-                      }}
+                    <StatusDot
+                      running={Boolean(runningServices[service.name])}
+                      sx={{ position: "absolute", top: -1, right: -1, pointerEvents: "none", outline: "1.5px solid #fff", bgcolor: runningServices[service.name] ? undefined : "#fff" }}
                     />
                     </Box>
                   </Tooltip>
@@ -1190,6 +1241,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               <Box
                 component="pre"
                 ref={logContentRef}
+                onScroll={handleLogScroll}
                 sx={{
                   flexGrow: 1,
                   minHeight: 0,
@@ -1200,7 +1252,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                   backgroundColor: "#0f172a",
                   color: "#e2e8f0",
                   whiteSpace: wrapped ? "pre-wrap" : "pre",
-                  fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace',
+                  fontFamily: CODE_FONT,
                   fontSize: "0.8rem",
                   lineHeight: 1.5,
                 }}
@@ -1210,12 +1262,34 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             </>
           ) : (
             <Box sx={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", p: 4 }}>
-              <Alert severity="info">Select a service from the left to load its latest logs.</Alert>
+              <EmptyState title="No service selected" hint="Pick a service on the left to load its latest logs." />
             </Box>
           )}
         </Box>
       </Box>
       </Paper>
+
+      <Dialog open={confirmClearOpen} onClose={() => setConfirmClearOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Clear this log?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            Empties <strong>{selectedLogFile}</strong> for {currentService}. This can't be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setConfirmClearOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              setConfirmClearOpen(false);
+              clearCurrentLog();
+            }}
+          >
+            Clear log
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 });

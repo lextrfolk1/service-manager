@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Box, Tabs, Tab, AppBar, Toolbar, Typography, Container } from "@mui/material";
 import {
   Dashboard as DashboardIcon,
@@ -11,6 +11,15 @@ import Logs from "./pages/Logs";
 import Admin from "./pages/Admin";
 import Help from "./pages/Help";
 
+const HEADER_HEIGHT = 64;
+// The selected page lives in the URL hash so refresh, Back and links keep it.
+const TAB_HASHES = ["dashboard", "logs", "admin", "help"];
+
+function tabFromHash() {
+  const index = TAB_HASHES.indexOf(window.location.hash.replace(/^#\/?/, ""));
+  return index === -1 ? 0 : index;
+}
+
 function TabPanel({ children, value, index, ...other }) {
   return (
     <div
@@ -20,7 +29,7 @@ function TabPanel({ children, value, index, ...other }) {
       aria-labelledby={`tab-${index}`}
       {...other}
       style={{
-        height: "calc(100vh - 88px)",
+        height: `calc(100vh - ${HEADER_HEIGHT}px)`,
         overflow: "hidden",
         display: value === index ? "flex" : "none",
       }}
@@ -44,7 +53,22 @@ function TabPanel({ children, value, index, ...other }) {
 }
 
 function App() {
-  const [currentTab, setCurrentTab] = useState(0);
+  const [currentTab, setCurrentTabState] = useState(tabFromHash);
+  const setCurrentTab = useCallback((index) => {
+    setCurrentTabState(index);
+    const hash = `#${TAB_HASHES[index]}`;
+    if (window.location.hash !== hash) window.history.pushState(null, "", hash);
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => setCurrentTabState(tabFromHash());
+    window.addEventListener("popstate", onPopState);
+    window.addEventListener("hashchange", onPopState);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("hashchange", onPopState);
+    };
+  }, []);
   const [openLogServices, setOpenLogServices] = useState([]);
   const [activeLogServiceTab, setActiveLogServiceTab] = useState(0);
   const logsRef = useRef();
@@ -97,7 +121,7 @@ function App() {
   const handleOpenHelp = useCallback((target) => {
     setHelpTarget({ ...target, id: Date.now() });
     setCurrentTab(3);
-  }, []);
+  }, [setCurrentTab]);
 
   const handleCloneService = (service) => {
     setAdminTarget({ action: "clone", service, id: Date.now() });
@@ -124,16 +148,6 @@ function App() {
     }
   }, []);
 
-  const getPageTitle = () => {
-    switch (currentTab) {
-      case 0: return "Dashboard";
-      case 1: return "Logs";
-      case 2: return "Configuration";
-      case 3: return "Help";
-      default: return "";
-    }
-  };
-
   return (
     <Box
       sx={{
@@ -154,12 +168,12 @@ function App() {
           color: "text.primary",
         }}
       >
-        <Toolbar sx={{ justifyContent: "space-between", py: 1, minHeight: 88 }}>
+        <Toolbar sx={{ justifyContent: "space-between", py: 0.5, minHeight: HEADER_HEIGHT }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
             <Box
               sx={{
-                width: 44,
-                height: 44,
+                width: 36,
+                height: 36,
                 borderRadius: 3,
                 background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)",
                 boxShadow: "0 14px 28px rgba(37,99,235,0.22)",
@@ -200,30 +214,6 @@ function App() {
                 Service Manager
               </Typography>
             </Box>
-            
-            <Box
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                backgroundColor: "rgba(255,255,255,0.82)",
-                borderRadius: 999,
-                px: 1.75,
-                py: 0.5,
-                border: "1px solid rgba(148,163,184,0.18)",
-                ml: 2
-              }}
-            >
-              <Typography 
-                variant="body1" 
-                sx={{ 
-                  fontWeight: 600,
-                  color: "text.primary",
-                  fontSize: "0.92rem"
-                }}
-              >
-                {getPageTitle()}
-              </Typography>
-            </Box>
           </Box>
           
           <Tabs
@@ -234,7 +224,8 @@ function App() {
                 color: "rgba(15,23,42,0.72)",
                 fontWeight: 600,
                 fontSize: "0.92rem",
-                minWidth: 120,
+                minWidth: 110,
+                minHeight: 44,
                 textTransform: "none",
                 "&.Mui-selected": {
                   color: "#0f172a",
@@ -252,10 +243,10 @@ function App() {
               },
             }}
           >
-            <Tab icon={<DashboardIcon />} label="Dashboard" />
-            <Tab icon={<LogsIcon />} label="Logs" />
-            <Tab icon={<AdminIcon />} label="Admin" />
-            <Tab icon={<HelpIcon />} label="Help" />
+            <Tab icon={<DashboardIcon fontSize="small" />} iconPosition="start" label="Dashboard" />
+            <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Logs" />
+            <Tab icon={<AdminIcon fontSize="small" />} iconPosition="start" label="Admin" />
+            <Tab icon={<HelpIcon fontSize="small" />} iconPosition="start" label="Help" />
           </Tabs>
         </Toolbar>
       </AppBar>
@@ -264,8 +255,8 @@ function App() {
       <Box 
         sx={{ 
           flexGrow: 1, 
-          mt: "88px",
-          height: "calc(100vh - 88px)",
+          mt: `${HEADER_HEIGHT}px`,
+          height: `calc(100vh - ${HEADER_HEIGHT}px)`,
           minHeight: 0,
           overflow: "hidden"
         }}
@@ -295,10 +286,11 @@ function App() {
             onConfigReload={handleConfigReload}
             adminTarget={adminTarget}
             onClearAdminTarget={() => setAdminTarget(null)}
+            isActive={currentTab === 2}
           />
         </TabPanel>
         <TabPanel value={currentTab} index={3}>
-          <Help target={helpTarget} onNavigate={setCurrentTab} />
+          <Help target={helpTarget} />
         </TabPanel>
       </Box>
     </Box>

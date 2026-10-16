@@ -23,6 +23,7 @@ import {
   Visibility as VisibilityIcon,
   VisibilityOff as VisibilityOffIcon,
 } from "@mui/icons-material";
+import { CODE_FONT } from "../theme/tokens";
 
 // Shared by Admin (service editor) and Dashboard (quick edit from a service card).
 
@@ -60,7 +61,7 @@ export function getRunFields(type) {
 }
 
 const TEAL = "#0d9488";
-const monoSx = { fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace', fontSize: "0.82rem" };
+const monoSx = { fontFamily: CODE_FONT, fontSize: "0.82rem" };
 
 function FieldBlock({ label, hint, children }) {
   return (
@@ -301,6 +302,8 @@ export function RunConfigDialog({ open, serviceName, serviceType, initialSetting
     { services: { [serviceName]: draft } }
   ).map((change) => change.text.replace(/^Run configuration · "[^"]*": /, ""));
   const changeItems = changes[0] ? changes[0].split(", ") : [];
+  // Closing with edits asks first, so a stray Esc / backdrop click doesn't lose them.
+  const requestClose = () => (changeItems.length ? setStep("discard") : onClose());
 
   const header = (title) => (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, px: 3, pt: 2.5, pb: 2, borderBottom: "1px solid", borderColor: "divider" }}>
@@ -325,7 +328,7 @@ export function RunConfigDialog({ open, serviceName, serviceType, initialSetting
           <Typography sx={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: monoSx.fontFamily }} noWrap>
             {serviceName}
           </Typography>
-          {serviceType ? <Chip size="small" label={serviceType} sx={{ height: 18, fontSize: "0.65rem" }} /> : null}
+          {serviceType ? <Chip size="small" label={serviceType} sx={{ fontSize: "0.65rem" }} /> : null}
         </Stack>
       </Box>
       <Tooltip title="Stored in run-config.json on this machine. It is git-ignored and never committed.">
@@ -333,14 +336,14 @@ export function RunConfigDialog({ open, serviceName, serviceType, initialSetting
           size="small"
           icon={<LockIcon sx={{ fontSize: "12px !important" }} />}
           label="This machine only"
-          sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700, color: TEAL, backgroundColor: `${TEAL}10`, "& .MuiChip-icon": { color: TEAL } }}
+          sx={{ fontSize: "0.68rem", fontWeight: 700, color: TEAL, backgroundColor: `${TEAL}10`, "& .MuiChip-icon": { color: TEAL } }}
         />
       </Tooltip>
     </Box>
   );
 
   return (
-    <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
+    <Dialog open={open} onClose={saving ? undefined : step === "discard" ? () => setStep("edit") : requestClose} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
       {step === "edit" ? (
         <>
           {header("Run configuration")}
@@ -354,11 +357,26 @@ export function RunConfigDialog({ open, serviceName, serviceType, initialSetting
                 : "Applies the next time the service starts"}
             </Typography>
             <Stack direction="row" spacing={1}>
-              <Button onClick={onClose}>Cancel</Button>
+              <Button onClick={requestClose}>Cancel</Button>
               <Button variant="contained" onClick={() => setStep("confirm")} disabled={changeItems.length === 0}>
                 Save
               </Button>
             </Stack>
+          </DialogActions>
+        </>
+      ) : step === "discard" ? (
+        <>
+          {header("Discard changes?")}
+          <DialogContent sx={{ px: 3, pt: "20px !important" }}>
+            <Typography sx={{ fontSize: "0.85rem" }}>
+              You have {changeItems.length} unsaved change{changeItems.length === 1 ? "" : "s"}. Closing now throws them away.
+            </Typography>
+          </DialogContent>
+          <DialogActions sx={{ px: 3, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
+            <Button onClick={() => setStep("edit")}>Keep editing</Button>
+            <Button variant="contained" color="error" onClick={onClose}>
+              Discard
+            </Button>
           </DialogActions>
         </>
       ) : (

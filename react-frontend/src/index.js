@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { CHIP_HEIGHT, TOOLTIP_DELAY } from "./theme/tokens";
 import CssBaseline from "@mui/material/CssBaseline";
 import App from "./App";
 
@@ -83,6 +84,15 @@ const theme = createTheme({
           borderRadius: 999,
           fontWeight: 600,
         },
+        sizeSmall: {
+          height: CHIP_HEIGHT,
+        },
+      },
+    },
+    MuiTooltip: {
+      defaultProps: {
+        enterDelay: TOOLTIP_DELAY,
+        enterNextDelay: TOOLTIP_DELAY,
       },
     },
     MuiTextField: {

@@ -149,6 +149,7 @@ export function categorizeFailure(error) {
 // Maps a card failure (reason from categorizeFailure + error text) to a Help troubleshooting topic id.
 export function getHelpTopicForFailure(reason = "", errorText = "") {
   const text = `${reason} ${errorText}`;
+  if (/^start .+ first$/i.test(String(errorText).trim()) || /depends on .+ not running/i.test(text)) return "dependencies";
   if (/git pull/i.test(text)) return "git-pull";
   if (/timed out|timeout/i.test(text)) return "timeout";
   if (/port|EADDRINUSE/i.test(text)) return "port";
@@ -169,7 +170,7 @@ export function getServiceLinks(service) {
     return [
       {
         id: "connection",
-        label: `${(service.type || "Service").toUpperCase()} Connection`,
+        label: `${{ redis: "Redis", neo4j: "Neo4j", listener: "Listener" }[service.type] || "Service"} connection`,
         url: service.type === "neo4j" ? `bolt://localhost:${port}` : `localhost:${port}`,
         path: `:${port}`,
         isCopyOnly: true,

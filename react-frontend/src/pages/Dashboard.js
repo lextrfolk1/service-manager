@@ -7,22 +7,28 @@ import {
   ButtonBase,
   Checkbox,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   FormControl,
-  FormControlLabel,
+  IconButton,
   InputAdornment,
   InputLabel,
+  ListItemText,
+  ListSubheader,
+  Menu,
   MenuItem,
   Paper,
+  Popover,
   Select,
+  Skeleton,
   Snackbar,
   Stack,
   Switch,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import {
@@ -30,10 +36,13 @@ import {
   FilterList as FilterListIcon,
   PlayArrow as PlayArrowIcon,
   Refresh as RefreshIcon,
+  SyncRounded as SyncIcon,
+  Tune as TuneIcon,
   Search as SearchIcon,
   Stop as StopIcon,
 } from "@mui/icons-material";
 import ServiceCard from "../components/ServiceCard";
+import { SEARCH_INPUT_SX, STATUS_COLORS } from "../theme/tokens";
 import { RunConfigDialog, cleanRunConfig, countRunConfigValues } from "../components/RunConfigEditor";
 import api from "../services/api";
 import {
@@ -209,6 +218,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     return saved !== null ? saved === "true" : false;
   });
   const [metrics, setMetrics] = useState({});
+  const [refreshingNow, setRefreshingNow] = useState(false);
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
@@ -220,10 +230,28 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   const [savePresetOpen, setSavePresetOpen] = useState(false);
   const [newPresetName, setNewPresetName] = useState("");
   const [savingPreset, setSavingPreset] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState({});
+  const [dependencyCheck, setDependencyCheck] = useState(true); // config.dependencyCheck (Admin switch)
+  const [collapsedGroups, setCollapsedGroups] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("struo_collapsed_groups") || "{}") || {};
+    } catch {
+      return {};
+    }
+  }); // { [group]: true } = collapsed; groups are expanded by default
+  const [filtersAnchorEl, setFiltersAnchorEl] = useState(null);
+  const [viewAnchorEl, setViewAnchorEl] = useState(null);
+  const [bulkConfirm, setBulkConfirm] = useState(null); // { action: "start" | "stop", count } awaiting confirmation
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("struo_collapsed_groups", JSON.stringify(collapsedGroups));
+    } catch {
+      // Storage unavailable: collapse state just isn't remembered.
+    }
+  }, [collapsedGroups]);
 
   const normalizedServices = useMemo(
     () => services.map((service) => normalizeService(service)),
@@ -287,7 +315,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
         (statusFilter === "healthy" && state.healthState === "healthy") ||
         (statusFilter === "failed" && state.lifecycleState === "failed") ||
         (statusFilter === "waiting" && state.lifecycleState === "waiting") ||
-        (statusFilter === "stopped" && !state.running) ||
+        (statusFilter === "stopped" && !state.running && state.lifecycleState !== "failed") ||
         (statusFilter === "needs-attention" &&
           (state.lifecycleState === "failed" || state.healthState === "unhealthy"));
 
@@ -363,6 +391,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       const data = await api.get("/config");
       const next = data?.config?.presets && Object.keys(data.config.presets).length ? data.config.presets : null;
       setConfiguredPresets((previous) => (isSameJson(previous, next) ? previous : next));
+      setDependencyCheck(data?.config?.dependencyCheck !== false);
     } catch {
       // Keep the current presets if the config can't be read
     }
@@ -390,6 +419,21 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       showToast(`Could not save preset: ${err.message}`, "error");
     } finally {
       setSavingPreset(false);
+    }
+  }
+
+  // Manual refresh: re-check every service now instead of waiting for the 30s auto refresh.
+  async function handleRefreshNow() {
+    setRefreshingNow(true);
+    try {
+      const latest = await loadServices(false);
+      loadRunConfig();
+      loadPresets();
+      if (latest.length) await loadServiceStatuses(latest.map(normalizeService));
+    } catch (err) {
+      showToast(`Couldn't refresh: ${err.message || "unknown error"}`, "error");
+    } finally {
+      setRefreshingNow(false);
     }
   }
 
@@ -590,7 +634,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
           message: reason,
           error: sanitizeError(rawError),
         });
-        showToast(`${serviceName}: ${reason}`, "error");
+        // No toast: the card's red box already shows the reason with Help and Logs.
       }
     }
   }
@@ -875,6 +919,20 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     }
   }
 
+  // Start all / Stop all ask first when they affect more than one service.
+  function requestBulk(action) {
+    const count = normalizedServices.filter((service) =>
+      action === "stop" ? displayStates[service.name]?.running : !displayStates[service.name]?.running
+    ).length;
+    if (count > 1) {
+      setBulkConfirm({ action, count });
+    } else if (action === "stop") {
+      handleBulkStopAll();
+    } else {
+      handleBulkStartAll();
+    }
+  }
+
   async function handleBulkStartAll() {
     try {
       await executeStartFlow(normalizedServices.map((service) => service.name), "Start all services");
@@ -935,8 +993,18 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
 
   // Stable handler identities so memoized ServiceCards only re-render when their own data changes.
   const latestHandlersRef = useRef({});
+  // "Start X first" fix: start the service together with its stopped dependencies, in order.
+  async function handleStartWithDependencies(serviceName) {
+    try {
+      await executeStartFlow([serviceName]);
+    } catch (error) {
+      showToast(error.message, "error");
+    }
+  }
+
   latestHandlersRef.current = {
     executeSingleAction,
+    handleStartWithDependencies,
     handleBranchCheckout,
     handleGitPull,
     handleGitPush,
@@ -948,6 +1016,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   };
   const cardHandlers = useMemo(() => ({
     onAction: (...args) => latestHandlersRef.current.executeSingleAction(...args),
+    onStartWithDependencies: (...args) => latestHandlersRef.current.handleStartWithDependencies(...args),
     onBranchCheckout: (...args) => latestHandlersRef.current.handleBranchCheckout(...args),
     onGitPull: (...args) => latestHandlersRef.current.handleGitPull(...args),
     onGitPush: (...args) => latestHandlersRef.current.handleGitPush(...args),
@@ -989,16 +1058,49 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   const someFilteredSelected =
     filteredServices.some((service) => selectedServices.includes(service.name)) && !allFilteredSelected;
 
+  const activeFilterCount = [statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length;
+
+  // At-a-glance state summary; each count filters the grid (click again to clear).
+  const stateSummary = normalizedServices.reduce(
+    (counts, service) => {
+      const state = displayStates[service.name] || {};
+      if (state.lifecycleState === "failed") counts.failed += 1;
+      else if (state.running) counts.running += 1;
+      else counts.stopped += 1;
+      return counts;
+    },
+    { running: 0, stopped: 0, failed: 0 }
+  );
+
+  function resetFilters() {
+    setStatusFilter("all");
+    setGroupFilter("all");
+    setTypeFilter("all");
+  }
+
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" alignItems="center" height="60vh">
-        <CircularProgress size={56} />
+      <Box sx={{ ...SERVICE_GRID_SX, p: 1.25 }}>
+        {Array.from({ length: 10 }, (_, index) => (
+          <Skeleton key={index} variant="rounded" height={190} sx={{ borderRadius: "16px" }} />
+        ))}
       </Box>
     );
   }
 
   if (error) {
-    return <Alert severity="error">{error}</Alert>;
+    return (
+      <Alert
+        severity="error"
+        action={
+          <Button color="inherit" size="small" onClick={() => loadServices(true)}>
+            Retry
+          </Button>
+        }
+      >
+        {error}
+      </Alert>
+    );
   }
 
   return (
@@ -1013,249 +1115,301 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
           boxShadow: "0 14px 34px rgba(15,23,42,0.05)",
         }}
       >
-        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 0.75, minWidth: 0 }}>
-          <Box sx={{ display: "contents" }}>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={handleBulkStartAll}>
-                Start all
-              </Button>
-              <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleBulkStopAll}>
-                Stop all
-              </Button>
-              {selectedServices.length > 0 ? (
-                <>
-                  <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={handleStartSelected}>
-                    Start selected
-                  </Button>
-                  <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleStopSelected}>
-                    Stop selected
-                  </Button>
-                  <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected}>
-                    Restart
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="secondary"
-                    onClick={() => {
-                      setNewPresetName("");
-                      setSavePresetOpen(true);
-                    }}
-                  >
-                    Save as preset
-                  </Button>
-                </>
-              ) : null}
-            </Stack>
-            <Stack direction="row" spacing={1} flexWrap="wrap">
-              <Button size="small" variant={buildEnabled ? "contained" : "outlined"} color="warning" onClick={() => setBuildEnabled((previous) => !previous)}>
-                {buildEnabled ? "Build on" : "Build off"}
-              </Button>
-              <FormControl size="small" sx={{ minWidth: 150 }}>
-                <InputLabel>Preset</InputLabel>
-                <Select
-                  value={activePreset}
-                  label="Preset"
-                  onChange={(event) => setPreset(event.target.value)}
-                  renderValue={(value) => value}
-                >
-                  {presetNames.map((option) => (
-                    <MenuItem key={option} value={option} sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
-                      <span>{option}</span>
-                      <Typography component="span" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
-                        {presets[option].length}
-                      </Typography>
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <Button size="small" variant="contained" color="secondary" onClick={handleStartPreset}>
-                Run preset
-              </Button>
-            </Stack>
-          </Box>
-
-          <Box sx={{ display: "contents" }}>
-            <Box sx={{ flex: "1 1 220px", minWidth: { xs: "100%", sm: 220 } }}>
-              <TextField
-                fullWidth
-                size="small"
-                placeholder="Search services"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                InputProps={{
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon />
-                    </InputAdornment>
-                  ),
-                }}
-              />
-            </Box>
-            <Box
-              component="details"
-              sx={{
-                position: "relative",
-                flex: "0 0 auto",
-                alignSelf: { xs: "flex-start", sm: "auto" },
-                "&[open] .filter-expand": { transform: "rotate(180deg)" },
-              }}
-            >
-              <Box
-                component="summary"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.75,
-                  cursor: "pointer",
-                  listStyle: "none",
-                  minHeight: 40,
-                  px: 1.25,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 1,
-                  "&::-webkit-details-marker": { display: "none" },
-                }}
-              >
-                <FilterListIcon fontSize="small" />
-                <Typography variant="body2">
-                  Filters{[statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length
-                    ? ` (${[statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length})`
-                    : ""}
-                </Typography>
-                <ExpandMoreIcon className="filter-expand" fontSize="small" sx={{ transition: "transform 160ms ease" }} />
-              </Box>
-              <Stack
-                spacing={1.25}
-                sx={{
-                  position: "absolute",
-                  zIndex: 1300,
-                  top: "calc(100% + 8px)",
-                  right: 0,
-                  width: 280,
-                  maxWidth: "calc(100vw - 32px)",
-                  p: 1.5,
-                  bgcolor: "background.paper",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: 2,
-                  boxShadow: 4,
-                }}
-              >
-            <FormControl size="small" sx={{ width: "100%" }}>
-              <InputLabel>Status</InputLabel>
-              <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
-                <MenuItem value="all">All</MenuItem>
-                <MenuItem value="running">Running</MenuItem>
-                <MenuItem value="healthy">Healthy</MenuItem>
-                <MenuItem value="waiting">Waiting</MenuItem>
-                <MenuItem value="failed">Failed</MenuItem>
-                <MenuItem value="needs-attention">Needs attention</MenuItem>
-                <MenuItem value="stopped">Stopped</MenuItem>
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ width: "100%" }}>
-              <InputLabel>Group</InputLabel>
-              <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
-                <MenuItem value="all">All groups</MenuItem>
-                {groups.map((group) => (
-                  <MenuItem key={group} value={group}>
-                    {group}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControl size="small" sx={{ width: "100%" }}>
-              <InputLabel>Type</InputLabel>
-              <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
-                <MenuItem value="all">All types</MenuItem>
-                {[...new Set(normalizedServices.map((service) => service.type).filter(Boolean))].map((type) => (
-                  <MenuItem key={type} value={type}>
-                    {type}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <Button
-              size="small"
-              variant="text"
-              startIcon={<FilterListIcon />}
-              onClick={() => {
-                setSearchQuery("");
-                setStatusFilter("all");
-                setGroupFilter("all");
-                setTypeFilter("all");
-              }}
-            >
-              Clear
+        <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, minWidth: 0 }}>
+          <Stack direction="row" spacing={1}>
+            <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={() => requestBulk("start")} sx={{ height: 32 }}>
+              Start all
             </Button>
-              </Stack>
-            </Box>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, ml: 0, whiteSpace: "nowrap" }}>
+            <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={() => requestBulk("stop")} sx={{ height: 32 }}>
+              Stop all
+            </Button>
+          </Stack>
+          <Stack direction="row" spacing={0.5} alignItems="center" sx={{ px: 0.5 }} role="group" aria-label="Service state summary">
+            {[
+              { key: "running", label: "running", count: stateSummary.running, dot: { bgcolor: STATUS_COLORS.running }, color: STATUS_COLORS.runningText },
+              { key: "stopped", label: "stopped", count: stateSummary.stopped, dot: { border: `1.5px solid ${STATUS_COLORS.stopped}` }, color: STATUS_COLORS.stoppedText },
+              { key: "failed", label: "failed", count: stateSummary.failed, dot: { bgcolor: STATUS_COLORS.failed }, color: stateSummary.failed ? STATUS_COLORS.failedText : STATUS_COLORS.stopped },
+            ].map((item) => {
+              const active = statusFilter === item.key;
+              return (
+                <ButtonBase
+                  key={item.key}
+                  onClick={() => setStatusFilter(active ? "all" : item.key)}
+                  aria-pressed={active}
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 0.6,
+                    px: 1,
+                    height: 32,
+                    borderRadius: "16px",
+                    fontSize: "0.82rem",
+                    fontWeight: 600,
+                    color: item.color,
+                    border: "1px solid",
+                    borderColor: active ? item.color : "transparent",
+                    bgcolor: active ? "rgba(15,23,42,0.04)" : "transparent",
+                    "&:hover": { bgcolor: "rgba(15,23,42,0.05)" },
+                  }}
+                >
+                  <Box component="span" sx={{ width: 8, height: 8, borderRadius: "50%", boxSizing: "border-box", ...item.dot }} />
+                  <Box component="span" sx={{ fontWeight: 800 }}>{item.count}</Box>
+                  {item.label}
+                </ButtonBase>
+              );
+            })}
+            <Tooltip title={refreshingNow ? "Refreshing…" : "Refresh status now (also refreshes every 30s)"}>
+              <span>
+                <IconButton size="small" aria-label="Refresh status now" onClick={handleRefreshNow} disabled={refreshingNow}>
+                  <SyncIcon
+                    fontSize="small"
+                    sx={{
+                      animation: refreshingNow ? "struo-spin 0.8s linear infinite" : "none",
+                      "@keyframes struo-spin": { from: { transform: "rotate(0deg)" }, to: { transform: "rotate(360deg)" } },
+                    }}
+                  />
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+          <Divider orientation="vertical" flexItem sx={{ mx: 0.25 }} />
+
+          {/* Preset: pick + run as one compact control */}
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Select
+              size="small"
+              value={activePreset}
+              onChange={(event) => setPreset(event.target.value)}
+              renderValue={(value) => (
+                <Box component="span" sx={{ fontSize: "0.82rem" }}>
+                  <Box component="span" sx={{ color: "text.secondary" }}>Preset: </Box>
+                  {value}
+                </Box>
+              )}
+              inputProps={{ "aria-label": "Preset" }}
+              sx={{ height: 32, minWidth: 170, maxWidth: 240, fontSize: "0.82rem" }}
+            >
+              {presetNames.map((option) => (
+                <MenuItem key={option} value={option} sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
+                  <span>{option}</span>
+                  <Typography component="span" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+                    {presets[option].length}
+                  </Typography>
+                </MenuItem>
+              ))}
+            </Select>
+            <Button size="small" variant="outlined" color="secondary" onClick={handleStartPreset} sx={{ height: 32 }}>
+              Run
+            </Button>
+            {buildEnabled ? (
+              <Tooltip title="Each start runs the build command first. Turn off in View.">
+                <Chip size="small" color="warning" variant="outlined" label="Build on" onDelete={() => setBuildEnabled(false)} />
+              </Tooltip>
+            ) : null}
+          </Stack>
+
+          <Box sx={{ flex: "1 1 200px", minWidth: { xs: "100%", sm: 200 }, display: "flex", alignItems: "center", gap: 0.5 }}>
+            <Tooltip title={allFilteredSelected ? "Unselect all visible" : "Select all visible"}>
               <Checkbox
                 size="small"
                 checked={allFilteredSelected}
                 indeterminate={someFilteredSelected}
                 onChange={(event) => toggleSelectFiltered(event.target.checked)}
-                inputProps={{ "aria-label": "Select all filtered services" }}
+                inputProps={{ "aria-label": "Select all visible services" }}
+                sx={{ p: 0.5 }}
               />
-              <Typography variant="body2" color="text.secondary">
-                Select filtered
-              </Typography>
-              {selectedServices.length > 0 ? (
-                <Button size="small" variant="text" onClick={() => setSelectedServices([])}>
-                  Clear ({selectedServices.length})
-                </Button>
-              ) : null}
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={groupedView}
-                    onChange={(event) => {
-                      setGroupedView(event.target.checked);
-                      localStorage.setItem("struo_grouped_view", String(event.target.checked));
-                    }}
-                    inputProps={{ "aria-label": "Group services" }}
-                  />
-                }
-                label="Group services"
-                sx={{ ml: 1, whiteSpace: "nowrap" }}
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    checked={showGitBranches}
-                    onChange={(event) => {
-                      setShowGitBranches(event.target.checked);
-                      localStorage.setItem("struo_show_git_branches", String(event.target.checked));
-                    }}
-                    inputProps={{ "aria-label": "Toggle Git branches on cards" }}
-                  />
-                }
-                label="Git branches"
-                sx={{ ml: 1, whiteSpace: "nowrap" }}
-              />
-              <FormControlLabel
-                control={
-                  <Switch
-                    size="small"
-                    color="primary"
-                    checked={showLiveMetrics}
-                    onChange={(event) => {
-                      setShowLiveMetrics(event.target.checked);
-                      localStorage.setItem("struo_show_live_metrics", String(event.target.checked));
-                    }}
-                    inputProps={{ "aria-label": "Toggle Live Resource Monitoring (CPU, RAM, Uptime)" }}
-                  />
-                }
-                label="Live Resources"
-                sx={{ ml: 1, whiteSpace: "nowrap" }}
-              />
-            </Box>
+            </Tooltip>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="Search services"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon sx={{ fontSize: "1rem" }} />
+                  </InputAdornment>
+                ),
+                sx: SEARCH_INPUT_SX,
+              }}
+            />
           </Box>
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={<FilterListIcon />}
+            endIcon={<ExpandMoreIcon sx={{ transform: filtersAnchorEl ? "rotate(180deg)" : "none", transition: "transform 160ms ease" }} />}
+            onClick={(event) => setFiltersAnchorEl(event.currentTarget)}
+            aria-haspopup="dialog"
+            aria-expanded={Boolean(filtersAnchorEl)}
+            sx={{ height: 32, borderColor: "divider", textTransform: "none" }}
+          >
+            Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
+          </Button>
+          <Popover
+            open={Boolean(filtersAnchorEl)}
+            anchorEl={filtersAnchorEl}
+            onClose={() => setFiltersAnchorEl(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            PaperProps={{ sx: { mt: 1, width: 280, maxWidth: "calc(100vw - 32px)", p: 1.5, borderRadius: 2 } }}
+          >
+            <Stack spacing={1.25}>
+              <FormControl size="small" sx={{ width: "100%" }}>
+                <InputLabel>Status</InputLabel>
+                <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
+                  <MenuItem value="all">All</MenuItem>
+                  <ListSubheader sx={{ lineHeight: "28px", fontSize: "0.7rem", fontWeight: 700 }}>LIFECYCLE</ListSubheader>
+                  <MenuItem value="running">Running</MenuItem>
+                  <MenuItem value="waiting">Waiting</MenuItem>
+                  <MenuItem value="stopped">Stopped</MenuItem>
+                  <MenuItem value="failed">Failed</MenuItem>
+                  <ListSubheader sx={{ lineHeight: "28px", fontSize: "0.7rem", fontWeight: 700 }}>HEALTH</ListSubheader>
+                  <MenuItem value="healthy">Healthy</MenuItem>
+                  <MenuItem value="needs-attention">Needs attention</MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ width: "100%" }}>
+                <InputLabel>Group</InputLabel>
+                <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
+                  <MenuItem value="all">All groups</MenuItem>
+                  {groups.map((group) => (
+                    <MenuItem key={group} value={group}>
+                      {group}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ width: "100%" }}>
+                <InputLabel>Type</InputLabel>
+                <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
+                  <MenuItem value="all">All types</MenuItem>
+                  {[...new Set(normalizedServices.map((service) => service.type).filter(Boolean))].map((type) => (
+                    <MenuItem key={type} value={type}>
+                      {type}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              <Button size="small" variant="text" onClick={resetFilters} disabled={!activeFilterCount} sx={{ alignSelf: "flex-start" }}>
+                Reset filters
+              </Button>
+            </Stack>
+          </Popover>
+
+          {/* Display options live in one menu instead of a row of switches */}
+          <Button
+            size="small"
+            variant="outlined"
+            color="inherit"
+            startIcon={<TuneIcon />}
+            endIcon={<ExpandMoreIcon sx={{ transform: viewAnchorEl ? "rotate(180deg)" : "none", transition: "transform 160ms ease" }} />}
+            onClick={(event) => setViewAnchorEl(event.currentTarget)}
+            aria-haspopup="menu"
+            aria-expanded={Boolean(viewAnchorEl)}
+            sx={{ height: 32, borderColor: "divider", textTransform: "none" }}
+          >
+            View
+          </Button>
+          <Menu
+            anchorEl={viewAnchorEl}
+            open={Boolean(viewAnchorEl)}
+            onClose={() => setViewAnchorEl(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            PaperProps={{ sx: { mt: 1, minWidth: 240, borderRadius: 2 } }}
+          >
+            {[
+              {
+                key: "grouped",
+                label: "Group services",
+                checked: groupedView,
+                onToggle: (checked) => {
+                  setGroupedView(checked);
+                  localStorage.setItem("struo_grouped_view", String(checked));
+                },
+              },
+              {
+                key: "git",
+                label: "Git branches on cards",
+                checked: showGitBranches,
+                onToggle: (checked) => {
+                  setShowGitBranches(checked);
+                  localStorage.setItem("struo_show_git_branches", String(checked));
+                },
+              },
+              {
+                key: "metrics",
+                label: "Live resources (CPU, memory)",
+                checked: showLiveMetrics,
+                onToggle: (checked) => {
+                  setShowLiveMetrics(checked);
+                  localStorage.setItem("struo_show_live_metrics", String(checked));
+                },
+              },
+            ].map((option) => (
+              <MenuItem key={option.key} onClick={() => option.onToggle(!option.checked)} sx={{ py: 0.5, fontSize: "0.85rem" }}>
+                <ListItemText primary={option.label} primaryTypographyProps={{ fontSize: "0.85rem" }} />
+                <Switch size="small" checked={option.checked} tabIndex={-1} inputProps={{ "aria-label": option.label }} />
+              </MenuItem>
+            ))}
+            <Divider />
+            <MenuItem onClick={() => setBuildEnabled((previous) => !previous)} sx={{ py: 0.5 }}>
+              <ListItemText
+                primary="Build before start"
+                secondary="Runs each service's build command first"
+                primaryTypographyProps={{ fontSize: "0.85rem" }}
+                secondaryTypographyProps={{ fontSize: "0.72rem" }}
+              />
+              <Switch size="small" color="warning" checked={buildEnabled} tabIndex={-1} inputProps={{ "aria-label": "Build before start" }} />
+            </MenuItem>
+          </Menu>
         </Box>
+
+        {/* Selection bar: only while services are selected, so the main toolbar never shifts */}
+        {selectedServices.length > 0 ? (
+          <Box
+            sx={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 1,
+              mt: 1.25,
+              pt: 1.25,
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography variant="body2" sx={{ fontWeight: 700, mr: 0.5 }}>
+              {selectedServices.length} selected
+            </Typography>
+            <Button size="small" variant="outlined" startIcon={<PlayArrowIcon />} onClick={handleStartSelected}>
+              Start selected
+            </Button>
+            <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleStopSelected}>
+              Stop selected
+            </Button>
+            <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected}>
+              Restart selected
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              color="secondary"
+              onClick={() => {
+                setNewPresetName("");
+                setSavePresetOpen(true);
+              }}
+            >
+              Save as preset
+            </Button>
+            <Button size="small" variant="text" onClick={() => setSelectedServices([])}>
+              Clear selection
+            </Button>
+          </Box>
+        ) : null}
       </Paper>
 
       <Paper
@@ -1271,7 +1425,23 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       >
         <Stack spacing={3}>
           {filteredServices.length === 0 ? (
-            <Alert severity="info">No services match the current filters.</Alert>
+            <Alert
+              severity="info"
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={() => {
+                    setSearchQuery("");
+                    resetFilters();
+                  }}
+                >
+                  Reset filters
+                </Button>
+              }
+            >
+              No services match the current search and filters.
+            </Alert>
           ) : groupedView ? (
             groupedServices.map(({ group, services: groupServices }) => (
               <Box
@@ -1303,10 +1473,10 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                   onClick={() =>
                     setCollapsedGroups((previous) => ({
                       ...previous,
-                      [group]: !(previous[group] ?? true),
+                      [group]: !previous[group],
                     }))
                   }
-                  aria-expanded={collapsedGroups[group] === false}
+                  aria-expanded={!collapsedGroups[group]}
                   sx={{
                     display: "flex",
                     width: "100%",
@@ -1321,17 +1491,33 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                   }}
                 >
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                    <Typography variant="h6">{group}</Typography>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{group}</Typography>
                     <Chip label={groupServices.length} size="small" variant="outlined" />
+                    {(() => {
+                      const runningCount = groupServices.filter((service) => displayStates[service.name]?.running).length;
+                      const failedCount = groupServices.filter(
+                        (service) => displayStates[service.name]?.error || displayStates[service.name]?.lifecycleState === "failed"
+                      ).length;
+                      return (
+                        <>
+                          {runningCount ? (
+                            <Chip label={`${runningCount} running`} size="small" sx={{ bgcolor: "#ecfdf3", color: "#027a48", fontWeight: 600 }} />
+                          ) : null}
+                          {failedCount ? (
+                            <Chip label={`${failedCount} failed`} size="small" sx={{ bgcolor: "#fef2f2", color: "#dc2626", fontWeight: 600 }} />
+                          ) : null}
+                        </>
+                      );
+                    })()}
                   </Box>
                   <ExpandMoreIcon
                     sx={{
-                      transform: collapsedGroups[group] === false ? "rotate(180deg)" : "none",
+                      transform: collapsedGroups[group] ? "none" : "rotate(180deg)",
                       transition: "transform 160ms ease",
                     }}
                   />
                 </ButtonBase>
-                {collapsedGroups[group] === false ? (
+                {!collapsedGroups[group] ? (
                   <Box sx={SERVICE_GRID_SX}>
                     {groupServices.map((service) => (
                       <ServiceCard
@@ -1354,6 +1540,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                         metrics={metrics[service.name] || null}
                         onViewLogs={onViewLogs ? cardHandlers.onViewLogs : undefined}
                         onOpenHelp={onOpenHelp ? cardHandlers.onOpenHelp : undefined}
+                        onStartWithDependencies={dependencyCheck ? cardHandlers.onStartWithDependencies : undefined}
                         onCloneService={onCloneService ? cardHandlers.onCloneService : undefined}
                         onEditInAdmin={onEditInAdmin ? cardHandlers.onEditInAdmin : undefined}
                         onDragStart={setDraggedServiceName}
@@ -1389,6 +1576,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                   buildMode={buildEnabled}
                   onViewLogs={onViewLogs ? cardHandlers.onViewLogs : undefined}
                   onOpenHelp={onOpenHelp ? cardHandlers.onOpenHelp : undefined}
+                  onStartWithDependencies={dependencyCheck ? cardHandlers.onStartWithDependencies : undefined}
                   onCloneService={onCloneService ? cardHandlers.onCloneService : undefined}
                   onEditInAdmin={onEditInAdmin ? cardHandlers.onEditInAdmin : undefined}
                 />
@@ -1472,9 +1660,37 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
         </DialogActions>
       </Dialog>
 
+      <Dialog open={Boolean(bulkConfirm)} onClose={() => setBulkConfirm(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>
+          {bulkConfirm?.action === "stop" ? "Stop all services?" : "Start all services?"}
+        </DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            {bulkConfirm?.action === "stop"
+              ? `This stops ${bulkConfirm?.count} running services.`
+              : `This starts ${bulkConfirm?.count} services, in dependency order.`}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setBulkConfirm(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            color={bulkConfirm?.action === "stop" ? "error" : "primary"}
+            onClick={() => {
+              const action = bulkConfirm?.action;
+              setBulkConfirm(null);
+              if (action === "stop") handleBulkStopAll();
+              else handleBulkStartAll();
+            }}
+          >
+            {bulkConfirm?.action === "stop" ? `Stop ${bulkConfirm?.count}` : `Start ${bulkConfirm?.count}`}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Snackbar
         open={toast.open}
-        autoHideDuration={5000}
+        autoHideDuration={toast.severity === "error" ? null : 5000}
         onClose={() => setToast((previous) => ({ ...previous, open: false }))}
       >
         <Alert

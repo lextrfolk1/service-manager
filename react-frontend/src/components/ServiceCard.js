@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Chip,
   CircularProgress,
   Collapse,
   IconButton,
@@ -18,13 +17,12 @@ import {
   Typography,
 } from "@mui/material";
 import {
-  AccountTree as AccountTreeIcon,
-  ArrowDropDown as ArrowDropDownIcon,
   Check as CheckIcon,
+  Code as CodeIcon,
   ContentCopy as ContentCopyIcon,
-  Description as DescriptionIcon,
-  DownloadRounded as DownloadRoundedIcon,
+  CloudDownloadRounded as CloudDownloadIcon,
   FavoriteBorderRounded as FavoriteBorderIcon,
+  KeyboardArrowDownRounded as KeyboardArrowDownIcon,
   Language as LanguageIcon,
   MenuBookRounded as MenuBookIcon,
   MoreVert as MoreVertIcon,
@@ -32,15 +30,23 @@ import {
   PlayArrowRounded as PlayArrowIcon,
   RefreshRounded as RefreshIcon,
   Settings as SettingsIcon,
+  StorageRounded as StorageIcon,
   Tune as TuneIcon,
-  SpeedRounded as SpeedIcon,
-  StopRounded as StopIcon,
-  Memory as MemoryIcon,
-  AccessTime as AccessTimeIcon,
 } from "@mui/icons-material";
-import StatusChip from "./StatusChip";
 import BranchSelector from "./BranchSelector";
+import { CODE_FONT, STATUS_COLORS } from "../theme/tokens";
 import { getServiceLinks, getDocsLabel, getHelpTopicForFailure, isFrontendService } from "../utils/serviceUtils";
+
+function getServiceTypeIcon(type = "") {
+  const t = type.toLowerCase();
+  if (t === "database" || t === "redis" || t === "neo4j" || t === "postgresql" || t === "clickhouse") {
+    return <StorageIcon sx={{ fontSize: 18, color: "#64748b" }} />;
+  }
+  if (t === "frontend" || t === "ui") {
+    return <LanguageIcon sx={{ fontSize: 18, color: "#64748b" }} />;
+  }
+  return <CodeIcon sx={{ fontSize: 18, color: "#64748b" }} />;
+}
 
 function ServiceCard({
   service,
@@ -64,23 +70,31 @@ function ServiceCard({
   onFreePort,
   onViewLogs,
   onOpenHelp,
+  onStartWithDependencies,
   onCloneService,
   onEditInAdmin,
   onDragStart,
   onDragEnd,
+  layout = "compact",
 }) {
   const isBusy = ["queued", "waiting", "starting", "stopping"].includes(status.lifecycleState);
+  // Idle cards are visually dimmed so running (and failed / busy) services stand out in the grid.
+  const isStopped = !status.running && !isBusy && !status.error;
   const canStart = !isBusy && !status.running;
   const canStop = !isBusy && status.running;
-  const canRestart = !isBusy;
+  const canRestart = !isBusy && status.running;
+
   const [menuAnchorEl, setMenuAnchorEl] = useState(null);
   const isMenuOpen = Boolean(menuAnchorEl);
   const [linksAnchorEl, setLinksAnchorEl] = useState(null);
   const isLinksOpen = Boolean(linksAnchorEl);
   const [copiedLink, setCopiedLink] = useState(false);
+
   const links = useMemo(() => getServiceLinks(service), [service]);
   const primaryDocsLink = links.find((l) => l.isDocs);
-  const isNonHttp = links[0]?.isCopyOnly;
+  // Databases / listeners have no web endpoint; their menu offers the connection address to copy.
+  const isNonHttp = links.length > 0 && links.every((l) => l.isCopyOnly);
+  const baseAddress = isNonHttp ? links[0].url : `http://localhost:${service.port}`;
   const isFrontend = useMemo(() => isFrontendService(service), [service]);
   const docsBadgeLabel = useMemo(() => getDocsLabel(service), [service]);
 
@@ -95,6 +109,222 @@ function ServiceCard({
       setTimeout(() => setCopiedLink(false), 2000);
     }
   };
+
+  // Status Badge styling mapping with distinct visual treatments for all states
+  const statusInfo = useMemo(() => {
+    if (status.error) {
+      return { label: "Failed", bg: "#fef2f2", color: "#dc2626", border: "#fecaca", isTransitional: false };
+    }
+    if (status.lifecycleState === "starting") {
+      const label = /^restart/i.test(status.message || "") ? "Restarting" : "Starting";
+      return { label, bg: "#fffbeb", color: "#b45309", border: "#fef3c7", isTransitional: true };
+    }
+    if (status.lifecycleState === "stopping") {
+      return { label: "Stopping", bg: "#fffbeb", color: "#b45309", border: "#fef3c7", isTransitional: true };
+    }
+    if (status.lifecycleState === "queued" || status.lifecycleState === "waiting") {
+      return {
+        label: status.lifecycleLabel || (status.lifecycleState === "queued" ? "Queued" : "Waiting"),
+        bg: "#eff6ff",
+        color: "#1d4ed8",
+        border: "#dbeafe",
+        isTransitional: true,
+      };
+    }
+    if (status.running) {
+      // Health in words when it's known, e.g. "Running · Unhealthy" (the dot alone was easy to miss).
+      const health = status.healthState === "healthy" ? "Healthy" : status.healthState === "unhealthy" ? "Unhealthy" : "";
+      return {
+        label: health ? `Running · ${health}` : "Running",
+        bg: health === "Unhealthy" ? "#fef2f2" : "#ecfdf3",
+        color: health === "Unhealthy" ? "#b42318" : "#067647",
+        border: health === "Unhealthy" ? "#fecaca" : "#abefc6",
+        isTransitional: false,
+      };
+    }
+    return { label: "Stopped", bg: "transparent", color: "#667085", border: "transparent", isTransitional: false };
+  }, [status.error, status.running, status.healthState, status.lifecycleState, status.lifecycleLabel, status.message]);
+
+  // Busy message tooltip & label
+  const busyTooltip = useMemo(() => {
+    if (!isBusy) return "";
+    if (status.message) return status.message;
+    if (status.lifecycleState === "starting") return "Service is starting...";
+    if (status.lifecycleState === "stopping") return "Service is stopping...";
+    if (status.lifecycleState === "waiting") return "Waiting for dependencies to start...";
+    return "Service is queued...";
+  }, [isBusy, status.message, status.lifecycleState]);
+
+  // Live Resource Monitoring Strip with consistently aligned 3-column layout
+  const renderLiveMetricsStrip = () => {
+    if (!showLiveMetrics || !status.running || !metrics) return null;
+
+    const cpuVal = parseFloat(metrics.cpuPercent) || 0;
+    const cpuColor = cpuVal > 80 ? "#ef4444" : "#101828";
+
+    return (
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "repeat(3, 1fr)",
+          gap: 2,
+          my: 1.5,
+          flexShrink: 0,
+        }}
+      >
+        <Box sx={{ minWidth: 0, textAlign: "left" }}>
+          <Typography
+            variant="caption"
+            sx={{ fontSize: "0.75rem", color: "#667085", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
+          >
+            Memory
+          </Typography>
+          <Typography sx={{ fontSize: "1.05rem", fontWeight: 700, color: "#101828", lineHeight: 1.2 }} noWrap>
+            {metrics.memoryFormatted || "—"}
+          </Typography>
+        </Box>
+
+        <Box sx={{ minWidth: 0, textAlign: "left" }}>
+          <Typography
+            variant="caption"
+            sx={{ fontSize: "0.75rem", color: "#667085", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
+          >
+            CPU
+          </Typography>
+          <Typography sx={{ fontSize: "1.05rem", fontWeight: 700, color: cpuColor, lineHeight: 1.2 }} noWrap>
+            {metrics.cpuFormatted || "—"}
+          </Typography>
+        </Box>
+
+        <Box sx={{ minWidth: 0, textAlign: "left" }}>
+          <Typography
+            variant="caption"
+            sx={{ fontSize: "0.75rem", color: "#667085", display: "block", lineHeight: 1.2, fontWeight: 500, mb: 0.35 }}
+          >
+            Uptime
+          </Typography>
+          <Typography sx={{ fontSize: "1.05rem", fontWeight: 700, color: "#101828", lineHeight: 1.2 }} noWrap>
+            {metrics.uptimeFormatted || "—"}
+          </Typography>
+        </Box>
+      </Box>
+    );
+  };
+
+  const dependsOnCount = service.dependsOn?.length || 0;
+  const requiredByCount = reverseDependencies?.length || 0;
+
+  const dependencyTooltip = useMemo(() => {
+    return [
+      service.dependsOn?.length ? `Depends on: ${service.dependsOn.join(", ")}` : "",
+      reverseDependencies?.length ? `Required by: ${reverseDependencies.join(", ")}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }, [service.dependsOn, reverseDependencies]);
+
+  // Health is folded into the lifecycle pill as a dot (running services only)
+  const healthDotColor = status.running
+    ? { healthy: "#16a34a", unhealthy: "#dc2626", "port-open": "#64748b" }[status.healthState] || null
+    : null;
+
+  // Action Buttons (Primary Start/Stop + Secondary Circular Restart)
+  const renderActionButtons = () =>
+    isBusy ? (
+      <Tooltip title={busyTooltip} placement="top" arrow>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 0.6, minWidth: 0, flex: "0 1 auto", overflow: "hidden" }}>
+          <CircularProgress size={12} thickness={5} sx={{ color: "#d97706", flexShrink: 0 }} />
+          <Typography
+            variant="caption"
+            sx={{
+              fontSize: "0.74rem",
+              fontWeight: 600,
+              color: "#b45309",
+              whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
+              overflow: "hidden",
+            }}
+          >
+            {status.message || (status.lifecycleState === "stopping" ? "Stopping..." : "Starting...")}
+          </Typography>
+        </Box>
+      </Tooltip>
+    ) : (
+      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
+        {canStart ? (
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => onAction(service.name, "start")}
+            startIcon={<PlayArrowIcon sx={{ fontSize: 15 }} />}
+            sx={{
+              borderRadius: "20px",
+              bgcolor: "rgba(25,118,210,0.08)",
+              color: "#1565c0",
+              textTransform: "none",
+              fontSize: "0.8rem",
+              fontWeight: 600,
+              px: 2,
+              height: 30,
+              boxShadow: "none",
+              "&:hover": { bgcolor: "rgba(25,118,210,0.16)" },
+            }}
+          >
+            Start
+          </Button>
+        ) : canStop ? (
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => onAction(service.name, "stop")}
+            sx={{
+              borderRadius: "20px",
+              borderColor: "#d0d5dd",
+              color: "#344054",
+              bgcolor: "#ffffff",
+              textTransform: "none",
+              fontSize: "0.82rem",
+              fontWeight: 600,
+              px: 2.2,
+              height: 30,
+              boxShadow: "none",
+              "&:hover": {
+                borderColor: "#fda29b",
+                color: "#d92d20",
+                bgcolor: "rgba(217, 45, 32, 0.04)",
+              },
+            }}
+          >
+            Stop
+          </Button>
+        ) : null}
+
+        {/* Secondary Action: Circular Restart button (running services only) */}
+        {canRestart ? (
+          <Tooltip title="Restart service" placement="top" arrow disableInteractive>
+            <span>
+              <IconButton
+                size="small"
+                aria-label={`Restart ${service.name}`}
+                onClick={() => onAction(service.name, "restart")}
+                disabled={!canRestart}
+                sx={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: "50%",
+                  border: "1px solid #d0d5dd",
+                  color: "#667085",
+                  "&.Mui-disabled": { opacity: 0.4, borderColor: "#eaecf0" },
+                  "&:hover": { bgcolor: "#f8fafc", borderColor: "#98a2b3", color: "#101828" },
+                }}
+              >
+                <RefreshIcon sx={{ fontSize: 17 }} />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : null}
+      </Stack>
+    );
 
   return (
     <Paper
@@ -111,7 +341,7 @@ function ServiceCard({
       }
       onDragEnd={isDraggable ? onDragEnd : undefined}
       sx={{
-        p: 1.5,
+        p: 2,
         height: "100%",
         display: "flex",
         flexDirection: "column",
@@ -120,57 +350,68 @@ function ServiceCard({
         ...(isDraggable ? { "&:active": { cursor: "grabbing" } } : {}),
         border: "1px solid",
         borderColor: status.error
-          ? "rgba(239, 68, 68, 0.3)"
+          ? "rgba(239, 68, 68, 0.4)"
           : status.running
-          ? "rgba(34, 197, 94, 0.35)"
-          : "rgba(148, 163, 184, 0.22)",
-        borderRadius: 2.5,
-        backgroundColor: "#ffffff",
+          ? "rgba(34, 197, 94, 0.4)"
+          : isBusy
+          ? "rgba(245, 158, 11, 0.35)"
+          : "#eaecf0",
+        borderRadius: "16px",
+        backgroundColor: isStopped ? "#fafbfc" : "#ffffff",
         boxShadow: status.running
-          ? "0 2px 8px rgba(34, 197, 94, 0.08)"
-          : "0 1px 3px rgba(15, 23, 42, 0.04)",
-        transition: "all 0.18s ease-in-out",
+          ? `inset 4px 0 0 ${STATUS_COLORS.running}, 0 3px 12px rgba(34, 197, 94, 0.08)`
+          : isBusy
+          ? "0 3px 12px rgba(245, 158, 11, 0.07)"
+          : "0 1px 3px rgba(15, 23, 42, 0.03)",
+        transition: "all 0.2s ease-in-out",
         "&:hover": {
-          boxShadow: "0 6px 16px rgba(15, 23, 42, 0.08)",
+          boxShadow: status.running
+            ? `inset 4px 0 0 ${STATUS_COLORS.running}, 0 6px 20px rgba(15, 23, 42, 0.08)`
+            : "0 6px 20px rgba(15, 23, 42, 0.08)",
           borderColor: status.error
             ? "error.main"
             : status.running
             ? "rgba(34, 197, 94, 0.6)"
-            : "primary.main",
+            : isBusy
+            ? "warning.main"
+            : "#cbd5e1",
         },
       }}
     >
-      {/* 1. Header: Selection Checkbox + Service Title + StatusChip */}
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 1,
-          mb: 0.5,
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0, flex: 1 }}>
+      {/* 1. Header: Icon + Checkbox + Service Title + Status Pill (with health dot) + Overflow Menu */}
+      <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1, mb: 0.5 }}>
+        <Box sx={{ display: "flex", alignItems: "flex-start", gap: 0.75, minWidth: 0, flex: 1 }}>
           <Checkbox
             size="small"
             checked={isSelected === true}
             onChange={(event) => onSelect(event.target.checked)}
             inputProps={{ "aria-label": `Select ${service.name}` }}
-            sx={{ p: 0, flexShrink: 0 }}
+            sx={{
+              p: 0,
+              mt: "1px",
+              flexShrink: 0,
+              opacity: isSelected ? 1 : 0.6,
+              "&:hover": { opacity: 1 },
+              transition: "opacity 0.15s ease",
+            }}
           />
-          <Tooltip title={service.name} enterDelay={500}>
+          <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center", mt: "1px" }}>
+            {getServiceTypeIcon(service.type)}
+          </Box>
+          <Tooltip title={service.name} placement="top" arrow disableInteractive>
             <Typography
-              variant="subtitle2"
+              variant="subtitle1"
               sx={{
-                fontWeight: 750,
-                fontSize: "0.88rem",
-                textTransform: "uppercase",
-                letterSpacing: "0.025em",
-                mt: "-2px",
-                lineHeight: 1.2,
+                fontWeight: 700,
+                fontSize: "0.95rem",
+                lineHeight: 1.25,
+                color: isStopped ? STATUS_COLORS.stoppedText : "#101828",
+                minWidth: 0,
                 overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+                overflowWrap: "anywhere",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
               }}
             >
               {service.name}
@@ -178,34 +419,66 @@ function ServiceCard({
           </Tooltip>
         </Box>
 
-        <Box sx={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 0.25 }}>
-          <StatusChip
-            state={status.lifecycleState}
-            label={status.lifecycleLabel}
-            sx={{ height: 21, fontSize: "0.68rem", px: 0.25 }}
-          />
-          <Tooltip title="Options">
-            <IconButton
-              size="small"
-              onClick={(event) => {
-                event.stopPropagation();
-                setMenuAnchorEl(event.currentTarget);
-              }}
-              aria-label={`Options for ${service.name}`}
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
+          {/* Status Pill Badge: spinner for transitional states, health dot when running */}
+          <Tooltip
+            title={healthDotColor ? status.healthLabel || "" : ""}
+            placement="top"
+            arrow
+           
+            disableInteractive
+          >
+            <Box
               sx={{
-                p: 0.25,
-                borderRadius: 1,
-                color: "text.secondary",
-                "&:hover": { color: "text.primary", bgcolor: "rgba(0,0,0,0.06)" },
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.6,
+                px: isStopped ? 0.25 : 1.25,
+                py: 0.3,
+                borderRadius: "12px",
+                fontSize: "0.74rem",
+                fontWeight: 600,
+                bgcolor: statusInfo.bg,
+                color: statusInfo.color,
+                border: `1px solid ${statusInfo.border}`,
+                lineHeight: 1,
               }}
             >
-              <MoreVertIcon sx={{ fontSize: 18 }} />
-            </IconButton>
+              {statusInfo.isTransitional ? (
+                <CircularProgress size={10} thickness={6} color="inherit" sx={{ opacity: 0.9 }} />
+              ) : status.running ? (
+                <Box
+                  component="span"
+                  aria-label={status.healthLabel || status.healthState || "running"}
+                  sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: healthDotColor || STATUS_COLORS.running, flexShrink: 0 }}
+                />
+              ) : isStopped ? (
+                <Box
+                  component="span"
+                  aria-hidden
+                  sx={{ width: 7, height: 7, borderRadius: "50%", border: `1.5px solid ${STATUS_COLORS.stopped}`, boxSizing: "border-box", flexShrink: 0 }}
+                />
+              ) : null}
+              <span>{statusInfo.label}</span>
+            </Box>
           </Tooltip>
-        </Box>
+
+          {/* Overflow Menu */}
+          <IconButton
+            size="small"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuAnchorEl(event.currentTarget);
+            }}
+            aria-label={`Options for ${service.name}`}
+            sx={{ p: 0.25, color: "#64748b", "&:hover": { color: "#0f172a", bgcolor: "rgba(0,0,0,0.05)" } }}
+          >
+            <MoreVertIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Stack>
       </Box>
 
-      {/* 3-dots Context Menu */}
+      {/* Overflow Menu Dropdown */}
       <Menu
         anchorEl={menuAnchorEl}
         open={isMenuOpen}
@@ -215,15 +488,13 @@ function ServiceCard({
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
         PaperProps={{
           sx: {
-            minWidth: 175,
+            minWidth: 185,
             borderRadius: 2,
             boxShadow: "0 10px 30px rgba(15,23,42,0.14)",
             py: 0.5,
           },
         }}
       >
-
-
         <MenuItem
           onClick={() => {
             setMenuAnchorEl(null);
@@ -234,7 +505,7 @@ function ServiceCard({
           <ListItemIcon sx={{ minWidth: 28 }}>
             <ContentCopyIcon fontSize="small" sx={{ fontSize: 16 }} />
           </ListItemIcon>
-          <ListItemText primary="Clone in Admin" primaryTypographyProps={{ fontSize: "0.82rem", fontWeight: 600 }} />
+          <ListItemText primary="Clone in Admin" primaryTypographyProps={{ fontSize: "0.82rem" }} />
         </MenuItem>
 
         {onEditRunConfig ? (
@@ -270,7 +541,6 @@ function ServiceCard({
           <ListItemText primary="Configure in Admin" primaryTypographyProps={{ fontSize: "0.82rem" }} />
         </MenuItem>
 
-        {/* The branch row has its own pull button; offer it here only while that row is hidden. */}
         {!showGitBranches && service.enableGit !== false && status.git?.isGitRepo ? (
           <MenuItem
             onClick={() => {
@@ -280,15 +550,14 @@ function ServiceCard({
             sx={{ py: 0.75 }}
           >
             <ListItemIcon sx={{ minWidth: 28 }}>
-              <DownloadRoundedIcon fontSize="small" sx={{ fontSize: 16 }} />
+              <CloudDownloadIcon fontSize="small" sx={{ fontSize: 16 }} />
             </ListItemIcon>
             <ListItemText primary="Git Pull" primaryTypographyProps={{ fontSize: "0.82rem" }} />
           </MenuItem>
         ) : null}
-
       </Menu>
 
-      {/* Direct App & API Links Dropdown Menu */}
+      {/* App & API Endpoints Menu */}
       <Menu
         anchorEl={linksAnchorEl}
         open={isLinksOpen}
@@ -320,16 +589,17 @@ function ServiceCard({
         >
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="caption" sx={{ fontSize: "0.68rem", fontWeight: 700, color: "text.secondary", display: "block" }}>
-              APP & API ENDPOINTS
+              {isNonHttp ? "CONNECTION" : "APP & API ENDPOINTS"}
             </Typography>
-            <Typography variant="body2" sx={{ fontSize: "0.78rem", fontWeight: 600, fontFamily: "monospace" }} noWrap>
-              http://localhost:{service.port}
+            <Typography variant="body2" sx={{ fontSize: "0.78rem", fontWeight: 600, fontFamily: CODE_FONT }} noWrap>
+              {baseAddress}
             </Typography>
           </Box>
-          <Tooltip title={copiedLink ? "Copied!" : "Copy base URL"}>
+          <Tooltip title={copiedLink ? "Copied!" : isNonHttp ? "Copy address" : "Copy base URL"}>
             <IconButton
               size="small"
-              onClick={(e) => handleCopyUrl(`http://localhost:${service.port}`, e)}
+              aria-label={isNonHttp ? "Copy address" : "Copy base URL"}
+              onClick={(e) => handleCopyUrl(baseAddress, e)}
               sx={{ p: 0.5, ml: 1, color: copiedLink ? "success.main" : "text.secondary" }}
             >
               {copiedLink ? <CheckIcon sx={{ fontSize: 16 }} /> : <ContentCopyIcon sx={{ fontSize: 16 }} />}
@@ -337,396 +607,221 @@ function ServiceCard({
           </Tooltip>
         </Box>
 
-        {links.map((link) => {
-          const isDocs = link.isDocs;
-          const isHealth = link.isHealth;
-          const isSpec = link.isSpec;
-
-          return (
-            <MenuItem
-              key={link.id}
-              component="a"
-              href={link.url}
-              target="_blank"
-              rel="noreferrer"
-              onClick={() => setLinksAnchorEl(null)}
-              sx={{
-                py: 0.75,
-                px: 1.25,
-                borderRadius: 1.5,
-                mb: 0.25,
-                "&:hover": {
-                  bgcolor: isDocs
-                    ? "rgba(99, 102, 241, 0.08)"
-                    : isHealth
-                    ? "rgba(34, 197, 94, 0.08)"
-                    : "rgba(15, 23, 42, 0.04)",
-                },
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: 28 }}>
-                {isDocs ? (
-                  <MenuBookIcon sx={{ fontSize: 17, color: "#4f46e5" }} />
-                ) : isHealth ? (
-                  <FavoriteBorderIcon sx={{ fontSize: 17, color: "#166534" }} />
-                ) : isSpec ? (
-                  <DescriptionIcon sx={{ fontSize: 17, color: "text.secondary" }} />
-                ) : (
-                  <LanguageIcon sx={{ fontSize: 17, color: "primary.main" }} />
-                )}
-              </ListItemIcon>
-              <ListItemText
-                primary={link.label}
-                secondary={link.path}
-                primaryTypographyProps={{
-                  fontSize: "0.8rem",
-                  fontWeight: isDocs || link.isRoot ? 600 : 500,
-                  color: isDocs ? "#4f46e5" : "text.primary",
-                }}
-                secondaryTypographyProps={{
-                  fontSize: "0.68rem",
-                  fontFamily: "monospace",
-                  color: "text.secondary",
-                  noWrap: true,
-                }}
-              />
+        {links.map((link) => (
+          <MenuItem
+            key={link.id}
+            {...(link.isCopyOnly
+              ? { onClick: (event) => handleCopyUrl(link.url, event) }
+              : { component: "a", href: link.url, target: "_blank", rel: "noreferrer", onClick: () => setLinksAnchorEl(null) })}
+            sx={{ py: 0.75, px: 1.25, borderRadius: 1.5, mb: 0.25 }}
+          >
+            <ListItemIcon sx={{ minWidth: 28 }}>
+              {link.isCopyOnly ? (
+                <StorageIcon sx={{ fontSize: 17, color: "#64748b" }} />
+              ) : link.isDocs ? (
+                <MenuBookIcon sx={{ fontSize: 17, color: "#4f46e5" }} />
+              ) : link.isHealth ? (
+                <FavoriteBorderIcon sx={{ fontSize: 17, color: "#166534" }} />
+              ) : (
+                <LanguageIcon sx={{ fontSize: 17, color: "primary.main" }} />
+              )}
+            </ListItemIcon>
+            <ListItemText
+              primary={link.label}
+              secondary={link.path}
+              primaryTypographyProps={{ fontSize: "0.8rem", fontWeight: 600 }}
+              secondaryTypographyProps={{ fontSize: "0.68rem", fontFamily: CODE_FONT, noWrap: true }}
+            />
+            {link.isCopyOnly ? (
+              copiedLink ? (
+                <CheckIcon sx={{ fontSize: 14, color: "success.main", ml: 1, flexShrink: 0 }} />
+              ) : (
+                <ContentCopyIcon sx={{ fontSize: 13, color: "text.disabled", ml: 1, flexShrink: 0 }} />
+              )
+            ) : (
               <OpenInNewIcon sx={{ fontSize: 13, color: "text.disabled", ml: 1, flexShrink: 0 }} />
-            </MenuItem>
-          );
-        })}
+            )}
+          </MenuItem>
+        ))}
       </Menu>
 
-
-
-      {/* 2. Description (Consistent 2-line height for grid alignment) */}
-      <Tooltip title={service.description || "No description provided"} enterDelay={600}>
+      {/* 2. Subheader Description: always one line high so cards in a row line up; blank when empty */}
+      <Tooltip title={service.description || ""}>
         <Typography
-          variant="caption"
-          color="text.secondary"
+          variant="body2"
+          aria-hidden={service.description ? undefined : true}
           sx={{
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
+            color: "#64748b",
+            fontSize: "0.78rem",
             lineHeight: 1.35,
-            minHeight: "2.7em",
-            fontSize: "0.75rem",
-            mb: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            mb: 1.25,
+            flexShrink: 0,
           }}
         >
-          {service.description || "No description provided"}
+          {service.description || "\u00A0"}
         </Typography>
       </Tooltip>
 
-      {/* 3. Metadata Tags ("tabls") */}
-      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, alignItems: "center", mb: 1 }}>
-        {status.running && status.healthLabel ? (
-          <StatusChip
-            state={status.healthState}
-            label={status.healthLabel}
-            sx={{ height: 20, fontSize: "0.68rem" }}
-          />
+      {/* 3. Soft Metadata Strip (Type, Port, Group, Config, Build, Dependencies) */}
+      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.6, alignItems: "center", mb: 1.5, flexShrink: 0 }}>
+        {service.type ? (
+          <Box
+            sx={{
+              px: 1.2,
+              py: 0.2,
+              borderRadius: "12px",
+              bgcolor: "#f1f5f9",
+              color: "#334155",
+              fontSize: "0.74rem",
+              fontWeight: 600,
+              textTransform: "capitalize",
+            }}
+          >
+            {service.type}
+          </Box>
+        ) : null}
+
+        {service.port ? (
+          // Split pill: the number copies the address in one click, the chevron opens the links menu.
+          <Box
+            component="span"
+            sx={{
+              display: "inline-flex",
+              alignItems: "stretch",
+              borderRadius: "12px",
+              bgcolor: "#f1f5f9",
+              color: "#334155",
+              fontSize: "0.74rem",
+              fontWeight: 600,
+              fontFamily: CODE_FONT,
+              overflow: "hidden",
+              "& > span > button, & > button": {
+                border: "none",
+                background: "none",
+                color: "inherit",
+                font: "inherit",
+                cursor: "pointer",
+                transition: "background-color 0.15s ease",
+                "&:hover": { bgcolor: "#e2e8f0", color: "#101828" },
+              },
+            }}
+          >
+            <Tooltip title={copiedLink ? "Copied!" : `Copy ${isNonHttp ? baseAddress : `localhost:${service.port}`}`} placement="top" arrow disableInteractive>
+              <Box
+                component="button"
+                type="button"
+                aria-label={`Copy ${isNonHttp ? baseAddress : `localhost:${service.port}`}`}
+                onClick={(event) => handleCopyUrl(isNonHttp ? baseAddress : `localhost:${service.port}`, event)}
+                sx={{ display: "inline-flex", alignItems: "center", gap: 0.4, pl: 1.2, pr: 0.5, py: 0.2 }}
+              >
+                {copiedLink ? <CheckIcon sx={{ fontSize: 12, color: "success.main" }} /> : null}:{service.port}
+              </Box>
+            </Tooltip>
+            <Tooltip title={isNonHttp ? "Connection address" : "App & API links"} placement="top" arrow disableInteractive>
+              <Box
+                component="button"
+                type="button"
+                aria-label={isNonHttp ? "Connection address" : "App and API links"}
+                aria-haspopup="menu"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setLinksAnchorEl(event.currentTarget.parentElement);
+                }}
+                sx={{ display: "inline-flex", alignItems: "center", px: 0.4, borderLeft: "1px solid #e2e8f0 !important" }}
+              >
+                <KeyboardArrowDownIcon sx={{ fontSize: 14, color: "#64748b" }} />
+              </Box>
+            </Tooltip>
+          </Box>
         ) : null}
 
         {showGroup && service.group ? (
-          <Chip
-            label={service.group}
-            size="small"
+          <Box
             sx={{
-              height: 20,
-              fontSize: "0.68rem",
+              px: 1.2,
+              py: 0.2,
+              borderRadius: "12px",
+              bgcolor: "#f1f5f9",
+              color: "#334155",
+              fontSize: "0.74rem",
               fontWeight: 500,
-              backgroundColor: "rgba(15, 23, 42, 0.05)",
-              color: "text.primary",
             }}
-          />
-        ) : null}
-
-        <Chip
-          label={service.type || "unknown"}
-          size="small"
-          variant="outlined"
-          sx={{
-            height: 20,
-            fontSize: "0.68rem",
-            color: "text.secondary",
-            borderColor: "rgba(148, 163, 184, 0.3)",
-          }}
-        />
-
-        {service.port ? (
-          isNonHttp ? (
-            <Tooltip title={copiedLink ? "Copied!" : `Click to copy localhost:${service.port}`}>
-              <Chip
-                label={`:${service.port}`}
-                size="small"
-                variant="outlined"
-                onClick={(e) => handleCopyUrl(`localhost:${service.port}`, e)}
-                clickable
-                sx={{
-                  height: 20,
-                  fontSize: "0.68rem",
-                  fontFamily: "monospace",
-                  color: "text.secondary",
-                  borderColor: "rgba(148, 163, 184, 0.3)",
-                  "&:hover": {
-                    borderColor: "primary.main",
-                    color: "primary.main",
-                  },
-                }}
-              />
-            </Tooltip>
-          ) : (
-            <>
-              {/* Port & Direct Links Dropdown Chip */}
-              <Tooltip
-                title={`Open App & API Links (port ${service.port})${!status.running ? " - Service stopped" : ""}`}
-              >
-                <Chip
-                  label={`:${service.port}`}
-                  size="small"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setLinksAnchorEl(event.currentTarget);
-                  }}
-                  deleteIcon={
-                    <ArrowDropDownIcon
-                      sx={{ fontSize: "15px !important", color: "inherit !important", ml: "-4px !important" }}
-                    />
-                  }
-                  onDelete={(event) => {
-                    event.stopPropagation();
-                    setLinksAnchorEl(event.currentTarget.parentElement || event.currentTarget);
-                  }}
-                  clickable
-                  sx={{
-                    height: 20,
-                    fontSize: "0.68rem",
-                    fontFamily: "monospace",
-                    fontWeight: 600,
-                    backgroundColor: status.running
-                      ? "rgba(34, 197, 94, 0.1)"
-                      : "rgba(15, 23, 42, 0.04)",
-                    color: status.running
-                      ? "#166534"
-                      : "text.secondary",
-                    border: "1px solid",
-                    borderColor: status.running
-                      ? "rgba(34, 197, 94, 0.35)"
-                      : "rgba(148, 163, 184, 0.3)",
-                    "& .MuiChip-deleteIcon": { mr: 0.25 },
-                    "&:hover": {
-                      backgroundColor: status.running
-                        ? "rgba(34, 197, 94, 0.2)"
-                        : "rgba(15, 23, 42, 0.08)",
-                      borderColor: status.running ? "rgba(34, 197, 94, 0.7)" : "primary.main",
-                      color: status.running ? "#14532d" : "text.primary",
-                    },
-                  }}
-                />
-              </Tooltip>
-
-              {primaryDocsLink ? (
-                /* Dedicated 1-Click Swagger / Docs Chip */
-                <Tooltip
-                  title={`Open ${primaryDocsLink.label}: ${primaryDocsLink.url}${!status.running ? " (service stopped)" : ""}`}
-                >
-                  <Chip
-                    label={docsBadgeLabel}
-                    size="small"
-                    component="a"
-                    href={primaryDocsLink.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    clickable
-                    icon={<MenuBookIcon sx={{ fontSize: "11px !important" }} />}
-                    sx={{
-                      height: 20,
-                      fontSize: "0.68rem",
-                      fontWeight: 600,
-                      backgroundColor: status.running ? "rgba(99, 102, 241, 0.09)" : "rgba(15, 23, 42, 0.03)",
-                      color: status.running ? "#4f46e5" : "text.secondary",
-                      border: "1px solid",
-                      borderColor: status.running ? "rgba(99, 102, 241, 0.25)" : "rgba(148, 163, 184, 0.25)",
-                      "& .MuiChip-icon": {
-                        ml: 0.5,
-                        mr: -0.25,
-                        color: status.running ? "#4f46e5" : "inherit",
-                      },
-                      "&:hover": {
-                        backgroundColor: status.running ? "rgba(99, 102, 241, 0.18)" : "rgba(99, 102, 241, 0.08)",
-                        borderColor: "#4f46e5",
-                        color: "#4f46e5",
-                        "& .MuiChip-icon": { color: "#4f46e5" },
-                      },
-                    }}
-                  />
-                </Tooltip>
-              ) : isFrontend ? (
-                <Tooltip
-                  title={`Open Web Application: http://localhost:${service.port}/${!status.running ? " (service stopped)" : ""}`}
-                >
-                  <Chip
-                    label="Web UI"
-                    size="small"
-                    component="a"
-                    href={`http://localhost:${service.port}/`}
-                    target="_blank"
-                    rel="noreferrer"
-                    clickable
-                    icon={<OpenInNewIcon sx={{ fontSize: "11px !important" }} />}
-                    sx={{
-                      height: 20,
-                      fontSize: "0.68rem",
-                      fontWeight: 600,
-                      backgroundColor: status.running ? "rgba(14, 165, 233, 0.09)" : "rgba(15, 23, 42, 0.03)",
-                      color: status.running ? "#0284c7" : "text.secondary",
-                      border: "1px solid",
-                      borderColor: status.running ? "rgba(14, 165, 233, 0.25)" : "rgba(148, 163, 184, 0.25)",
-                      "& .MuiChip-icon": {
-                        ml: 0.5,
-                        mr: -0.25,
-                        color: status.running ? "#0284c7" : "inherit",
-                      },
-                      "&:hover": {
-                        backgroundColor: status.running ? "rgba(14, 165, 233, 0.18)" : "rgba(14, 165, 233, 0.08)",
-                        borderColor: "#0284c7",
-                        color: "#0284c7",
-                        "& .MuiChip-icon": { color: "#0284c7" },
-                      },
-                    }}
-                  />
-                </Tooltip>
-              ) : null}
-            </>
-          )
+          >
+            {service.group}
+          </Box>
         ) : null}
 
         {runConfigCount > 0 && onEditRunConfig ? (
-          <Tooltip title="Run configuration for this machine — click to edit">
-            <Chip
-              label={`Run config · ${runConfigCount}`}
-              size="small"
-              clickable
+          <Tooltip title="Run configuration for this machine — click to edit" placement="top" arrow disableInteractive>
+            <Box
+              component="button"
               onClick={() => onEditRunConfig(service.name)}
-              icon={<TuneIcon sx={{ fontSize: "11px !important" }} />}
               sx={{
-                height: 20,
-                fontSize: "0.68rem",
-                fontWeight: 600,
+                px: 1.2,
+                py: 0.2,
+                borderRadius: "12px",
+                bgcolor: "rgba(13,148,136,0.1)",
                 color: "#0f766e",
-                backgroundColor: "rgba(13,148,136,0.08)",
-                border: "1px solid rgba(13,148,136,0.3)",
-                "& .MuiChip-icon": { ml: 0.5, mr: -0.25, color: "#0f766e" },
-                "&:hover": { backgroundColor: "rgba(13,148,136,0.16)" },
-              }}
-            />
-          </Tooltip>
-        ) : null}
-
-        {onViewLogs ? (
-          <Tooltip title={`Open logs for ${service.name}`}>
-            <Chip
-              label="Logs"
-              size="small"
-              clickable
-              onClick={() => onViewLogs(service.name)}
-              icon={<DescriptionIcon sx={{ fontSize: "11px !important" }} />}
-              sx={{
-                height: 20,
-                fontSize: "0.68rem",
+                fontSize: "0.74rem",
                 fontWeight: 600,
-                backgroundColor: "rgba(15, 23, 42, 0.03)",
-                color: "text.secondary",
-                border: "1px solid",
-                borderColor: "rgba(148, 163, 184, 0.25)",
-                "& .MuiChip-icon": { ml: 0.5, mr: -0.25, color: "inherit" },
-                "&:hover": {
-                  backgroundColor: "rgba(16, 185, 129, 0.08)",
-                  borderColor: "#059669",
-                  color: "#059669",
-                },
+                border: "none",
+                cursor: "pointer",
+                "&:hover": { bgcolor: "rgba(13,148,136,0.18)" },
               }}
-            />
+            >
+              Config · {runConfigCount}
+            </Box>
           </Tooltip>
         ) : null}
 
-        {/* Only while Build mode is on: shows which services will run their build step on start. */}
         {buildMode && service.hasBuild ? (
-          <Tooltip title="Build mode is on: this service runs its build command before starting">
-            <Chip
-              label="Build"
-              size="small"
-              variant="outlined"
-              color="warning"
-              sx={{ height: 20, fontSize: "0.68rem", fontWeight: 600 }}
-            />
+          <Box
+            sx={{
+              px: 1.2,
+              py: 0.2,
+              borderRadius: "12px",
+              bgcolor: "rgba(245,158,11,0.12)",
+              color: "#d97706",
+              fontSize: "0.74rem",
+              fontWeight: 600,
+            }}
+          >
+            Build
+          </Box>
+        ) : null}
+
+        {dependsOnCount || requiredByCount ? (
+          <Tooltip title={dependencyTooltip} placement="top" arrow disableInteractive>
+            <Box
+              sx={{
+                px: 1.2,
+                py: 0.2,
+                borderRadius: "12px",
+                bgcolor: "#f1f5f9",
+                color: "#334155",
+                fontSize: "0.74rem",
+                fontWeight: 500,
+                whiteSpace: "nowrap",
+                cursor: "default",
+              }}
+            >
+              {[
+                dependsOnCount ? `Needs ${dependsOnCount}` : "",
+                requiredByCount ? `Used by ${requiredByCount}` : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </Box>
           </Tooltip>
         ) : null}
       </Box>
 
-      {/* 3.5 Live Resource Monitoring (CPU, RAM & Uptime) */}
-      {/* 3.5 Live Resource Monitoring (CPU, RAM & Uptime) */}
-      {showLiveMetrics && status.running && metrics ? (() => {
-        const cpuVal = parseFloat(metrics.cpuPercent) || 0;
-        const memMB = (metrics.memoryBytes || 0) / (1024 * 1024);
-        const cpuColor = cpuVal > 80 ? '#ef4444' : cpuVal > 40 ? '#f59e0b' : '#10b981';
-        const memColor = memMB > 512 ? '#ef4444' : memMB > 256 ? '#f59e0b' : '#3b82f6';
-        const metricBadge = (icon, label, value, accentColor) => (
-          <Tooltip title={`${label}: ${value}`} arrow placement="top">
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 0.4,
-                px: 0.75,
-                py: 0.3,
-                borderRadius: '8px',
-                bgcolor: `${accentColor}0D`,
-                border: '1px solid',
-                borderColor: `${accentColor}28`,
-                transition: 'all 0.25s ease',
-                cursor: 'default',
-                '&:hover': {
-                  bgcolor: `${accentColor}1A`,
-                  borderColor: `${accentColor}40`,
-                  transform: 'translateY(-1px)',
-                  boxShadow: `0 2px 8px ${accentColor}18`,
-                },
-              }}
-            >
-              {React.cloneElement(icon, {
-                sx: { fontSize: 12, color: accentColor, flexShrink: 0, opacity: 0.85 },
-              })}
-              <Typography
-                variant="caption"
-                sx={{
-                  fontSize: '0.66rem',
-                  fontWeight: 700,
-                  color: accentColor,
-                  letterSpacing: '-0.01em',
-                  lineHeight: 1,
-                  whiteSpace: 'nowrap',
-                  fontFeatureSettings: '"tnum"',
-                }}
-              >
-                {value}
-              </Typography>
-            </Box>
-          </Tooltip>
-        );
-        return (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.75, flexWrap: 'wrap' }}>
-            {metricBadge(<MemoryIcon />, 'Memory', metrics.memoryFormatted, memColor)}
-            {metricBadge(<SpeedIcon />, 'CPU', metrics.cpuFormatted, cpuColor)}
-            {metricBadge(<AccessTimeIcon />, 'Uptime', metrics.uptimeFormatted, '#64748b')}
-          </Box>
-        );
-      })() : null}
-
-      {/* 4. Git Branch Selector */}
+      {/* 4. Git Branch Flow Rail */}
       {showGitBranches && service.enableGit !== false && status.git?.isGitRepo ? (
-        <Box sx={{ mb: 1 }}>
+        <Box sx={{ mb: showLiveMetrics && status.running && metrics ? 1 : 1.5, flexShrink: 0 }}>
           <BranchSelector
             serviceName={service.name}
             gitInfo={status.git}
@@ -740,145 +835,39 @@ function ServiceCard({
         </Box>
       ) : null}
 
-      {/* 5. Footer: Context / Busy Message + Action Buttons */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          gap: 0.5,
-          mt: "auto",
-          pt: 0.75,
-          borderTop: "1px solid",
-          borderColor: "rgba(148, 163, 184, 0.15)",
-          minHeight: 32,
-        }}
-      >
-        <Box sx={{ minWidth: 0, flex: 1, display: "flex", alignItems: "center" }}>
-          {isBusy ? (
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
-              <CircularProgress size={12} thickness={5} />
-              <Typography
-                variant="caption"
-                sx={{
-                  fontSize: "0.7rem",
-                  fontWeight: 600,
-                  color: "primary.main",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {status.message || "Working..."}
-              </Typography>
-            </Box>
-          ) : (service.dependsOn?.length || reverseDependencies.length) ? (
-            <Tooltip
-              title={[
-                service.dependsOn?.length ? `Depends on: ${service.dependsOn.join(", ")}` : "",
-                reverseDependencies.length ? `Required by: ${reverseDependencies.join(", ")}` : "",
-              ]
-                .filter(Boolean)
-                .join(" | ")}
+      {/* 5. Live Metrics Strip (Controlled by showLiveMetrics) */}
+      {renderLiveMetricsStrip()}
+
+      {/* 6. Bottom group pinned to the card baseline: error, footer */}
+      <Box sx={{ mt: "auto", flexShrink: 0 }}>
+        {/* Error Collapse Alert (above the footer so actions stay on the shared baseline) */}
+        <Collapse in={Boolean(status.error)}>
+          {status.error ? (
+            <Alert
+              severity="error"
+              sx={{
+                mb: 1.25,
+                borderRadius: "12px",
+                py: 0.25,
+                px: 1.25,
+                "& .MuiAlert-message": { fontSize: "0.75rem", py: 0.5, minWidth: 0, flex: 1 },
+                "& .MuiAlert-icon": { py: 0.5, mr: 1 },
+              }}
             >
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.5,
-                  fontSize: "0.7rem",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  cursor: "default",
-                }}
-              >
-                <AccountTreeIcon sx={{ fontSize: 13, opacity: 0.55, flexShrink: 0 }} />
-                <span>
-                  {service.dependsOn?.length
-                    ? `deps (${service.dependsOn.length})`
-                    : `req by (${reverseDependencies.length})`}
-                </span>
-              </Typography>
-            </Tooltip>
-          ) : (
-            <Typography variant="caption" color="text.disabled" sx={{ fontSize: "0.7rem" }} noWrap>
-              {status.running ? "Active" : "Idle"}
-            </Typography>
-          )}
-        </Box>
-
-        <Stack direction="row" spacing={0.25} sx={{ flexShrink: 0 }}>
-          <Tooltip title={canStart ? "Start service" : isBusy ? "Service is busy" : "Service is already running"}>
-            <span>
-              <IconButton
-                size="small"
-                color="primary"
-                aria-label={`Start ${service.name}`}
-                onClick={() => onAction(service.name, "start")}
-                disabled={!canStart}
-                sx={{
-                  p: 0.5,
-                  borderRadius: 1.5,
-                  "&:hover": { bgcolor: "rgba(25, 118, 210, 0.08)" },
-                }}
-              >
-                <PlayArrowIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-
-          <Tooltip title={canStop ? "Stop service" : isBusy ? "Service is busy" : "Service is already stopped"}>
-            <span>
-              <IconButton
-                size="small"
-                color="error"
-                aria-label={`Stop ${service.name}`}
-                onClick={() => onAction(service.name, "stop")}
-                disabled={!canStop}
-                sx={{
-                  p: 0.5,
-                  borderRadius: 1.5,
-                  "&:hover": { bgcolor: "rgba(211, 47, 47, 0.08)" },
-                }}
-              >
-                <StopIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-
-          <Tooltip title={canRestart ? "Restart service" : "Service is busy"}>
-            <span>
-              <IconButton
-                size="small"
-                aria-label={`Restart ${service.name}`}
-                onClick={() => onAction(service.name, "restart")}
-                disabled={!canRestart}
-                sx={{
-                  p: 0.5,
-                  borderRadius: 1.5,
-                  "&:hover": { bgcolor: "rgba(0, 0, 0, 0.06)" },
-                }}
-              >
-                <RefreshIcon fontSize="small" />
-              </IconButton>
-            </span>
-          </Tooltip>
-
-
-
-        </Stack>
-      </Box>
-
-      {/* 6. Error Collapse */}
-      <Collapse in={Boolean(status.error)}>
-        {status.error ? (
-          <Alert
-            severity="error"
-            action={
-              <Stack direction="row" spacing={0.5} alignItems="center">
+              <Box sx={{ overflowWrap: "anywhere" }}>{status.error}</Box>
+              {/* Actions sit under the message so they never squeeze it on a narrow card */}
+              <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mt: 0.5, ml: -0.75 }}>
+                {onStartWithDependencies && getHelpTopicForFailure(status.message, status.error) === "dependencies" ? (
+                  <Button
+                    color="inherit"
+                    size="small"
+                    startIcon={<PlayArrowIcon sx={{ fontSize: 15 }} />}
+                    onClick={() => onStartWithDependencies(service.name)}
+                    sx={{ fontWeight: 700, whiteSpace: "nowrap", minWidth: 0, px: 0.75 }}
+                  >
+                    Start all needed
+                  </Button>
+                ) : null}
                 {onOpenHelp ? (
                   <Button
                     color="inherit"
@@ -889,27 +878,99 @@ function ServiceCard({
                         section: getHelpTopicForFailure(status.message, status.error),
                       })
                     }
+                    sx={{ minWidth: 0, px: 0.75 }}
                   >
                     Help
                   </Button>
                 ) : null}
-                <Button color="inherit" size="small" onClick={() => onViewLogs(service.name)}>
+                <Button color="inherit" size="small" onClick={() => onViewLogs(service.name)} sx={{ minWidth: 0, px: 0.75 }}>
                   Logs
                 </Button>
               </Stack>
-            }
-            sx={{
-              mt: 1,
-              borderRadius: 1.5,
-              py: 0,
-              px: 1,
-              "& .MuiAlert-message": { fontSize: "0.72rem", py: 0.5 },
-            }}
-          >
-            {status.error}
-          </Alert>
-        ) : null}
-      </Collapse>
+            </Alert>
+          ) : null}
+        </Collapse>
+
+        {/* Footer Row: Dependencies & Shortcuts (Left) + Primary Action & Restart (Right) */}
+        <Box
+          sx={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 1,
+            pt: 1.25,
+            borderTop: "1px solid #f1f5f9",
+            minHeight: 34,
+          }}
+        >
+          {/* Left Side: Quick links (Logs, Docs / Web UI) */}
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, minWidth: 0, flex: isBusy ? "0 0 auto" : 1, overflow: "hidden" }}>
+            {/* Quick links: ALWAYS visible and interactive even during transitional states */}
+            {onViewLogs ? (
+              <Typography
+                component="button"
+                onClick={() => onViewLogs(service.name)}
+                sx={{
+                  background: "none",
+                  border: "none",
+                  color: "#101828",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  p: 0,
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                  "&:hover": { color: "#000000", textDecoration: "underline" },
+                }}
+              >
+                Logs
+              </Typography>
+            ) : null}
+
+            {primaryDocsLink ? (
+              <Typography
+                component="a"
+                href={primaryDocsLink.url}
+                target="_blank"
+                rel="noreferrer"
+                sx={{
+                  color: "#101828",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                  "&:hover": { color: "#000000", textDecoration: "underline" },
+                }}
+              >
+                {docsBadgeLabel}
+              </Typography>
+            ) : isFrontend && service.port ? (
+              <Typography
+                component="a"
+                href={`http://localhost:${service.port}/`}
+                target="_blank"
+                rel="noreferrer"
+                sx={{
+                  color: "#101828",
+                  fontSize: "0.78rem",
+                  fontWeight: 600,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
+                  "&:hover": { color: "#000000", textDecoration: "underline" },
+                }}
+              >
+                Web UI
+              </Typography>
+            ) : null}
+          </Box>
+
+          {/* Right Side: Primary Action + Secondary Action, or progress message while busy */}
+          {renderActionButtons()}
+        </Box>
+      </Box>
+
     </Paper>
   );
 }
