@@ -19,7 +19,8 @@
       "path": "${basePaths.npm}/frontend-service",
       "command": "npm run dev",
       "description": "React Frontend Service",
-      "build": "npm install"
+      "build": "npm install",
+      "group": "Frontend"
     },
     "config-service": {
       "type": "java",
@@ -27,7 +28,9 @@
       "path": "${basePaths.java}/config-service",
       "command": "mvn spring-boot:run",
       "build": "mvn clean install -DskipTests",
-      "description": "Spring Cloud Config Server"
+      "description": "Spring Cloud Config Server",
+      "dependsOn": [],
+      "group": "Core"
     },
     "auth-service": {
       "type": "java",
@@ -35,7 +38,11 @@
       "path": "${basePaths.java}/auth-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "Authentication and Authorization Service"
+      "description": "Authentication and Authorization Service",
+      "dependsOn": [
+        "config-service"
+      ],
+      "group": "Core"
     },
     "generic-service": {
       "type": "java",
@@ -43,7 +50,11 @@
       "path": "${basePaths.java}/generic-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "A generic service for common functionalities"
+      "description": "A generic service for common functionalities",
+      "dependsOn": [
+        "config-service"
+      ],
+      "group": "Core"
     },
     "workflow-service": {
       "type": "java",
@@ -51,7 +62,11 @@
       "path": "${basePaths.java}/workflow-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "Service to manage workflows"
+      "description": "Service to manage workflows",
+      "dependsOn": [
+        "config-service"
+      ],
+      "group": "Core"
     },
     "supplemental-service": {
       "type": "java",
@@ -59,7 +74,13 @@
       "path": "${basePaths.java}/su-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "Supplemental service for data uploads"
+      "description": "Supplemental service for data uploads",
+      "dependsOn": [
+        "config-service",
+        "generic-service",
+        "workflow-service"
+      ],
+      "group": "Core"
     },
     "workbench-service": {
       "type": "java",
@@ -67,7 +88,13 @@
       "path": "${basePaths.java}/workbench-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "Service to manage workbench operations"
+      "description": "Service to manage workbench operations",
+      "dependsOn": [
+        "config-service",
+        "generic-service",
+        "workflow-service"
+      ],
+      "group": "Core"
     },
     "rules-service": {
       "type": "java",
@@ -75,7 +102,14 @@
       "path": "${basePaths.java}/rules-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "Service to manage business rules"
+      "description": "Service to manage business rules",
+      "dependsOn": [
+        "config-service",
+        "neo4j",
+        "neo4j-augmenta",
+        "workflow-service"
+      ],
+      "group": "Core"
     },
     "reportgeneration-service": {
       "type": "java",
@@ -83,7 +117,12 @@
       "path": "${basePaths.java}/reportgeneration-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "Service to handle report generation"
+      "description": "Service to handle report generation",
+      "dependsOn": [
+        "config-service",
+        "workflow-service"
+      ],
+      "group": "Core"
     },
     "gateway-service": {
       "type": "java",
@@ -92,7 +131,11 @@
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
       "description": "API Gateway Service",
-      "docsPath": "/swagger-ui.html"
+      "docsPath": "/swagger-ui.html",
+      "dependsOn": [
+        "config-service"
+      ],
+      "group": "Core"
     },
     "execution-service": {
       "type": "python",
@@ -100,7 +143,12 @@
       "path": "${basePaths.python}/execution-service",
       "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5002",
       "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
-      "description": "Service to handle code execution tasks"
+      "description": "Service to handle code execution tasks",
+      "dependsOn": [
+        "config-service",
+        "redis"
+      ],
+      "group": "Data"
     },
     "execution-service-listener": {
       "type": "listener",
@@ -109,7 +157,12 @@
       "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
       "stopCommand": "powershell -NoProfile -Command \"Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*pg_sync_worker.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }\"",
       "healthCommand": "powershell -NoProfile -Command \"if (Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*pg_sync_worker.py*' }) { exit 0 } else { exit 1 }\"",
-      "description": "Execution Service listener"
+      "description": "Execution Service listener",
+      "dependsOn": [
+        "config-service",
+        "redis"
+      ],
+      "group": "Background"
     },
     "data-service": {
       "type": "python",
@@ -117,7 +170,12 @@
       "path": "${basePaths.python}/data-service",
       "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5005",
       "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
-      "description": "Service to manage data operations"
+      "description": "Service to manage data operations",
+      "dependsOn": [
+        "config-service",
+        "redis"
+      ],
+      "group": "Data"
     },
     "lexie-ai": {
       "type": "python",
@@ -125,7 +183,12 @@
       "path": "${basePaths.python}/lexie-ai",
       "command": ".venv\\Scripts\\python.exe -m uvicorn app:app --host 0.0.0.0 --port 5003",
       "build": ".venv\\Scripts\\python.exe -m pip install -r requirements.txt",
-      "description": "AI-powered assistant service"
+      "description": "AI-powered assistant service",
+      "dependsOn": [
+        "config-service",
+        "redis"
+      ],
+      "group": "AI"
     },
     "semantic-service": {
       "type": "java",
@@ -134,7 +197,12 @@
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
       "description": "Semantic service",
-      "group": "Data"
+      "group": "Data",
+      "dependsOn": [
+        "config-service",
+        "neo4j",
+        "opa"
+      ]
     },
     "analytics-service": {
       "type": "java",
@@ -142,7 +210,11 @@
       "path": "${basePaths.java}/analytics-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "analytical operation Service"
+      "description": "analytical operation Service",
+      "dependsOn": [
+        "config-service"
+      ],
+      "group": "Data"
     },
     "intelligence-service": {
       "type": "java",
@@ -150,7 +222,12 @@
       "path": "${basePaths.java}/intelligence-service",
       "command": "mvn spring-boot:run -Dspring-boot.run.jvmArguments=\"-Dspring.profiles.active=dev -Dspring.cloud.config.uri=http://localhost:8888\"",
       "build": "mvn clean install -DskipTests",
-      "description": "Intelligence backend service"
+      "description": "Intelligence backend service",
+      "dependsOn": [
+        "config-service",
+        "opa"
+      ],
+      "group": "Core"
     },
     "lextr-frontend": {
       "type": "npm",
@@ -158,14 +235,16 @@
       "path": "${basePaths.npm}/lextr-frontend",
       "command": "npm run dev -- --host 0.0.0.0",
       "build": "npm install",
-      "description": "Lextr Frontend development server"
+      "description": "Lextr Frontend development server",
+      "group": "Frontend"
     },
     "redis": {
       "type": "redis",
       "port": 6379,
       "command": "redis-server",
       "stopCommand": "redis-cli shutdown",
-      "description": "Redis in-memory data store"
+      "description": "Redis in-memory data store",
+      "group": "Database"
     },
     "neo4j": {
       "type": "neo4j",
@@ -202,7 +281,8 @@
       "command": "docker start clickhouse 2>NUL || docker run -d --name clickhouse -p 8123:8123 -p 9000:9000 -e CLICKHOUSE_DB=data -e CLICKHOUSE_USER=default -e CLICKHOUSE_PASSWORD=clickhouse -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 clickhouse/clickhouse-server",
       "stopCommand": "docker stop clickhouse",
       "healthCommand": "curl -sf http://localhost:8123/ping > NUL",
-      "description": "ClickHouse analytics database on Docker (9000)"
+      "description": "ClickHouse analytics database on Docker (9000)",
+      "group": "Other"
     },
     "opa": {
       "type": "docker",
@@ -211,7 +291,8 @@
       "command": "docker start lextr-opa 2>NUL || docker run -d --name lextr-opa --restart unless-stopped -p 8181:8181 openpolicyagent/opa:1.4.2 run --server --addr 0.0.0.0:8181 --v0-compatible --log-level info",
       "stopCommand": "docker stop lextr-opa",
       "healthCommand": "curl -sf http://127.0.0.1:8181/health > NUL",
-      "description": "Open Policy Agent on Docker"
+      "description": "Open Policy Agent on Docker",
+      "group": "Other"
     }
   }
 }

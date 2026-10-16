@@ -41,8 +41,8 @@ const FEATURE_GROUPS = [
     items: [
       ["Start, stop, restart", "Control a single service. The card shows live progress (queued, starting, stopping) and the result.", "▶ ■ ⟳ buttons at the bottom of each card"],
       ["Bulk actions", "Start or stop every service at once, or tick several cards and act only on those. \"Select filtered\" ticks everything matching the current search and filters.", "Dashboard toolbar: Start all, Stop all, Select filtered"],
-      ["Dependency-aware start", "Starting a service first starts everything in its Depends On list, in the right order. If a dependency fails, services that need it are marked \"Blocked by dependency failure\" instead of starting.", "Set in Admin › Services › Dependencies"],
-      ["Presets", "Start a common set in one click. Minimal: databases + config, gateway and frontend. Core: databases, the Core group and one frontend. Backend Only: everything except Frontend. Full Stack: everything.", "Dashboard toolbar: Preset + Run preset"],
+      ["Dependency-aware start", "A service won't start while one of its dependencies is stopped — you'll see \"Start <service> first\". If a dependency is still starting, it waits (up to 120s) until it is ready: port open, health command passing and health endpoint OK (whichever are configured). A dependency with no port and no health check never blocks. Start all and presets start dependencies first; each service starts the moment its own dependencies are ready, so a full start takes as little time as possible. If a dependency fails, only the services that need it are marked \"Blocked by dependency failure\". Dependencies are set per service in Depends On.", "Admin › Services › Dependencies"],
+      ["Presets", "Start a saved set of services in one click. Built-in presets are layers of the dependency map: Infrastructure only, Infrastructure + shared services, All backend services, and Full stack. Create your own by ticking cards and choosing \"Save as preset\", or edit, rename and delete presets in Admin › Presets.", "Dashboard toolbar: Preset + Run preset"],
       ["Build mode", "When on, each start runs the service's build command first (e.g. mvn clean install). If the build fails the service is not started.", "Dashboard toolbar: Build on / Build off"],
       ["Automatic port cleanup", "Before starting a service, Struo stops whatever is still holding its port, so stale processes don't block startup. Stop also clears the port.", "Automatic — needs a port in the service config"],
       ["Startup readiness", "After starting, Struo waits up to 60 seconds for the port to open and runs the health command if one is configured, then marks the service Running or Healthy.", "Automatic — configure port / healthCommand"],
@@ -218,7 +218,7 @@ const SERVICE_FIELDS = [
     what: "Services that must be running before this one starts.",
     how: "Starting this service starts its dependencies first, in order. If a dependency fails, this service is blocked. Admin rejects unknown names and dependency cycles.",
     examples: [["One dependency", '["config-service"]'], ["Several", '["config-service", "redis"]']],
-    tip: "Pick services from the list in Admin — renaming a service updates these references automatically.",
+    tip: "Pick services from the list in Admin — renaming a service updates these references automatically. Leave it empty for services that don't need anything else running.",
   },
   {
     name: "docsPath",
@@ -299,6 +299,15 @@ SERVICE_FIELDS.push(
 
 const GLOBAL_FIELDS = [
   {
+    name: "config.presets",
+    required: "No",
+    admin: "Admin › Presets",
+    what: "Named sets of services you can start together from the Dashboard.",
+    how: "Each preset is a list of service names. When not set, the built-in presets are used: Infrastructure only, Infrastructure + shared services, All backend services and Full stack, computed from the dependency map. Renaming or deleting a service in Admin updates the presets that contain it.",
+    examples: [["Example", '{ "My daily set": ["redis", "config-service", "auth-service"] }']],
+    tip: "Tick services on the Dashboard and use \"Save as preset\" to create one quickly.",
+  },
+  {
     name: "config.logs",
     required: "No",
     admin: "Admin › Logs",
@@ -360,8 +369,9 @@ const TROUBLESHOOTING = [
     title: "Service won't start",
     icon: <ErrorIcon />,
     color: "#dc2626",
-    symptom: "The card turns red with \"Command failed\" or \"Operation failed\".",
+    symptom: "The card turns red with \"Command failed\", \"Operation failed\" or \"Start <service> first\".",
     steps: [
+      "\"Start <service> first\" means a service it depends on isn't running. Start that one first, or use Start all / Run preset, which start dependencies in the right order.",
       "Open the service log (Logs button on the red box) — the real error is usually in the last lines.",
       "Check the service path exists. Admin › Services › Location shows the folder it resolves to.",
       "Run the start command yourself in a terminal from that folder. If it fails there, fix it there first.",

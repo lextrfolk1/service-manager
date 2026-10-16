@@ -1,22 +1,28 @@
 import React, { useEffect, useState } from "react";
 import {
   Alert,
+  Box,
   Button,
+  Chip,
   Checkbox,
   Dialog,
   DialogActions,
   DialogContent,
-  DialogTitle,
   FormControlLabel,
-  Grid,
   IconButton,
-  InputAdornment,
   Stack,
   TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
-import { Add as AddIcon, Delete as DeleteIcon } from "@mui/icons-material";
+import {
+  Add as AddIcon,
+  Delete as DeleteIcon,
+  LockOutlined as LockIcon,
+  Tune as TuneIcon,
+  Visibility as VisibilityIcon,
+  VisibilityOff as VisibilityOffIcon,
+} from "@mui/icons-material";
 
 // Shared by Admin (service editor) and Dashboard (quick edit from a service card).
 
@@ -53,68 +59,70 @@ export function getRunFields(type) {
   return RUN_FIELDS_BY_TYPE[type || ""] || ["env"];
 }
 
+const TEAL = "#0d9488";
+const monoSx = { fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace', fontSize: "0.82rem" };
+
+function FieldBlock({ label, hint, children }) {
+  return (
+    <Box sx={{ mb: 2 }}>
+      <Typography sx={{ fontSize: "0.8rem", fontWeight: 700, mb: 0.25 }}>{label}</Typography>
+      {hint ? <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mb: 0.75 }}>{hint}</Typography> : null}
+      {children}
+    </Box>
+  );
+}
+
 // Run configuration editor: extra parameters for this machine (stored outside services.json, never committed).
 // Fields shown depend on the service type.
 export function RunConfigSection({ settings = {}, serviceType = "", onChange }) {
   const [revealed, setRevealed] = useState({});
   const envEntries = Object.entries(settings.env || {});
   const update = (patch) => onChange({ ...settings, ...patch });
+  const setEnvEntries = (entries) => update({ env: Object.fromEntries(entries) });
   const fields = getRunFields(serviceType);
   const argsCopy = RUN_ARGS_COPY[serviceType || ""] || RUN_ARGS_COPY[""];
   const envHelp = RUN_ENV_HELP[serviceType || ""] || RUN_ENV_HELP_CONTAINER;
   // Values saved earlier for fields this type doesn't use (e.g. after changing the type) are ignored when starting.
   const unusedFields = ["jvmArgs", "args"].filter((field) => !fields.includes(field) && String(settings[field] || "").trim());
-  const setEnvEntries = (entries) => update({ env: Object.fromEntries(entries) });
-  const monoSx = { fontFamily: "monospace", fontSize: "0.82rem" };
 
   return (
-    <>
-      <Typography variant="body2" sx={{ color: "text.secondary", mb: 1.5 }}>
-        Extra parameters this service needs to run on this machine. They are stored separately from the shared
-        configuration and are never committed.
-      </Typography>
-      {fields.includes("jvmArgs") || fields.includes("args") ? (
-        <Grid container spacing={1.5}>
-          {fields.includes("jvmArgs") ? (
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                size="small"
-                label="JVM arguments"
-                value={settings.jvmArgs || ""}
-                onChange={(event) => update({ jvmArgs: event.target.value })}
-                placeholder="e.g. -Xmx1g spring.profiles.active=local"
-                InputProps={{ sx: monoSx }}
-                helperText="Heap size, system properties, debug agent. -D is optional for properties: name=value works too."
-              />
-            </Grid>
-          ) : null}
-          {fields.includes("args") ? (
-            <Grid item xs={12}>
-              <TextField
-                fullWidth
-                size="small"
-                label={argsCopy.label}
-                value={settings.args || ""}
-                onChange={(event) => update({ args: event.target.value })}
-                placeholder={argsCopy.placeholder}
-                InputProps={{ sx: monoSx }}
-                helperText={argsCopy.help}
-              />
-            </Grid>
-          ) : null}
-        </Grid>
+    <Box>
+      {fields.includes("jvmArgs") ? (
+        <FieldBlock label="JVM arguments" hint="Heap size, system properties, debug agent. -D is optional: name=value works too.">
+          <TextField
+            fullWidth
+            size="small"
+            multiline
+            maxRows={4}
+            value={settings.jvmArgs || ""}
+            onChange={(event) => update({ jvmArgs: event.target.value })}
+            placeholder="-Xmx1g spring.profiles.active=local"
+            InputProps={{ sx: monoSx }}
+          />
+        </FieldBlock>
       ) : null}
+
+      {fields.includes("args") ? (
+        <FieldBlock label={argsCopy.label} hint={argsCopy.help}>
+          <TextField
+            fullWidth
+            size="small"
+            multiline
+            maxRows={4}
+            value={settings.args || ""}
+            onChange={(event) => update({ args: event.target.value })}
+            placeholder={argsCopy.placeholder.replace(/^e\.g\. /, "")}
+            InputProps={{ sx: monoSx }}
+          />
+        </FieldBlock>
+      ) : null}
+
       {unusedFields.length ? (
         <Alert
           severity="warning"
-          sx={{ mt: 1.5, py: 0 }}
+          sx={{ mb: 2, py: 0 }}
           action={
-            <Button
-              size="small"
-              color="inherit"
-              onClick={() => update(Object.fromEntries(unusedFields.map((field) => [field, ""])))}
-            >
+            <Button size="small" color="inherit" onClick={() => update(Object.fromEntries(unusedFields.map((field) => [field, ""])))}>
               Clear
             </Button>
           }
@@ -123,20 +131,65 @@ export function RunConfigSection({ settings = {}, serviceType = "", onChange }) 
         </Alert>
       ) : null}
 
-      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 2, mb: 1 }}>
-        <Typography sx={{ fontSize: "0.8rem", fontWeight: 700 }}>Environment variables</Typography>
-        <Button size="small" startIcon={<AddIcon />} onClick={() => setEnvEntries([...envEntries, ["", ""]])}>
-          Add variable
-        </Button>
+      <Stack direction="row" alignItems="flex-end" justifyContent="space-between" sx={{ mb: 0.75 }}>
+        <Box>
+          <Typography sx={{ fontSize: "0.8rem", fontWeight: 700 }}>Environment variables</Typography>
+          <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>{envHelp}</Typography>
+        </Box>
+        {envEntries.length ? (
+          <Button size="small" startIcon={<AddIcon />} onClick={() => setEnvEntries([...envEntries, ["", ""]])} sx={{ flexShrink: 0, ml: 1 }}>
+            Add
+          </Button>
+        ) : null}
       </Stack>
+
       {envEntries.length === 0 ? (
-        <Typography variant="body2" sx={{ color: "text.secondary" }}>
-          None yet. {envHelp}
-        </Typography>
+        <Box
+          sx={{
+            border: "1px dashed rgba(148,163,184,0.6)",
+            borderRadius: 2,
+            py: 2,
+            textAlign: "center",
+            backgroundColor: "rgba(248,250,252,0.7)",
+          }}
+        >
+          <Typography sx={{ fontSize: "0.8rem", color: "text.secondary", mb: 1 }}>No environment variables yet</Typography>
+          <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={() => setEnvEntries([["", ""]])}>
+            Add variable
+          </Button>
+        </Box>
       ) : (
-        <Stack spacing={1}>
+        <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2, overflow: "hidden" }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr) 72px",
+              px: 1.25,
+              py: 0.5,
+              backgroundColor: "rgba(248,250,252,0.9)",
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            {["Name", "Value", ""].map((heading) => (
+              <Typography key={heading} sx={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: 0.4, textTransform: "uppercase", color: "text.secondary" }}>
+                {heading}
+              </Typography>
+            ))}
+          </Box>
           {envEntries.map(([key, value], index) => (
-            <Stack key={index} direction="row" spacing={1} alignItems="center">
+            <Box
+              key={index}
+              sx={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr) 72px",
+                gap: 1,
+                alignItems: "center",
+                px: 1.25,
+                py: 0.75,
+                "&:not(:last-of-type)": { borderBottom: "1px solid rgba(148,163,184,0.15)" },
+              }}
+            >
               <TextField
                 size="small"
                 placeholder="NAME"
@@ -147,11 +200,9 @@ export function RunConfigSection({ settings = {}, serviceType = "", onChange }) 
                   setEnvEntries(next);
                 }}
                 InputProps={{ sx: monoSx }}
-                sx={{ width: "40%" }}
               />
               <TextField
                 size="small"
-                fullWidth
                 placeholder="value (empty = not set)"
                 type={revealed[index] ? "text" : "password"}
                 value={value}
@@ -160,31 +211,25 @@ export function RunConfigSection({ settings = {}, serviceType = "", onChange }) 
                   next[index] = [key, event.target.value];
                   setEnvEntries(next);
                 }}
-                InputProps={{
-                  sx: monoSx,
-                  endAdornment: (
-                    <InputAdornment position="end">
-                      <Button
-                        size="small"
-                        onClick={() => setRevealed((previous) => ({ ...previous, [index]: !previous[index] }))}
-                        sx={{ minWidth: 0, fontSize: "0.7rem" }}
-                      >
-                        {revealed[index] ? "Hide" : "Show"}
-                      </Button>
-                    </InputAdornment>
-                  ),
-                }}
+                InputProps={{ sx: monoSx }}
               />
-              <Tooltip title="Remove variable">
-                <IconButton size="small" color="error" onClick={() => setEnvEntries(envEntries.filter((_, i) => i !== index))}>
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-            </Stack>
+              <Stack direction="row" spacing={0.25} justifyContent="flex-end">
+                <Tooltip title={revealed[index] ? "Hide value" : "Show value"}>
+                  <IconButton size="small" onClick={() => setRevealed((previous) => ({ ...previous, [index]: !previous[index] }))}>
+                    {revealed[index] ? <VisibilityOffIcon fontSize="small" /> : <VisibilityIcon fontSize="small" />}
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Remove variable">
+                  <IconButton size="small" color="error" onClick={() => setEnvEntries(envEntries.filter((_, i) => i !== index))}>
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            </Box>
           ))}
-        </Stack>
+        </Box>
       )}
-    </>
+    </Box>
   );
 }
 
@@ -255,56 +300,96 @@ export function RunConfigDialog({ open, serviceName, serviceType, initialSetting
     { services: { [serviceName]: initialSettings || {} } },
     { services: { [serviceName]: draft } }
   ).map((change) => change.text.replace(/^Run configuration · "[^"]*": /, ""));
+  const changeItems = changes[0] ? changes[0].split(", ") : [];
+
+  const header = (title) => (
+    <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, px: 3, pt: 2.5, pb: 2, borderBottom: "1px solid", borderColor: "divider" }}>
+      <Box
+        sx={{
+          width: 40,
+          height: 40,
+          borderRadius: 2,
+          display: "grid",
+          placeItems: "center",
+          flexShrink: 0,
+          color: TEAL,
+          backgroundColor: `${TEAL}14`,
+          border: `1px solid ${TEAL}33`,
+        }}
+      >
+        <TuneIcon fontSize="small" />
+      </Box>
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Typography sx={{ fontWeight: 800, fontSize: "1.05rem", lineHeight: 1.25 }}>{title}</Typography>
+        <Stack direction="row" spacing={0.75} alignItems="center" sx={{ mt: 0.25 }}>
+          <Typography sx={{ fontSize: "0.82rem", fontWeight: 600, fontFamily: monoSx.fontFamily }} noWrap>
+            {serviceName}
+          </Typography>
+          {serviceType ? <Chip size="small" label={serviceType} sx={{ height: 18, fontSize: "0.65rem" }} /> : null}
+        </Stack>
+      </Box>
+      <Tooltip title="Stored in run-config.json on this machine. It is git-ignored and never committed.">
+        <Chip
+          size="small"
+          icon={<LockIcon sx={{ fontSize: "12px !important" }} />}
+          label="This machine only"
+          sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700, color: TEAL, backgroundColor: `${TEAL}10`, "& .MuiChip-icon": { color: TEAL } }}
+        />
+      </Tooltip>
+    </Box>
+  );
 
   return (
-    <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="sm" fullWidth PaperProps={{ sx: { borderRadius: 3 } }}>
       {step === "edit" ? (
         <>
-          <DialogTitle sx={{ fontWeight: 800 }}>Run configuration · {serviceName}</DialogTitle>
-          <DialogContent sx={{ pt: 1 }}>
+          {header("Run configuration")}
+          <DialogContent sx={{ px: 3, pt: "20px !important", pb: 1 }}>
             <RunConfigSection settings={draft} serviceType={serviceType || ""} onChange={setDraft} />
           </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2.5 }}>
-            <Button onClick={onClose}>Cancel</Button>
-            <Button variant="contained" onClick={() => setStep("confirm")} disabled={changes.length === 0}>
-              Save
-            </Button>
+          <DialogActions sx={{ px: 3, py: 2, borderTop: "1px solid", borderColor: "divider", justifyContent: "space-between" }}>
+            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+              {changeItems.length
+                ? `${changeItems.length} change${changeItems.length === 1 ? "" : "s"} · applies the next time the service starts`
+                : "Applies the next time the service starts"}
+            </Typography>
+            <Stack direction="row" spacing={1}>
+              <Button onClick={onClose}>Cancel</Button>
+              <Button variant="contained" onClick={() => setStep("confirm")} disabled={changeItems.length === 0}>
+                Save
+              </Button>
+            </Stack>
           </DialogActions>
         </>
       ) : (
         <>
-          <DialogTitle sx={{ fontWeight: 800 }}>Save run configuration?</DialogTitle>
-          <DialogContent sx={{ pt: 1 }}>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              Changes for <strong>{serviceName}</strong>:
-            </Typography>
-            <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2.5 }}>
-              {changes[0]
-                ? changes[0].split(", ").map((item) => (
-                    <Typography component="li" variant="body2" key={item}>
-                      {item}
-                    </Typography>
-                  ))
-                : null}
+          {header("Save run configuration?")}
+          <DialogContent sx={{ px: 3, pt: "20px !important" }}>
+            <Typography sx={{ fontSize: "0.85rem", mb: 1 }}>These changes will be saved:</Typography>
+            <Stack spacing={0.75}>
+              {changeItems.map((item) => (
+                <Stack key={item} direction="row" spacing={1} alignItems="center">
+                  <Box sx={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: TEAL, flexShrink: 0 }} />
+                  <Typography sx={{ fontSize: "0.85rem" }}>{item}</Typography>
+                </Stack>
+              ))}
             </Stack>
-            <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 1.5 }}>
-              Saved on this machine only and never committed. Values are not shown here. Changes apply the next time
-              the service starts.
+            <Typography sx={{ fontSize: "0.75rem", color: "text.secondary", mt: 2 }}>
+              Values are not shown here because they may be secrets.
             </Typography>
             {isRunning ? (
-              <FormControlLabel
-                sx={{ mt: 1 }}
-                control={
-                  <Checkbox size="small" checked={restartAfterSave} onChange={(event) => setRestartAfterSave(event.target.checked)} />
-                }
-                label={<Typography variant="body2">Restart {serviceName} now so the changes take effect</Typography>}
-              />
+              <Box sx={{ mt: 2, px: 1.5, py: 0.5, borderRadius: 2, backgroundColor: "rgba(37,99,235,0.06)", border: "1px solid rgba(37,99,235,0.18)" }}>
+                <FormControlLabel
+                  control={<Checkbox size="small" checked={restartAfterSave} onChange={(event) => setRestartAfterSave(event.target.checked)} />}
+                  label={<Typography sx={{ fontSize: "0.85rem" }}>Restart {serviceName} now so the changes take effect</Typography>}
+                />
+              </Box>
             ) : null}
           </DialogContent>
-          <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <DialogActions sx={{ px: 3, py: 2, borderTop: "1px solid", borderColor: "divider" }}>
             <Button onClick={() => setStep("edit")} disabled={saving}>Back</Button>
             <Button variant="contained" onClick={() => onSave(draft, isRunning && restartAfterSave)} disabled={saving}>
-              {saving ? "Saving…" : "Confirm and save"}
+              {saving ? "Saving…" : isRunning && restartAfterSave ? "Save and restart" : "Save"}
             </Button>
           </DialogActions>
         </>

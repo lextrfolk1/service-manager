@@ -12,6 +12,7 @@ import {
   DialogTitle,
   Divider,
   FormControl,
+  FormControlLabel,
   Grid,
   IconButton,
   InputAdornment,
@@ -21,6 +22,7 @@ import {
   Select,
   Snackbar,
   Stack,
+  Switch,
   Tab,
   Tabs,
   TextField,
@@ -41,11 +43,13 @@ import {
   Search as SearchIcon,
   Settings as SettingsIcon,
   Article as LogsIcon,
+  PlaylistPlay as PresetsIcon,
   Storage as StorageIcon,
   WarningAmber as WarningAmberIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 import { validateConfiguration } from "../utils/configValidation";
+import { getEffectivePresets, getStartupDependencies, normalizeService } from "../utils/serviceUtils";
 import { RunConfigSection, cleanRunConfig, summarizeRunConfigChanges } from "../components/RunConfigEditor";
 
 const panelSx = {
@@ -342,9 +346,7 @@ function ServiceEditor({
     [services]
   );
 
-  const dependsOnValue = Array.isArray(service.dependsOn)
-    ? service.dependsOn
-    : String(service.dependsOn || "").split(",").map((item) => item.trim()).filter(Boolean);
+  const dependsOnValue = getStartupDependencies(service);
 
   const buildTemplatePath = (baseKey, suffixValue) => {
     return buildTemplatePathValue(baseKey, suffixValue, runtimePlatform);
@@ -699,9 +701,9 @@ function ServiceEditor({
                 <TextField
                   {...params}
                   label="Depends On"
-                  placeholder={dependsOnValue.length ? "" : "Services that must start first"}
+                  placeholder={dependsOnValue.length ? "" : "None — starts without waiting"}
                   error={hasFieldError("dependsOn")}
-                  helperText={getFieldError("dependsOn") || undefined}
+                  helperText={getFieldError("dependsOn") || "These services start first, in order, before this one."}
                 />
               )}
             />
@@ -744,9 +746,30 @@ function formatBytes(bytes = 0) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-// Lists what Save would change compared with the saved config: [{ kind: "added" | "removed" | "changed", text }].
-function summarizeConfigChanges(savedConfig, basePaths, services, logSettings = {}) {
+// Preset changes for the save confirmation. null means "built-in presets".
+function summarizePresetChanges(savedPresets, presets) {
+  const before = savedPresets && Object.keys(savedPresets).length ? savedPresets : null;
+  if (JSON.stringify(before) === JSON.stringify(presets)) return [];
+  if (!presets) return [{ kind: "changed", text: "Presets: reset to built-in presets" }];
+  if (!before) return [{ kind: "changed", text: `Presets: saved as custom presets (${Object.keys(presets).join(", ")})` }];
   const changes = [];
+  new Set([...Object.keys(before), ...Object.keys(presets)]).forEach((name) => {
+    if (!(name in before)) changes.push({ kind: "added", text: `Preset "${name}" (${presets[name].length} services)` });
+    else if (!(name in presets)) changes.push({ kind: "removed", text: `Preset "${name}"` });
+    else if (JSON.stringify(before[name]) !== JSON.stringify(presets[name])) {
+      changes.push({ kind: "changed", text: `Preset "${name}": ${presets[name].length} services` });
+    }
+  });
+  return changes;
+}
+
+// Lists what Save would change compared with the saved config: [{ kind: "added" | "removed" | "changed", text }].
+function summarizeConfigChanges(savedConfig, basePaths, services, logSettings = {}, dependencyCheck = true) {
+  const changes = [];
+  const savedDependencyCheck = savedConfig?.config?.dependencyCheck !== false;
+  if (savedDependencyCheck !== dependencyCheck) {
+    changes.push({ kind: "changed", text: `Dependency check: ${savedDependencyCheck ? "on" : "off"} → ${dependencyCheck ? "on" : "off"}` });
+  }
   const savedLogs = savedConfig?.config?.logs || {};
   [
     ["previousRuns", "Log previous runs"],
@@ -776,7 +799,9 @@ function summarizeConfigChanges(savedConfig, basePaths, services, logSettings = 
       const after = services[name] || {};
       const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])]
         .filter((field) => stableConfigString({ v: before[field] }) !== stableConfigString({ v: after[field] }));
-      if (fields.length) changes.push({ kind: "changed", text: `Service "${name}": ${fields.join(", ")}` });
+      const fieldLabels = { dependsOn: "dependencies" };
+      const labels = [...new Set(fields.map((field) => fieldLabels[field] || field))];
+      if (fields.length) changes.push({ kind: "changed", text: `Service "${name}": ${labels.join(", ")}` });
     }
   });
 
@@ -838,6 +863,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   const [confirmSaveOpen, setConfirmSaveOpen] = useState(false);
   const [logSettings, setLogSettings] = useState({}); // config.logs; unset keys use DEFAULT_LOG_SETTINGS
   const [runConfig, setRunConfig] = useState({ services: {} }); // run-config.json (this machine only)
+  const [presets, setPresets] = useState(null); // config.presets; null = built-in presets
+  const [dependencyCheck, setDependencyCheck] = useState(true); // config.dependencyCheck (default on)
+  const [selectedPresetName, setSelectedPresetName] = useState("");
+  const [presetNameDraft, setPresetNameDraft] = useState("");
+  const [presetNameError, setPresetNameError] = useState("");
   const [savedRunConfig, setSavedRunConfig] = useState({ services: {} });
   const [archiveStats, setArchiveStats] = useState(null);
   const [archiveStatsError, setArchiveStatsError] = useState("");
@@ -888,6 +918,8 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
       setConfig(payload);
       setBasePaths(payload.config?.basePaths || {});
       setLogSettings(payload.config?.logs || {});
+      setPresets(payload.config?.presets && Object.keys(payload.config.presets).length ? payload.config.presets : null);
+      setDependencyCheck(payload.config?.dependencyCheck !== false);
       setServices(payload.services || {});
       setRuntimeInfo(data.runtime || null);
       try {
@@ -929,6 +961,8 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
           setConfig(payload);
           setBasePaths(payload.config?.basePaths || {});
           setLogSettings(payload.config?.logs || {});
+          setPresets(payload.config?.presets && Object.keys(payload.config.presets).length ? payload.config.presets : null);
+          setDependencyCheck(payload.config?.dependencyCheck !== false);
           setServices(currentServices);
         } catch (e) {
           // ignore
@@ -1017,6 +1051,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
       }
     });
     // Like other edits, the rename is only written to the config when the user clicks Save.
+    setPresets((previous) =>
+      previous
+        ? Object.fromEntries(Object.entries(previous).map(([name, list]) => [name, list.map((entry) => (entry === serviceToRename ? trimmed : entry))]))
+        : previous
+    );
     setRunConfig((previous) => {
       if (!previous.services?.[serviceToRename]) return previous;
       const { [serviceToRename]: moved, ...rest } = previous.services;
@@ -1075,9 +1114,11 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     return (
       stableConfigString(basePaths) !== stableConfigString(config.config?.basePaths || {}) ||
       stableConfigString(services) !== stableConfigString(config.services || {}) ||
-      stableConfigString(logSettings) !== stableConfigString(config.config?.logs || {})
+      stableConfigString(logSettings) !== stableConfigString(config.config?.logs || {}) ||
+      JSON.stringify(presets) !== JSON.stringify(config.config?.presets && Object.keys(config.config.presets).length ? config.config.presets : null) ||
+      dependencyCheck !== (config.config?.dependencyCheck !== false)
     );
-  }, [basePaths, services, logSettings, config]);
+  }, [basePaths, services, logSettings, presets, dependencyCheck, config]);
   const isRunConfigDirty = useMemo(
     () => JSON.stringify(cleanRunConfig(runConfig)) !== JSON.stringify(cleanRunConfig(savedRunConfig)),
     [runConfig, savedRunConfig]
@@ -1094,11 +1135,12 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     () =>
       confirmSaveOpen
         ? [
-            ...summarizeConfigChanges(config, basePaths, services, logSettings),
+            ...summarizeConfigChanges(config, basePaths, services, logSettings, dependencyCheck),
+            ...summarizePresetChanges(config?.config?.presets, presets),
             ...summarizeRunConfigChanges(savedRunConfig, runConfig),
           ]
         : [],
-    [confirmSaveOpen, config, basePaths, services, logSettings, savedRunConfig, runConfig]
+    [confirmSaveOpen, config, basePaths, services, logSettings, presets, dependencyCheck, savedRunConfig, runConfig]
   );
 
   // Save never writes directly: it opens a confirmation listing every change first.
@@ -1123,7 +1165,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
       const updatedConfig = {
         ...config,
         config: (() => {
-          const { logs: _previousLogs, ...restConfig } = config.config || {};
+          const { logs: _previousLogs, presets: _previousPresets, dependencyCheck: _previousCheck, ...restConfig } = config.config || {};
           const cleanedLogs = Object.fromEntries(
             Object.entries(logSettings).filter(([, value]) => value !== undefined && value !== "")
           );
@@ -1131,6 +1173,8 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
             ...restConfig,
             basePaths,
             ...(Object.keys(cleanedLogs).length ? { logs: cleanedLogs } : {}),
+            ...(presets ? { presets } : {}),
+            ...(dependencyCheck ? {} : { dependencyCheck: false }),
           };
         })(),
         services,
@@ -1211,6 +1255,60 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
   useEffect(() => {
     if (currentTab === 2) loadArchiveStats();
   }, [currentTab, loadArchiveStats]);
+
+  // Presets: effective list (configured or built-in), selection and edits.
+  const serviceList = useMemo(() => Object.entries(services).map(([name, svc]) => ({ name, ...svc })), [services]);
+  const effectivePresets = useMemo(() => getEffectivePresets(serviceList, presets), [serviceList, presets]);
+  const presetNames = Object.keys(effectivePresets);
+  const activePresetName = effectivePresets[selectedPresetName] ? selectedPresetName : presetNames[0] || "";
+  const serviceGroupsForPresets = useMemo(() => {
+    const groups = new Map();
+    serviceList.map(normalizeService).forEach((svc) => {
+      if (!groups.has(svc.group)) groups.set(svc.group, []);
+      groups.get(svc.group).push(svc.name);
+    });
+    return [...groups.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [serviceList]);
+
+  useEffect(() => {
+    setPresetNameDraft(activePresetName);
+    setPresetNameError("");
+  }, [activePresetName]);
+
+  // Any edit turns built-in presets into configured ones (all of them, so none are lost).
+  const updatePresetServices = (name, list) => {
+    setPresets({ ...effectivePresets, [name]: list });
+  };
+
+  const renamePreset = (oldName, rawNewName) => {
+    const newName = rawNewName.trim();
+    if (newName === oldName) {
+      setPresetNameError("");
+      return;
+    }
+    if (!newName) {
+      setPresetNameError("Name is required");
+      return;
+    }
+    if (effectivePresets[newName]) {
+      setPresetNameError(`A preset named "${newName}" already exists`);
+      return;
+    }
+    setPresetNameError("");
+    setPresets(Object.fromEntries(Object.entries(effectivePresets).map(([name, list]) => [name === oldName ? newName : name, list])));
+    setSelectedPresetName(newName);
+  };
+
+  const addPreset = () => {
+    let name = "New preset";
+    let counter = 2;
+    while (effectivePresets[name]) {
+      name = `New preset ${counter}`;
+      counter += 1;
+    }
+    setPresets({ ...effectivePresets, [name]: [] });
+    setSelectedPresetName(name);
+  };
 
   const copyToken = async (pathKey) => {
     try {
@@ -1347,6 +1445,9 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     if (!pendingDelete) return;
     if (pendingDelete.kind === "path") {
       removePath(pendingDelete.name);
+    } else if (pendingDelete.kind === "preset") {
+      const { [pendingDelete.name]: _removed, ...rest } = effectivePresets;
+      setPresets(rest);
     } else {
       removeService(pendingDelete.name);
     }
@@ -1356,6 +1457,9 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
 
   const pendingDeleteImpact = useMemo(() => {
     if (!pendingDelete) return "";
+    if (pendingDelete.kind === "preset") {
+      return `It starts ${(effectivePresets[pendingDelete.name] || []).length} services. The services themselves are not affected.`;
+    }
     if (pendingDelete.kind === "path") {
       const count = getPathUsageCount(pendingDelete.name, services);
       return count > 0
@@ -1368,9 +1472,14 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
     return dependents.length > 0
       ? `Depended on by: ${dependents.join(", ")}.`
       : "No other services depend on it.";
-  }, [pendingDelete, services]);
+  }, [pendingDelete, services, effectivePresets]);
 
   const removeService = (serviceName) => {
+    setPresets((previous) =>
+      previous
+        ? Object.fromEntries(Object.entries(previous).map(([name, list]) => [name, list.filter((entry) => entry !== serviceName)]))
+        : previous
+    );
     setRunConfig((previous) => {
       if (!previous.services?.[serviceName]) return previous;
       const { [serviceName]: _removed, ...rest } = previous.services;
@@ -1438,12 +1547,26 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
           <Tab icon={<StorageIcon fontSize="small" />} iconPosition="start" label={`Paths (${Object.keys(basePaths).length})`} />
           <Tab icon={<SettingsIcon fontSize="small" />} iconPosition="start" label={`Services (${Object.keys(services).length})`} />
           <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Logs" />
+          <Tab icon={<PresetsIcon fontSize="small" />} iconPosition="start" label={`Presets (${presetNames.length})`} />
         </Tabs>
 
         <Box sx={{ flex: 1 }} />
 
         <Stack direction="row" spacing={1} alignItems="center" sx={{ py: 0.5, pr: 0.5 }}>
           {isDirty ? <Chip size="small" color="warning" variant="outlined" label="Unsaved changes" sx={{ height: 24 }} /> : null}
+          <Tooltip
+            title={
+              dependencyCheck
+                ? "On: a service won't start while a dependency is stopped, and waits for dependencies that are still starting."
+                : "Off: services start without checking their dependencies (start order is still followed)."
+            }
+          >
+            <FormControlLabel
+              control={<Switch size="small" checked={dependencyCheck} onChange={(event) => setDependencyCheck(event.target.checked)} />}
+              label={<Typography variant="caption" sx={{ fontWeight: 600 }}>Dependency check</Typography>}
+              sx={{ mr: 0.5, whiteSpace: "nowrap" }}
+            />
+          </Tooltip>
           {runtimeInfo ? (
             <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>
               {prettifyPlatform(runtimeInfo.platform)}
@@ -1462,9 +1585,9 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
               size="small"
               variant="outlined"
               startIcon={<AddIcon />}
-              onClick={() => (currentTab === 0 ? openPathDialog() : setAddServiceDialog(true))}
+              onClick={() => (currentTab === 0 ? openPathDialog() : currentTab === 3 ? addPreset() : setAddServiceDialog(true))}
             >
-              {currentTab === 0 ? "Add path" : "Add service"}
+              {currentTab === 0 ? "Add path" : currentTab === 3 ? "Add preset" : "Add service"}
             </Button>
           ) : null}
           <Button
@@ -1797,6 +1920,166 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget }) => {
                   </>
                 )}
               </Box>
+            </Box>
+          </Box>
+        )}
+
+        {currentTab === 3 && (
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              minWidth: 0,
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: "240px minmax(0, 1fr)", lg: "280px minmax(0, 1fr)" },
+              overflow: "hidden",
+            }}
+          >
+            <Box
+              sx={{
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                borderRight: { md: "1px solid rgba(148,163,184,0.18)" },
+                backgroundColor: "rgba(248,250,252,0.6)",
+              }}
+            >
+              <Box sx={{ p: 1.5, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
+                <Typography variant="body2" sx={{ color: "text.secondary", fontSize: "0.78rem" }}>
+                  {presets
+                    ? "Custom presets saved in the configuration."
+                    : "Built-in presets (based on service groups). Editing any preset saves all of them to the configuration."}
+                </Typography>
+                {presets ? (
+                  <Button size="small" sx={{ mt: 0.5, px: 0 }} onClick={() => setPresets(null)}>
+                    Reset to built-in presets
+                  </Button>
+                ) : null}
+              </Box>
+              <Box sx={{ flex: 1, overflowY: "auto", p: 0.75 }}>
+                {presetNames.map((name) => {
+                  const active = name === activePresetName;
+                  return (
+                    <Box
+                      key={name}
+                      component="button"
+                      type="button"
+                      onClick={() => setSelectedPresetName(name)}
+                      sx={{
+                        display: "flex",
+                        width: "100%",
+                        alignItems: "center",
+                        gap: 1,
+                        px: 1.25,
+                        py: 1,
+                        mb: 0.25,
+                        border: 0,
+                        borderRadius: 1.5,
+                        cursor: "pointer",
+                        textAlign: "left",
+                        font: "inherit",
+                        color: "text.primary",
+                        backgroundColor: active ? "rgba(37,99,235,0.08)" : "transparent",
+                        boxShadow: active ? "inset 3px 0 0 #2563eb" : "none",
+                        "&:hover": { backgroundColor: active ? "rgba(37,99,235,0.12)" : "rgba(148,163,184,0.08)" },
+                      }}
+                    >
+                      <Typography sx={{ flex: 1, fontSize: "0.85rem", fontWeight: active ? 700 : 600 }} noWrap>
+                        {name}
+                      </Typography>
+                      <Chip size="small" label={effectivePresets[name].length} sx={{ height: 20, fontWeight: 700 }} />
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Box>
+
+            <Box sx={{ minHeight: 0, overflowY: "auto", p: { xs: 2, md: 3 } }}>
+              {activePresetName ? (
+                <Box sx={{ maxWidth: 900 }}>
+                  <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ mb: 2.5 }}>
+                    <TextField
+                      size="small"
+                      label="Preset name"
+                      value={presetNameDraft}
+                      onChange={(event) => setPresetNameDraft(event.target.value)}
+                      onBlur={() => renamePreset(activePresetName, presetNameDraft)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") renamePreset(activePresetName, presetNameDraft);
+                      }}
+                      error={presetNameError !== ""}
+                      helperText={presetNameError || " "}
+                      sx={{ flex: 1 }}
+                    />
+                    <Button
+                      variant="outlined"
+                      color="error"
+                      startIcon={<DeleteIcon />}
+                      onClick={() => setPendingDelete({ kind: "preset", name: activePresetName })}
+                    >
+                      Delete
+                    </Button>
+                  </Stack>
+
+                  <Typography variant="overline" sx={{ fontWeight: 800, color: "text.secondary" }}>
+                    Services started by this preset
+                  </Typography>
+                  <Autocomplete
+                    multiple
+                    size="small"
+                    filterSelectedOptions
+                    options={Object.keys(services)}
+                    value={effectivePresets[activePresetName]}
+                    onChange={(_, value) => updatePresetServices(activePresetName, value)}
+                    ChipProps={{ size: "small" }}
+                    renderTags={(value, getTagProps) =>
+                      value.map((option, index) => (
+                        <Chip
+                          {...getTagProps({ index })}
+                          key={option}
+                          size="small"
+                          label={option}
+                          color={services[option] ? "default" : "error"}
+                          variant={services[option] ? "filled" : "outlined"}
+                        />
+                      ))
+                    }
+                    renderInput={(params) => <TextField {...params} placeholder="Add services" />}
+                  />
+                  {effectivePresets[activePresetName].some((name) => !services[name]) ? (
+                    <Typography variant="caption" sx={{ color: "error.main", display: "block", mt: 0.5 }}>
+                      Red services no longer exist and are skipped when the preset runs.
+                    </Typography>
+                  ) : null}
+
+                  <Typography variant="overline" sx={{ fontWeight: 800, color: "text.secondary", display: "block", mt: 2.5 }}>
+                    Add a whole group
+                  </Typography>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                    {serviceGroupsForPresets.map(([group, members]) => (
+                      <Chip
+                        key={group}
+                        size="small"
+                        clickable
+                        icon={<AddIcon />}
+                        label={`${group} (${members.length})`}
+                        onClick={() =>
+                          updatePresetServices(activePresetName, [...new Set([...effectivePresets[activePresetName], ...members])])
+                        }
+                      />
+                    ))}
+                  </Stack>
+                  <Typography variant="body2" sx={{ color: "text.secondary", mt: 3 }}>
+                    Running a preset starts these services (and anything they depend on) in dependency order. Changes
+                    apply after you Save.
+                  </Typography>
+                </Box>
+              ) : (
+                <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                  No presets. Use "Add preset" to create one.
+                </Typography>
+              )}
             </Box>
           </Box>
         )}

@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   ButtonBase,
@@ -40,12 +41,11 @@ import {
   buildDependencyMap,
   buildReverseDependencyMap,
   categorizeFailure,
-  getPresetServices,
+  getEffectivePresets,
   normalizeService,
   topoSortServices,
 } from "../utils/serviceUtils";
 
-const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
 const AUTO_REFRESH_INTERVAL_MS = 30000;
 const EMPTY_LIST = [];
 
@@ -117,7 +117,7 @@ function deriveBaseState(status) {
         : healthState === "unhealthy"
           ? "Unhealthy"
           : healthState === "port-open"
-            ? "Port open"
+            ? "" // the Running status chip already says this
           : lifecycleState === "stopped"
             ? ""
             : checkable
@@ -216,6 +216,10 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   const [runConfig, setRunConfig] = useState({ services: {} }); // run-config.json (this machine only)
   const [runConfigTarget, setRunConfigTarget] = useState(""); // service whose run configuration dialog is open
   const [savingRunConfig, setSavingRunConfig] = useState(false);
+  const [configuredPresets, setConfiguredPresets] = useState(null); // config.presets; null = built-in presets
+  const [savePresetOpen, setSavePresetOpen] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
+  const [savingPreset, setSavingPreset] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -225,6 +229,13 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     () => services.map((service) => normalizeService(service)),
     [services]
   );
+
+  const presets = useMemo(
+    () => getEffectivePresets(normalizedServices, configuredPresets),
+    [normalizedServices, configuredPresets]
+  );
+  const presetNames = Object.keys(presets);
+  const activePreset = presets[preset] ? preset : presetNames[0] || "";
 
   const reverseDependencies = useMemo(
     () => buildReverseDependencyMap(normalizedServices),
@@ -297,6 +308,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   useEffect(() => {
     loadServices(true);
     loadRunConfig();
+    loadPresets();
   }, []);
 
   useEffect(() => {
@@ -336,6 +348,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     const interval = setInterval(async () => {
       const latest = await loadServices(false);
       loadRunConfig();
+      loadPresets();
       if (latest.length) await loadServiceStatuses(latest.map(normalizeService));
     }, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
@@ -344,6 +357,41 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
   }));
+
+  async function loadPresets() {
+    try {
+      const data = await api.get("/config");
+      const next = data?.config?.presets && Object.keys(data.config.presets).length ? data.config.presets : null;
+      setConfiguredPresets((previous) => (isSameJson(previous, next) ? previous : next));
+    } catch {
+      // Keep the current presets if the config can't be read
+    }
+  }
+
+  // Saves the ticked services as a preset (after the user confirmed in the dialog).
+  async function handleSavePreset() {
+    const name = newPresetName.trim();
+    if (!name || selectedServices.length === 0) return;
+    setSavingPreset(true);
+    try {
+      const updatedConfig = await api.get("/config");
+      delete updatedConfig.runtime;
+      const currentServices = Object.entries(updatedConfig.services || {}).map(([serviceName, definition]) => ({ name: serviceName, ...definition }));
+      // First custom save turns the built-in presets into configured ones so none are lost.
+      const basePresets = getEffectivePresets(currentServices, updatedConfig.config?.presets);
+      const nextPresets = { ...basePresets, [name]: [...selectedServices] };
+      updatedConfig.config = { ...(updatedConfig.config || {}), presets: nextPresets };
+      await api.put("/config", updatedConfig);
+      setConfiguredPresets(nextPresets);
+      setPreset(name);
+      setSavePresetOpen(false);
+      showToast(`Preset "${name}" saved with ${selectedServices.length} services`, "success");
+    } catch (err) {
+      showToast(`Could not save preset: ${err.message}`, "error");
+    } finally {
+      setSavingPreset(false);
+    }
+  }
 
   async function loadRunConfig() {
     try {
@@ -679,76 +727,93 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       });
     });
 
-    while (pending.size > 0) {
-      const ready = [...pending].filter((name) => {
-        const dependencies = dependencyMap[name] || [];
-        return dependencies.every((dependency) => {
-          if (!pending.has(dependency)) return !failed.has(dependency);
-          return completed.has(dependency);
-        });
+    // Start each service as soon as its own dependencies are up (not in fixed waves), so independent services
+    // never wait for unrelated slow ones. A failed dependency blocks only the services that need it.
+    const inFlight = new Set();
+    const dependenciesOf = (name) => (dependencyMap[name] || []).filter((dependency) => serviceMap[dependency]);
+    const isReady = (name) => dependenciesOf(name).every((dependency) => completed.has(dependency) || (!pending.has(dependency) && !failed.has(dependency)));
+    const isBlocked = (name) => dependenciesOf(name).some((dependency) => failed.has(dependency));
+
+    const startOne = async (name) => {
+      setUiState(name, {
+        lifecycleState: "starting",
+        message: "Starting now",
+        error: "",
       });
-
-      if (!ready.length) {
-        [...pending].forEach((name) => {
-          setUiState(name, {
-            lifecycleState: "failed",
-            healthState: "unhealthy",
-            message: "Blocked by dependency failure",
-            error: "A required dependency failed to start",
-          });
-          failed.add(name);
-          pending.delete(name);
-        });
-        break;
-      }
-
-      ready.forEach((name) => {
+      try {
+        await api.post(
+          `/service/${name}/start${buildEnabled && serviceMap[name].hasBuild ? "?build=true" : ""}`
+        );
+        await sleep(500);
+        const latestStatus = await refreshSingleStatus(name);
+        const nextState = latestStatus?.healthState === "healthy" ? "healthy" : latestStatus?.running ? "running" : "starting";
         setUiState(name, {
-          lifecycleState: serviceMap[name].dependsOn?.length ? "waiting" : "queued",
-          message:
-            serviceMap[name].dependsOn?.length
-              ? `Waiting for ${serviceMap[name].dependsOn.join(", ")}`
-              : "Queued for startup",
+          lifecycleState: nextState,
+          message: nextState === "healthy" ? "Healthy" : "Running",
           error: "",
         });
-      });
+        completed.add(name);
+      } catch (err) {
+        const reason = categorizeFailure(err);
+        setUiState(name, {
+          lifecycleState: "failed",
+          healthState: "unhealthy",
+          message: reason,
+          error: err.error || err.message,
+        });
+        failed.add(name);
+      }
+    };
 
-      await Promise.all(
-        ready.map(async (name) => {
-          setUiState(name, {
-            lifecycleState: "starting",
-            message: "Starting now",
-            error: "",
-          });
-
-          try {
-            await api.post(
-              `/service/${name}/start${buildEnabled && serviceMap[name].hasBuild ? "?build=true" : ""}`
-            );
-            await sleep(500);
-            const latestStatus = await refreshSingleStatus(name);
-            const nextState = latestStatus?.healthState === "healthy" ? "healthy" : latestStatus?.running ? "running" : "starting";
-            setUiState(name, {
-              lifecycleState: nextState,
-              message: nextState === "healthy" ? "Healthy" : "Running",
-              error: "",
-            });
-            completed.add(name);
-          } catch (err) {
-            const reason = categorizeFailure(err);
+    await new Promise((finish) => {
+      const pump = () => {
+        // Anything whose dependency failed can't start.
+        let blockedFound = true;
+        while (blockedFound) {
+          blockedFound = false;
+          for (const name of [...pending]) {
+            if (inFlight.has(name) || !isBlocked(name)) continue;
+            const failedDependencies = dependenciesOf(name).filter((dependency) => failed.has(dependency));
             setUiState(name, {
               lifecycleState: "failed",
               healthState: "unhealthy",
-              message: reason,
-              error: err.error || err.message,
+              message: "Blocked by dependency failure",
+              error: `Needs ${failedDependencies.join(", ")}, which failed to start`,
             });
             failed.add(name);
-          } finally {
             pending.delete(name);
+            blockedFound = true;
           }
-        })
-      );
-    }
+        }
+
+        [...pending]
+          .filter((name) => !inFlight.has(name) && isReady(name))
+          .forEach((name) => {
+            inFlight.add(name);
+            startOne(name).then(() => {
+              inFlight.delete(name);
+              pending.delete(name);
+              pump();
+            });
+          });
+
+        if (inFlight.size === 0) {
+          // Nothing running and nothing startable: either done, or the rest can never start.
+          [...pending].forEach((name) => {
+            setUiState(name, {
+              lifecycleState: "failed",
+              healthState: "unhealthy",
+              message: "Blocked by dependency failure",
+              error: "A required dependency failed to start",
+            });
+            failed.add(name);
+            pending.delete(name);
+          });
+          finish();
+        }
+      };
+      pump();
+    });
 
     const startedCount = completed.size - alreadyRunning.size;
     if (failed.size > 0) {
@@ -855,9 +920,14 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   }
 
   async function handleStartPreset() {
-    const presetServices = getPresetServices(normalizedServices, preset);
+    const known = new Set(normalizedServices.map((service) => service.name));
+    const presetServices = (presets[activePreset] || []).filter((name) => known.has(name));
+    if (presetServices.length === 0) {
+      showToast(`Preset "${activePreset}" has no services to start`, "warning");
+      return;
+    }
     try {
-      await executeStartFlow(presetServices, `Start preset: ${preset}`);
+      await executeStartFlow(presetServices, `Start preset: ${activePreset}`);
     } catch (error) {
       showToast(error.message, "error");
     }
@@ -963,6 +1033,17 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                   <Button size="small" variant="outlined" startIcon={<RefreshIcon />} onClick={handleRestartSelected}>
                     Restart
                   </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="secondary"
+                    onClick={() => {
+                      setNewPresetName("");
+                      setSavePresetOpen(true);
+                    }}
+                  >
+                    Save as preset
+                  </Button>
                 </>
               ) : null}
             </Stack>
@@ -972,10 +1053,18 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
               </Button>
               <FormControl size="small" sx={{ minWidth: 150 }}>
                 <InputLabel>Preset</InputLabel>
-                <Select value={preset} label="Preset" onChange={(event) => setPreset(event.target.value)}>
-                  {PRESET_OPTIONS.map((option) => (
-                    <MenuItem key={option} value={option}>
-                      {option}
+                <Select
+                  value={activePreset}
+                  label="Preset"
+                  onChange={(event) => setPreset(event.target.value)}
+                  renderValue={(value) => value}
+                >
+                  {presetNames.map((option) => (
+                    <MenuItem key={option} value={option} sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}>
+                      <span>{option}</span>
+                      <Typography component="span" sx={{ fontSize: "0.75rem", color: "text.secondary" }}>
+                        {presets[option].length}
+                      </Typography>
                     </MenuItem>
                   ))}
                 </Select>
@@ -1308,6 +1397,43 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
           )}
         </Stack>
       </Paper>
+
+      <Dialog open={savePresetOpen} onClose={savingPreset ? undefined : () => setSavePresetOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Save selection as preset</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Autocomplete
+            freeSolo
+            options={presetNames}
+            inputValue={newPresetName}
+            onInputChange={(_, value) => setNewPresetName(value)}
+            renderInput={(params) => (
+              <TextField {...params} autoFocus size="small" label="Preset name" placeholder="e.g. My daily set" sx={{ mt: 1 }} />
+            )}
+          />
+          {presets[newPresetName.trim()] ? (
+            <Alert severity="warning" sx={{ mt: 1.5, py: 0 }}>
+              Replaces the existing preset "{newPresetName.trim()}" ({presets[newPresetName.trim()].length} services).
+            </Alert>
+          ) : null}
+          <Typography variant="body2" sx={{ mt: 2, mb: 1 }}>
+            {selectedServices.length} selected service{selectedServices.length === 1 ? "" : "s"}:
+          </Typography>
+          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+            {selectedServices.map((name) => (
+              <Chip key={name} size="small" label={name} />
+            ))}
+          </Stack>
+          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 2 }}>
+            This updates the configuration file. Edit or delete presets later in Admin › Presets.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setSavePresetOpen(false)} disabled={savingPreset}>Cancel</Button>
+          <Button variant="contained" onClick={handleSavePreset} disabled={savingPreset || !newPresetName.trim()}>
+            {savingPreset ? "Saving…" : "Confirm and save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <RunConfigDialog
         open={Boolean(runConfigTarget)}
