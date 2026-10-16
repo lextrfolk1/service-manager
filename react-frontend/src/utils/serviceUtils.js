@@ -137,6 +137,16 @@ export function categorizeFailure(error) {
   return "Operation failed";
 }
 
+// Maps a card failure (reason from categorizeFailure + error text) to a Help troubleshooting topic id.
+export function getHelpTopicForFailure(reason = "", errorText = "") {
+  const text = `${reason} ${errorText}`;
+  if (/git pull/i.test(text)) return "git-pull";
+  if (/timed out|timeout/i.test(text)) return "timeout";
+  if (/port|EADDRINUSE/i.test(text)) return "port";
+  if (/health/i.test(text)) return "health";
+  return "wont-start";
+}
+
 export function getServiceLinks(service) {
   if (!service || !service.port) return [];
 

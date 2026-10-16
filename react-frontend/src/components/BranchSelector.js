@@ -25,6 +25,7 @@ import {
   Check as CheckIcon,
   Close as CloseIcon,
   CloudQueue as CloudIcon,
+  CloudUploadRounded as CloudUploadIcon,
   Computer as ComputerIcon,
   DownloadRounded as DownloadRoundedIcon,
   KeyboardArrowDown as KeyboardArrowDownIcon,
@@ -41,6 +42,7 @@ function BranchSelector({
   isBusy = false,
   onBranchCheckout,
   onGitPull,
+  onGitPush,
   fullWidth = true,
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
@@ -48,6 +50,7 @@ function BranchSelector({
   const [optimisticBranch, setOptimisticBranch] = useState(null);
   const [loading, setLoading] = useState(false);
   const [pulling, setPulling] = useState(false);
+  const [pushing, setPushing] = useState(false);
   const [search, setSearch] = useState("");
   const [restartOnSwitch, setRestartOnSwitch] = useState(isRunning);
   const [error, setError] = useState("");
@@ -94,6 +97,32 @@ function BranchSelector({
     setBranchData(null);
     setSearch("");
     setError("");
+  }
+
+  async function handlePush(event) {
+    if (event) {
+      event.stopPropagation();
+      event.preventDefault();
+    }
+    if (isBusy || pushing) return;
+
+    try {
+      setPushing(true);
+      setError("");
+      if (onGitPush) {
+        await onGitPush(serviceName);
+      } else {
+        await api.post(`/service/${serviceName}/git/push`, {});
+      }
+      if (isOpen) {
+        await fetchBranches();
+      }
+    } catch (err) {
+      const msg = err.details || err.message || err.error || "Git push failed";
+      setError(msg);
+    } finally {
+      setPushing(false);
+    }
   }
 
   async function handlePull(event) {
@@ -184,6 +213,7 @@ function BranchSelector({
 
   const branchTooltip = [
     `Branch: ${currentBranch}`,
+    !hasUpstream ? "Local branch: not pushed to remote (git pull is skipped on start)" : "",
     behind > 0 ? `${behind} commit(s) behind ${upstreamBranch || "origin"}` : "",
     ahead > 0 ? `${ahead} commit(s) ahead of ${upstreamBranch || "origin"}` : "",
     isDirty ? `${uncommittedCount} uncommitted change(s)` : "",
@@ -191,6 +221,11 @@ function BranchSelector({
   ]
     .filter(Boolean)
     .join(" • ");
+
+  const isLocalOnly = !hasUpstream;
+  const pushTooltip = pushing
+    ? `Pushing ${currentBranch} to remote...`
+    : `Git Push: Publish local branch ${currentBranch} to remote (sets upstream)`;
 
   const pullTooltip = pulling
     ? `Pulling latest changes for ${serviceName}...`
@@ -265,6 +300,31 @@ function BranchSelector({
               >
                 {currentBranch}
               </Typography>
+
+              {/* Local-only branch indicator (no remote upstream) */}
+              {isLocalOnly && (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 0.25,
+                      px: 0.5,
+                      height: 16,
+                      borderRadius: 1,
+                      fontSize: "0.62rem",
+                      fontWeight: 700,
+                      color: "#7c3aed",
+                      backgroundColor: "rgba(124, 58, 237, 0.1)",
+                      border: "1px solid rgba(124, 58, 237, 0.25)",
+                      flexShrink: 0,
+                      lineHeight: 1,
+                    }}
+                  >
+                    <ComputerIcon sx={{ fontSize: "11px !important" }} />
+                    local
+                  </Box>
+              )}
 
               {/* Behind indicator: ↓ count */}
               {behind > 0 && (
@@ -349,7 +409,46 @@ function BranchSelector({
           </Box>
         </Tooltip>
 
-        {/* Quick Git Pull Button */}
+        {/* Quick Git Push Button (local-only branch) / Git Pull Button */}
+        {isLocalOnly ? (
+        <Tooltip title={pushTooltip}>
+          <span>
+            <IconButton
+              size="small"
+              type="button"
+              onClick={handlePush}
+              disabled={isBusy || pushing}
+              aria-label={`Git push for ${serviceName}`}
+              sx={{
+                width: 24,
+                height: 24,
+                minWidth: 24,
+                p: 0,
+                borderRadius: 1.5,
+                color: "#7c3aed",
+                backgroundColor: "rgba(124, 58, 237, 0.1)",
+                border: "1px solid",
+                borderColor: "rgba(124, 58, 237, 0.3)",
+                transition: "all 0.15s ease",
+                "&:hover": {
+                  backgroundColor: "rgba(124, 58, 237, 0.18)",
+                  borderColor: "#7c3aed",
+                },
+                "&:disabled": {
+                  opacity: 0.5,
+                  cursor: "not-allowed",
+                },
+              }}
+            >
+              {pushing ? (
+                <CircularProgress size={12} sx={{ color: "#7c3aed" }} />
+              ) : (
+                <CloudUploadIcon sx={{ fontSize: "14px !important" }} />
+              )}
+            </IconButton>
+          </span>
+        </Tooltip>
+        ) : (
         <Tooltip title={pullTooltip}>
           <span>
             <IconButton
@@ -388,6 +487,7 @@ function BranchSelector({
             </IconButton>
           </span>
         </Tooltip>
+        )}
       </Box>
 
       {/* Popover */}

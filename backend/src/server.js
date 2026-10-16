@@ -343,6 +343,17 @@ app.post("/service/:name/git/pull", async (req, res) => {
   }
 });
 
+// Git: push current local branch to remote and set upstream
+app.post("/service/:name/git/push", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const result = await freshManager.pushBranch(req.params.name);
+    res.json(result);
+  } catch (err) {
+    sendOperationError(res, err);
+  }
+});
+
 // Port: Free port for service (terminate occupying process)
 app.post(["/service/:name/free-port", "/service/:name/kill-port"], async (req, res) => {
   try {

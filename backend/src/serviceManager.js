@@ -304,6 +304,47 @@ class ServiceManager {
     };
   }
 
+  async pushBranch(name) {
+    const resolvedDir = this.getResolvedDir(name);
+    if (!resolvedDir) {
+      throw createOperationError(`Service ${name} does not have a configured directory path`, {
+        code: "invalid_config",
+        phase: "git_push",
+        service: name
+      });
+    }
+
+    let result;
+    try {
+      result = await gitUtils.pushBranch(resolvedDir);
+    } catch (err) {
+      throw createOperationError(err.message, {
+        code: "git_push_failed",
+        phase: "git_push",
+        service: name
+      });
+    }
+    gitCache.delete(resolvedDir);
+
+    return {
+      success: true,
+      service: name,
+      branch: result.currentBranch,
+      output: result.output,
+      git: {
+        isGitRepo: true,
+        currentBranch: result.currentBranch,
+        isDirty: result.isDirty,
+        uncommittedCount: result.uncommittedCount,
+        ahead: result.ahead,
+        behind: result.behind,
+        hasUpstream: result.hasUpstream,
+        upstreamBranch: result.upstreamBranch
+      },
+      message: `Pushed ${result.currentBranch} to ${result.remote}`
+    };
+  }
+
   async start(name, forceBuild = false) {
     const svc = this._getService(name);
 
@@ -323,7 +364,12 @@ class ServiceManager {
     const out = fs.openSync(logFile, "a");
     const gitAutoPull = svc.gitAutoPull !== false;
 
-    if (gitAutoPull && resolvedDir) {
+    const canPull = gitAutoPull && resolvedDir && await gitUtils.hasUpstream(resolvedDir);
+    if (gitAutoPull && resolvedDir && !canPull) {
+      fs.appendFileSync(logFile, `\n[GIT PULL SKIPPED] Current branch has no remote upstream (local-only branch)\n`);
+    }
+
+    if (canPull) {
       await new Promise((resolve, reject) => {
         exec(
           `git -C "${resolvedDir}" pull`,

@@ -91,6 +91,13 @@ function App() {
   };
 
   const [adminTarget, setAdminTarget] = useState(null);
+  const [helpTarget, setHelpTarget] = useState(null);
+
+  // Open the Help tab on a specific tab/section, e.g. { tab: "troubleshooting", section: "port" }.
+  const handleOpenHelp = useCallback((target) => {
+    setHelpTarget({ ...target, id: Date.now() });
+    setCurrentTab(3);
+  }, []);
 
   const handleCloneService = (service) => {
     setAdminTarget({ action: "clone", service, id: Date.now() });
@@ -267,6 +274,7 @@ function App() {
           <Dashboard
             ref={dashboardRef}
             onViewLogs={handleViewLogs}
+            onOpenHelp={handleOpenHelp}
             onCloneService={handleCloneService}
             onEditInAdmin={handleEditInAdmin}
           />
@@ -279,6 +287,7 @@ function App() {
             onCloseService={handleCloseLogService}
             onServiceTabChange={handleLogServiceTabChange}
             onAddService={handleAddLogService}
+            isActive={currentTab === 1}
           />
         </TabPanel>
         <TabPanel value={currentTab} index={2}>
@@ -289,7 +298,7 @@ function App() {
           />
         </TabPanel>
         <TabPanel value={currentTab} index={3}>
-          <Help />
+          <Help target={helpTarget} onNavigate={setCurrentTab} />
         </TabPanel>
       </Box>
     </Box>

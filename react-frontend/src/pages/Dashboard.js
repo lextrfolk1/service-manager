@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -7,6 +7,10 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   FormControlLabel,
   InputAdornment,
@@ -41,6 +45,12 @@ import {
 } from "../utils/serviceUtils";
 
 const PRESET_OPTIONS = ["Minimal", "Core", "Backend Only", "Full Stack"];
+const AUTO_REFRESH_INTERVAL_MS = 30000;
+const EMPTY_LIST = [];
+
+function isSameJson(a, b) {
+  return a === b || JSON.stringify(a) === JSON.stringify(b);
+}
 const SERVICE_GRID_SX = {
   display: "grid",
   gridTemplateColumns: {
@@ -174,7 +184,7 @@ function mergeDisplayState(baseState, uiState) {
   return baseState;
 }
 
-const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref) => {
+const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditInAdmin }, ref) => {
   const [services, setServices] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [uiStates, setUiStates] = useState({});
@@ -201,11 +211,11 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
   const [draggedServiceName, setDraggedServiceName] = useState("");
   const [dragOverGroup, setDragOverGroup] = useState("");
   const [movingServiceName, setMovingServiceName] = useState("");
+  const [pendingMove, setPendingMove] = useState(null); // { serviceName, from, to } awaiting confirmation
   const [collapsedGroups, setCollapsedGroups] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const normalizedServices = useMemo(
     () => services.map((service) => normalizeService(service)),
@@ -217,14 +227,18 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     [normalizedServices]
   );
 
+  const previousDisplayStatesRef = useRef({});
   const displayStates = useMemo(() => {
+    const previous = previousDisplayStatesRef.current;
     const next = {};
     normalizedServices.forEach((service) => {
-      next[service.name] = mergeDisplayState(
+      const merged = mergeDisplayState(
         deriveBaseState(statuses[service.name]),
         uiStates[service.name]
       );
+      next[service.name] = isSameJson(previous[service.name], merged) ? previous[service.name] : merged;
     });
+    previousDisplayStatesRef.current = next;
     return next;
   }, [normalizedServices, statuses, uiStates]);
 
@@ -313,6 +327,14 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     };
   }, [showLiveMetrics]);
 
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const latest = await loadServices(false);
+      if (latest.length) await loadServiceStatuses(latest.map(normalizeService));
+    }, AUTO_REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
   }));
@@ -321,7 +343,8 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     try {
       if (showSpinner) setLoading(true);
       const data = await api.get("/services");
-      setServices(data.services || []);
+      const nextServices = data.services || [];
+      setServices((previous) => (isSameJson(previous, nextServices) ? previous : nextServices));
       setError("");
       return data.services || [];
     } catch (err) {
@@ -329,20 +352,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
       return [];
     } finally {
       if (showSpinner) setLoading(false);
-    }
-  }
-
-  async function handleRefreshAll() {
-    setIsRefreshing(true);
-    try {
-      const latest = await loadServices(false);
-      const targets = latest.length ? latest.map(normalizeService) : normalizedServices;
-      await loadServiceStatuses(targets);
-      showToast("Service statuses refreshed", "success");
-    } catch (err) {
-      showToast(`Failed to refresh: ${err.message || "Unknown error"}`, "error");
-    } finally {
-      setTimeout(() => setIsRefreshing(false), 400);
     }
   }
 
@@ -395,11 +404,15 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     );
 
     setStatuses((previous) => {
+      let changed = false;
       const next = { ...previous };
       results.forEach(([name, status]) => {
-        next[name] = status;
+        if (!isSameJson(previous[name], status)) {
+          next[name] = status;
+          changed = true;
+        }
       });
-      return next;
+      return changed ? next : previous;
     });
   }
 
@@ -562,6 +575,20 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     } catch (err) {
       await refreshSingleStatus(serviceName);
       const msg = err.details || err.message || err.error || "Git pull failed";
+      showToast(`${serviceName}: ${msg}`, "error");
+      throw err;
+    }
+  }
+
+  async function handleGitPush(serviceName) {
+    try {
+      const result = await api.post(`/service/${serviceName}/git/push`, {});
+      await refreshSingleStatus(serviceName);
+      showToast(result.message || `Pushed branch for ${serviceName}`, "success");
+      return result;
+    } catch (err) {
+      await refreshSingleStatus(serviceName);
+      const msg = err.details || err.message || err.error || "Git push failed";
       showToast(`${serviceName}: ${msg}`, "error");
       throw err;
     }
@@ -796,6 +823,41 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
     }
   }
 
+  // Stable handler identities so memoized ServiceCards only re-render when their own data changes.
+  const latestHandlersRef = useRef({});
+  latestHandlersRef.current = {
+    executeSingleAction,
+    handleBranchCheckout,
+    handleGitPull,
+    handleGitPush,
+    toggleSelection,
+    onViewLogs,
+    onOpenHelp,
+    onCloneService,
+    onEditInAdmin,
+  };
+  const cardHandlers = useMemo(() => ({
+    onAction: (...args) => latestHandlersRef.current.executeSingleAction(...args),
+    onBranchCheckout: (...args) => latestHandlersRef.current.handleBranchCheckout(...args),
+    onGitPull: (...args) => latestHandlersRef.current.handleGitPull(...args),
+    onGitPush: (...args) => latestHandlersRef.current.handleGitPush(...args),
+    onViewLogs: (...args) => latestHandlersRef.current.onViewLogs?.(...args),
+    onOpenHelp: (...args) => latestHandlersRef.current.onOpenHelp?.(...args),
+    onCloneService: (...args) => latestHandlersRef.current.onCloneService?.(...args),
+    onEditInAdmin: (...args) => latestHandlersRef.current.onEditInAdmin?.(...args),
+    onDragEnd: () => {
+      setDraggedServiceName("");
+      setDragOverGroup("");
+    },
+  }), []);
+  const selectHandlersRef = useRef(new Map());
+  function getSelectHandler(name) {
+    if (!selectHandlersRef.current.has(name)) {
+      selectHandlersRef.current.set(name, (checked) => latestHandlersRef.current.toggleSelection(name, checked));
+    }
+    return selectHandlersRef.current.get(name);
+  }
+
   function toggleSelection(name, checked) {
     setSelectedServices((previous) =>
       checked ? [...new Set([...previous, name])] : previous.filter((serviceName) => serviceName !== name)
@@ -848,25 +910,6 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
               </Button>
               <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={handleBulkStopAll}>
                 Stop all
-              </Button>
-              <Button
-                size="small"
-                variant="outlined"
-                disabled={isRefreshing}
-                startIcon={
-                  <RefreshIcon
-                    sx={{
-                      animation: isRefreshing ? "spin 0.8s linear infinite" : "none",
-                      "@keyframes spin": {
-                        "0%": { transform: "rotate(0deg)" },
-                        "100%": { transform: "rotate(360deg)" },
-                      },
-                    }}
-                  />
-                }
-                onClick={handleRefreshAll}
-              >
-                {isRefreshing ? "Refreshing..." : "Refresh"}
               </Button>
               {selectedServices.length > 0 ? (
                 <>
@@ -1113,7 +1156,11 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   const serviceName = event.dataTransfer.getData("text/plain") || draggedServiceName;
                   setDragOverGroup("");
                   setDraggedServiceName("");
-                  if (serviceName) moveServiceToGroup(serviceName, group);
+                  const movedService = normalizedServices.find((entry) => entry.name === serviceName);
+                  // Moving changes the saved config, so ask first.
+                  if (movedService && movedService.group !== group) {
+                    setPendingMove({ serviceName, from: movedService.group, to: group });
+                  }
                 }}
                 sx={{
                   borderRadius: 2,
@@ -1161,24 +1208,23 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                         key={service.name}
                         service={service}
                         status={displayStates[service.name]}
-                        reverseDependencies={reverseDependencies[service.name] || []}
+                        reverseDependencies={reverseDependencies[service.name] || EMPTY_LIST}
                         isMoving={movingServiceName === service.name}
                         isSelected={selectedServices.includes(service.name)}
-                        onSelect={(checked) => toggleSelection(service.name, checked)}
-                        onAction={executeSingleAction}
-                        onBranchCheckout={handleBranchCheckout}
-                        onGitPull={handleGitPull}
+                        onSelect={getSelectHandler(service.name)}
+                        onAction={cardHandlers.onAction}
+                        onBranchCheckout={cardHandlers.onBranchCheckout}
+                        onGitPull={cardHandlers.onGitPull}
+                        onGitPush={cardHandlers.onGitPush}
                         showGitBranches={showGitBranches}
                         showLiveMetrics={showLiveMetrics}
                         metrics={metrics[service.name] || null}
-                        onViewLogs={onViewLogs}
-                        onCloneService={onCloneService}
-                        onEditInAdmin={onEditInAdmin}
+                        onViewLogs={onViewLogs ? cardHandlers.onViewLogs : undefined}
+                        onOpenHelp={onOpenHelp ? cardHandlers.onOpenHelp : undefined}
+                        onCloneService={onCloneService ? cardHandlers.onCloneService : undefined}
+                        onEditInAdmin={onEditInAdmin ? cardHandlers.onEditInAdmin : undefined}
                         onDragStart={setDraggedServiceName}
-                        onDragEnd={() => {
-                          setDraggedServiceName("");
-                          setDragOverGroup("");
-                        }}
+                        onDragEnd={cardHandlers.onDragEnd}
                       />
                     ))}
                   </Box>
@@ -1192,7 +1238,7 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   key={service.name}
                   service={service}
                   status={displayStates[service.name]}
-                  reverseDependencies={reverseDependencies[service.name] || []}
+                  reverseDependencies={reverseDependencies[service.name] || EMPTY_LIST}
                   isMoving={movingServiceName === service.name}
                   isDraggable={false}
                   showGroup
@@ -1200,19 +1246,47 @@ const Dashboard = forwardRef(({ onViewLogs, onCloneService, onEditInAdmin }, ref
                   showLiveMetrics={showLiveMetrics}
                   metrics={metrics[service.name] || null}
                   isSelected={selectedServices.includes(service.name)}
-                  onSelect={(checked) => toggleSelection(service.name, checked)}
-                  onAction={executeSingleAction}
-                  onBranchCheckout={handleBranchCheckout}
-                  onGitPull={handleGitPull}
-                  onViewLogs={onViewLogs}
-                  onCloneService={onCloneService}
-                  onEditInAdmin={onEditInAdmin}
+                  onSelect={getSelectHandler(service.name)}
+                  onAction={cardHandlers.onAction}
+                  onBranchCheckout={cardHandlers.onBranchCheckout}
+                  onGitPull={cardHandlers.onGitPull}
+                  onGitPush={cardHandlers.onGitPush}
+                  onViewLogs={onViewLogs ? cardHandlers.onViewLogs : undefined}
+                  onOpenHelp={onOpenHelp ? cardHandlers.onOpenHelp : undefined}
+                  onCloneService={onCloneService ? cardHandlers.onCloneService : undefined}
+                  onEditInAdmin={onEditInAdmin ? cardHandlers.onEditInAdmin : undefined}
                 />
               ))}
             </Box>
           )}
         </Stack>
       </Paper>
+
+      <Dialog open={Boolean(pendingMove)} onClose={() => setPendingMove(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Move service?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            Move <strong>{pendingMove?.serviceName}</strong> from <strong>{pendingMove?.from}</strong> to{" "}
+            <strong>{pendingMove?.to}</strong>?
+          </Typography>
+          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", mt: 1 }}>
+            This changes the service's group in the configuration file.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setPendingMove(null)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              const move = pendingMove;
+              setPendingMove(null);
+              if (move) moveServiceToGroup(move.serviceName, move.to);
+            }}
+          >
+            Move and save
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={toast.open}

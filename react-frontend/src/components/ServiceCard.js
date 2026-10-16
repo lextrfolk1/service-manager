@@ -41,7 +41,7 @@ import {
 } from "@mui/icons-material";
 import StatusChip from "./StatusChip";
 import BranchSelector from "./BranchSelector";
-import { getServiceLinks, getDocsLabel, isFrontendService } from "../utils/serviceUtils";
+import { getServiceLinks, getDocsLabel, getHelpTopicForFailure, isFrontendService } from "../utils/serviceUtils";
 
 function ServiceCard({
   service,
@@ -58,8 +58,10 @@ function ServiceCard({
   onAction,
   onBranchCheckout,
   onGitPull,
+  onGitPush,
   onFreePort,
   onViewLogs,
+  onOpenHelp,
   onCloneService,
   onEditInAdmin,
   onDragStart,
@@ -659,6 +661,33 @@ function ServiceCard({
           )
         ) : null}
 
+        {onViewLogs ? (
+          <Tooltip title={`Open logs for ${service.name}`}>
+            <Chip
+              label="Logs"
+              size="small"
+              clickable
+              onClick={() => onViewLogs(service.name)}
+              icon={<DescriptionIcon sx={{ fontSize: "11px !important" }} />}
+              sx={{
+                height: 20,
+                fontSize: "0.68rem",
+                fontWeight: 600,
+                backgroundColor: "rgba(15, 23, 42, 0.03)",
+                color: "text.secondary",
+                border: "1px solid",
+                borderColor: "rgba(148, 163, 184, 0.25)",
+                "& .MuiChip-icon": { ml: 0.5, mr: -0.25, color: "inherit" },
+                "&:hover": {
+                  backgroundColor: "rgba(16, 185, 129, 0.08)",
+                  borderColor: "#059669",
+                  color: "#059669",
+                },
+              }}
+            />
+          </Tooltip>
+        ) : null}
+
         {service.hasBuild ? (
           <Chip
             label="Build"
@@ -739,6 +768,7 @@ function ServiceCard({
             isBusy={isBusy}
             onBranchCheckout={onBranchCheckout}
             onGitPull={onGitPull}
+            onGitPush={onGitPush}
             fullWidth
           />
         </Box>
@@ -883,6 +913,20 @@ function ServiceCard({
             severity="error"
             action={
               <Stack direction="row" spacing={0.5} alignItems="center">
+                {onOpenHelp ? (
+                  <Button
+                    color="inherit"
+                    size="small"
+                    onClick={() =>
+                      onOpenHelp({
+                        tab: "troubleshooting",
+                        section: getHelpTopicForFailure(status.message, status.error),
+                      })
+                    }
+                  >
+                    Help
+                  </Button>
+                ) : null}
                 <Button color="inherit" size="small" onClick={() => onViewLogs(service.name)}>
                   Logs
                 </Button>
@@ -904,4 +948,4 @@ function ServiceCard({
   );
 }
 
-export default ServiceCard;
+export default React.memo(ServiceCard);

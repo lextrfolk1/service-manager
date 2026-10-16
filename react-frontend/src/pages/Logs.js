@@ -4,11 +4,8 @@ import {
   Box,
   Button,
   Chip,
-  Divider,
-  FormControl,
   IconButton,
   InputAdornment,
-  InputLabel,
   MenuItem,
   Paper,
   Select,
@@ -25,7 +22,6 @@ import {
   ChevronRight as ChevronRightIcon,
   Close as CloseIcon,
   ContentCopy as ContentCopyIcon,
-  FolderOpen as FolderOpenIcon,
   Fullscreen as FullscreenIcon,
   FullscreenExit as FullscreenExitIcon,
   PushPin as PushPinIcon,
@@ -34,26 +30,16 @@ import {
   WrapText as WrapTextIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
+import useServiceRunningStates from "../hooks/useServiceRunningStates";
 
 const SEARCH_DEBOUNCE_MS = 400;
 const SEARCH_MIN_CHARS = 2;
 const SEARCH_MAX_CHARS = 120;
 
-const shellCardSx = {
-  height: "100%",
-  borderRadius: 4,
-  border: "1px solid rgba(148,163,184,0.2)",
-  background:
-    "linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%)",
-  boxShadow: "0 24px 60px rgba(15,23,42,0.08)",
-  overflow: "hidden",
-};
-
-const panelSx = {
-  borderRadius: 3,
-  border: "1px solid rgba(148,163,184,0.18)",
-  backgroundColor: "rgba(255,255,255,0.9)",
-  boxShadow: "0 10px 30px rgba(15,23,42,0.05)",
+// Edge-to-edge content card, same style as the Admin and Help content cards.
+const contentCardSx = {
+  border: "1px solid",
+  borderColor: "divider",
 };
 
 function prettifyStatus(status) {
@@ -69,74 +55,67 @@ function prettifyStatus(status) {
   }
 }
 
-function ExplorerItem({ service, active, pinned, onOpen, onPin }) {
+function ExplorerItem({ service, active, pinned, running, onOpen, onPin }) {
   return (
-    <Paper
-      variant="outlined"
-      onClick={onOpen}
-      sx={{
-        ...panelSx,
-        p: 1.5,
-        cursor: "pointer",
-        borderColor: active ? "rgba(37,99,235,0.4)" : "rgba(148,163,184,0.18)",
-        background: active
-          ? "linear-gradient(135deg, rgba(37,99,235,0.12) 0%, rgba(124,58,237,0.08) 100%)"
-          : "rgba(255,255,255,0.9)",
-        transition: "all 0.16s ease",
-        "&:hover": {
-          borderColor: "rgba(37,99,235,0.32)",
-          transform: "translateY(-1px)",
-        },
-      }}
-    >
-      <Stack direction="row" spacing={1.25} alignItems="flex-start">
-        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mb: 0.5 }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>
-              {service.name}
-            </Typography>
-            {service.type ? <Chip size="small" label={service.type} sx={{ height: 22 }} /> : null}
-            {service.group ? <Chip size="small" label={service.group} variant="outlined" sx={{ height: 22 }} /> : null}
-          </Stack>
-          <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-            {service.description || service.path || "Open latest log instantly"}
+    <Tooltip title={service.description || service.path || ""} placement="right" enterDelay={500}>
+      <Box
+        onClick={onOpen}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 0.75,
+          px: 1,
+          py: 0.5,
+          borderRadius: 1.5,
+          cursor: "pointer",
+          color: active ? "primary.main" : "text.primary",
+          backgroundColor: active ? "rgba(37,99,235,0.1)" : "transparent",
+          transition: "background-color 0.12s ease",
+          "&:hover": {
+            backgroundColor: active ? "rgba(37,99,235,0.14)" : "rgba(15,23,42,0.05)",
+          },
+          "&:hover .explorer-pin": { opacity: 1 },
+        }}
+      >
+        <Box
+          component="span"
+          aria-label={running ? "Running" : "Stopped"}
+          sx={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            flexShrink: 0,
+            backgroundColor: running ? "#10b981" : "rgba(148,163,184,0.6)",
+            boxShadow: running ? "0 0 0 2px rgba(16,185,129,0.18)" : "none",
+          }}
+        />
+        <Typography
+          variant="body2"
+          noWrap
+          sx={{ flex: 1, minWidth: 0, fontSize: "0.8rem", fontWeight: active ? 700 : 500 }}
+        >
+          {service.name}
+        </Typography>
+        {service.type ? (
+          <Typography variant="caption" sx={{ color: "text.secondary", fontSize: "0.68rem", flexShrink: 0 }}>
+            {service.type}
           </Typography>
-        </Box>
-        <Tooltip title={pinned ? "Pinned in quick access" : "Pin for quick access"}>
-          <IconButton
-            size="small"
-            onClick={(event) => {
-              event.stopPropagation();
-              onPin();
-            }}
-            color={pinned ? "primary" : "default"}
-          >
-            <PushPinIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Stack>
-    </Paper>
-  );
-}
-
-function FileChip({ fileName, active, onClick, live = false }) {
-  return (
-    <Chip
-      label={live ? `${fileName} • Live` : fileName}
-      clickable
-      onClick={onClick}
-      color={live ? "success" : active ? "primary" : "default"}
-      variant={active ? "filled" : "outlined"}
-      sx={{
-        height: 28,
-        maxWidth: 320,
-        fontWeight: live ? 700 : 500,
-        "& .MuiChip-label": {
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-        },
-      }}
-    />
+        ) : null}
+        <IconButton
+          className="explorer-pin"
+          size="small"
+          aria-label={pinned ? "Unpin service" : "Pin service"}
+          onClick={(event) => {
+            event.stopPropagation();
+            onPin();
+          }}
+          color={pinned ? "primary" : "default"}
+          sx={{ p: 0.25, opacity: pinned ? 1 : 0.35 }}
+        >
+          <PushPinIcon sx={{ fontSize: "0.9rem" }} />
+        </IconButton>
+      </Box>
+    </Tooltip>
   );
 }
 
@@ -169,7 +148,7 @@ function OpenServiceTabLabel({ serviceName, onClose }) {
   );
 }
 
-const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onServiceTabChange, onAddService }, ref) => {
+const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onServiceTabChange, onAddService, isActive = true }, ref) => {
   const [services, setServices] = useState([]);
   const [serviceFilter, setServiceFilter] = useState("");
   const [selectedServiceName, setSelectedServiceName] = useState("");
@@ -192,7 +171,6 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const isArchivedSelection = archivedLogFiles.includes(selectedLogFile);
   const isActiveSelection = activeLogFiles.includes(selectedLogFile);
   const liveFile = activeLogFiles[0] || "";
-  const otherFiles = [...activeLogFiles.slice(1), ...archivedLogFiles];
   const currentSearchState = serviceSearchState[currentService] || {
     searchQuery: "",
     debouncedSearchQuery: "",
@@ -428,6 +406,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     };
   }, [currentService, debouncedSearchQuery, selectedLogFile, updateCurrentSearchState]);
 
+  const runningServices = useServiceRunningStates(services, isActive);
+
   const filteredServices = useMemo(() => {
     const term = serviceFilter.trim().toLowerCase();
     const serviceList = [...services].sort((left, right) => {
@@ -569,7 +549,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   }, [debouncedSearchQuery, highlightLogLine, logContent, selectedMatchLine]);
 
   const renderSearchControls = () => (
-    <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
+    <Stack direction="row" spacing={0.5} alignItems="center">
       <TextField
         size="small"
         placeholder="Search inside current log"
@@ -578,11 +558,12 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         InputProps={{
           startAdornment: (
             <InputAdornment position="start">
-              <SearchIcon fontSize="small" />
+              <SearchIcon sx={{ fontSize: "1rem" }} />
             </InputAdornment>
           ),
+          sx: { height: 30, fontSize: "0.8rem", borderRadius: 999 },
         }}
-        sx={{ minWidth: { xs: "100%", sm: 250 }, "& .MuiOutlinedInput-root": { borderRadius: 999 } }}
+        sx={{ width: { xs: "100%", sm: 240 } }}
       />
       {searchQuery ? (
         <Button size="small" variant="text" onClick={() => updateCurrentSearchState({
@@ -598,202 +579,348 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         </Button>
       ) : null}
       <Tooltip title={wrapped ? "Disable wrap" : "Wrap lines"}>
-        <IconButton onClick={() => setWrapped((previous) => !previous)}>
-          <WrapTextIcon />
+        <IconButton size="small" color={wrapped ? "primary" : "default"} onClick={() => setWrapped((previous) => !previous)}>
+          <WrapTextIcon fontSize="small" />
         </IconButton>
       </Tooltip>
     </Stack>
   );
 
+  const openServiceFromExplorer = (serviceName) => {
+    setSelectedServiceName(serviceName);
+    if (!openServices.includes(serviceName)) {
+      onAddService(serviceName);
+    } else {
+      onServiceTabChange(openServices.indexOf(serviceName));
+    }
+  };
+
+  const compactChipSx = { height: 22, fontSize: "0.7rem" };
+
+  const renderStreamChip = () => (
+    <Chip
+      size="small"
+      label={streamChip.label}
+      color={streamChip.color}
+      variant={streamChip.color === "default" ? "outlined" : "filled"}
+      sx={compactChipSx}
+    />
+  );
+
+  const renderFocusToggle = () => (
+    <Tooltip title={maximized ? "Exit focus mode" : "Focus log area"}>
+      <IconButton size="small" onClick={() => setMaximized((previous) => !previous)}>
+        {maximized ? <FullscreenExitIcon fontSize="small" /> : <FullscreenIcon fontSize="small" />}
+      </IconButton>
+    </Tooltip>
+  );
+
   const renderViewerTabs = () => (
     <Box
       sx={{
-        px: maximized ? 1.5 : 1.5,
-        pt: maximized ? 1 : 1.25,
-        pb: maximized ? 1 : 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 1,
+        px: 1,
+        minHeight: 40,
+        flexShrink: 0,
         borderBottom: "1px solid rgba(148,163,184,0.16)",
         backgroundColor: "rgba(248,250,252,0.88)",
       }}
     >
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        spacing={1.25}
-        justifyContent="space-between"
-        alignItems={{ xs: "flex-start", md: "center" }}
-      >
-        <Tabs
-          value={Math.max(0, openServices.indexOf(currentService))}
-          onChange={(_, newValue) => {
-            const serviceName = openServices[newValue];
-            if (serviceName) {
-              setSelectedServiceName(serviceName);
-              onServiceTabChange(newValue);
-            }
-          }}
-          variant="scrollable"
-          scrollButtons="auto"
-          sx={{
-            minHeight: 40,
-            flex: 1,
+      <Tabs
+        value={openServices.includes(currentService) ? openServices.indexOf(currentService) : false}
+        onChange={(_, newValue) => {
+          const serviceName = openServices[newValue];
+          if (serviceName) {
+            setSelectedServiceName(serviceName);
+            onServiceTabChange(newValue);
+          }
+        }}
+        variant="scrollable"
+        scrollButtons="auto"
+        sx={{
+          minHeight: 32,
+          flex: 1,
+          minWidth: 0,
+          "& .MuiTab-root": {
+            minHeight: 32,
+            textTransform: "none",
             minWidth: 0,
-            "& .MuiTab-root": {
-              minHeight: 40,
-              textTransform: "none",
-              minWidth: 0,
-              px: 1.25,
-              py: 0.5,
-              borderRadius: 2,
-              mr: 1,
-              alignItems: "flex-start",
-              color: "text.secondary",
-            },
-            "& .MuiTab-root.Mui-selected": {
-              color: "text.primary",
-              backgroundColor: "rgba(37,99,235,0.08)",
-            },
-            "& .MuiTabs-indicator": {
-              display: "none",
-            },
-          }}
-        >
-          {openServices.map((serviceName, index) => (
-            <Tab
-              key={serviceName}
-              value={index}
-              label={
-                <OpenServiceTabLabel
-                  serviceName={serviceName}
-                  onClose={() => onCloseService(serviceName)}
-                />
-              }
-            />
-          ))}
-        </Tabs>
+            px: 1,
+            py: 0.25,
+            borderRadius: 1.5,
+            mr: 0.5,
+            color: "text.secondary",
+          },
+          "& .MuiTab-root.Mui-selected": {
+            color: "text.primary",
+            backgroundColor: "rgba(37,99,235,0.1)",
+          },
+          "& .MuiTabs-indicator": {
+            display: "none",
+          },
+        }}
+      >
+        {openServices.map((serviceName, index) => (
+          <Tab
+            key={serviceName}
+            value={index}
+            label={
+              <OpenServiceTabLabel
+                serviceName={serviceName}
+                onClose={() => onCloseService(serviceName)}
+              />
+            }
+          />
+        ))}
+      </Tabs>
 
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {maximized ? renderSearchControls() : null}
-          {!maximized ? (
-            <Chip
-              size="small"
-              variant="outlined"
-              label={`${openServices.length} open`}
-              sx={{ flexShrink: 0 }}
-            />
-          ) : null}
-          <Tooltip title={maximized ? "Exit focus mode" : "Focus log area"}>
-            <IconButton onClick={() => setMaximized((previous) => !previous)}>
-              {maximized ? <FullscreenExitIcon /> : <FullscreenIcon />}
-            </IconButton>
-          </Tooltip>
-        </Stack>
+      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ flexShrink: 0 }}>
+        {renderStreamChip()}
+        {renderFocusToggle()}
       </Stack>
     </Box>
   );
 
-  return (
-    <Paper
+  const renderLogToolbar = () => (
+    <Box
       sx={{
-        ...shellCardSx,
-        p: maximized ? 0 : 2,
-        borderRadius: maximized ? 0 : shellCardSx.borderRadius,
         display: "flex",
-        flexDirection: "column",
-        height: "100%",
-        minHeight: 0,
-        overflow: "hidden",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 1,
+        px: 1.5,
+        py: 0.75,
+        flexShrink: 0,
+        borderBottom: "1px solid rgba(148,163,184,0.16)",
       }}
     >
-      {!maximized ? (
-        <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} justifyContent="space-between" sx={{ mb: 1.5, flexShrink: 0 }}>
-          <Box>
-            <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700, letterSpacing: 0.4 }}>
-              LOG EXPLORER
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 800, mt: 0.25 }}>
-              Service Logs
-            </Typography>
-            <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5, maxWidth: 760 }}>
-              Open a service once and its latest active log appears immediately. Only the current active file streams live; older files stay as static snapshots.
-            </Typography>
-          </Box>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
-            <Chip label={`${services.length} services`} variant="outlined" />
-            <Chip label={`${activeLogFiles.length + archivedLogFiles.length} files`} variant="outlined" />
-            <Chip label={streamChip.label} color={streamChip.color} variant={streamChip.color === "default" ? "outlined" : "filled"} />
-          </Stack>
-        </Stack>
+      <Typography variant="subtitle2" noWrap sx={{ fontWeight: 800, maxWidth: 220 }}>
+        {currentService}
+      </Typography>
+      {selectedLogFile ? (
+        <Tooltip
+          title={isArchivedSelection
+            ? "Archived files are read-only snapshots."
+            : "Current log file streams live while the service is writing to it."}
+        >
+          <Chip
+            size="small"
+            label={isArchivedSelection ? "Archived" : "Live file"}
+            color={isArchivedSelection ? "default" : "success"}
+            variant={isArchivedSelection ? "outlined" : "filled"}
+            sx={compactChipSx}
+          />
+        </Tooltip>
       ) : null}
+      {activeLogFiles.length + archivedLogFiles.length > 0 ? (
+        <Select
+          size="small"
+          value={selectedLogFile || ""}
+          displayEmpty
+          renderValue={(value) => value || "Select log file"}
+          onChange={(event) => setSelectedLogFile(event.target.value)}
+          sx={{ height: 28, maxWidth: 320, fontSize: "0.75rem", borderRadius: 1.5 }}
+        >
+          {activeLogFiles.map((fileName) => (
+            <MenuItem key={fileName} value={fileName} sx={{ fontSize: "0.8rem" }}>
+              {fileName === liveFile ? `${fileName} • Live` : fileName}
+            </MenuItem>
+          ))}
+          {archivedLogFiles.length > 0 ? (
+            <MenuItem disabled value="__archive_header__" sx={{ fontSize: "0.75rem" }}>
+              Archived files
+            </MenuItem>
+          ) : null}
+          {archivedLogFiles.map((fileName) => (
+            <MenuItem key={fileName} value={fileName} sx={{ fontSize: "0.8rem" }}>
+              {fileName}
+            </MenuItem>
+          ))}
+        </Select>
+      ) : (
+        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+          No log files
+        </Typography>
+      )}
+      {loadingFiles ? <Chip size="small" label="Loading files…" color="warning" sx={compactChipSx} /> : null}
 
+      <Box sx={{ flex: 1 }} />
+
+      {renderSearchControls()}
+      <Tooltip title="Refresh log">
+        <IconButton size="small" onClick={refreshCurrentLog}>
+          <RefreshIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="Copy visible content">
+        <IconButton size="small" onClick={copyLogs}>
+          <ContentCopyIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Tooltip title="Clear current file">
+        <span>
+          <IconButton size="small" onClick={clearCurrentLog} disabled={!selectedLogFile}>
+            <ClearIcon fontSize="small" />
+          </IconButton>
+        </span>
+      </Tooltip>
+    </Box>
+  );
+
+  const renderSearchResults = () => (
+    <Box sx={{ px: 1.5, py: 1, flexShrink: 0, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
+      <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} sx={{ mb: 0.75 }}>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+          <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
+            Search Results
+          </Typography>
+          <Chip
+            size="small"
+            label={searchLoading
+              ? "Searching…"
+              : `${searchTotalMatches} match${searchTotalMatches === 1 ? "" : "es"}`}
+            color={searchLoading ? "warning" : "default"}
+            variant="outlined"
+            sx={compactChipSx}
+          />
+        </Stack>
+        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
+          {searchLoading
+            ? `Searching ${selectedLogFile}…`
+            : `Full log remains unchanged • ${selectedLogFile} • debounced ${SEARCH_DEBOUNCE_MS}ms`}
+        </Typography>
+      </Stack>
+      {searchError ? (
+        <Alert severity="warning" sx={{ borderRadius: 2 }}>
+          Search is unavailable right now: {searchError}. If the backend was updated recently, restart it and try again.
+        </Alert>
+      ) : !searchLoading ? (
+        selectedMatch ? (
+          <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ xs: "flex-start", md: "center" }}>
+            <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700, flexShrink: 0 }}>
+              Match {selectedMatchIndex + 1} of {searchResults.length} • Line {selectedMatch.lineNumber}
+            </Typography>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ flex: 1, minWidth: 0, fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace', fontSize: "0.75rem" }}
+            >
+              {selectedMatch.preview ? highlightMatchPreview(selectedMatch.preview, debouncedSearchQuery) : "(empty line)"}
+            </Typography>
+            <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => moveToSearchResult("previous")}
+                disabled={selectedMatchIndex <= 0}
+              >
+                Previous
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => moveToSearchResult("next")}
+                disabled={selectedMatchIndex === -1 || selectedMatchIndex >= searchResults.length - 1}
+              >
+                Next
+              </Button>
+            </Stack>
+          </Stack>
+        ) : (
+          <Typography variant="caption" sx={{ color: "text.secondary" }}>
+            No matching lines found.
+          </Typography>
+        )
+      ) : null}
+    </Box>
+  );
+
+  return (
+    <Box sx={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <Paper
+        elevation={0}
+        sx={{
+          ...contentCardSx,
+          ...(maximized ? { borderRadius: 0 } : {}),
+          flexGrow: 1,
+          display: "flex",
+          minHeight: 0,
+          overflow: "hidden",
+        }}
+      >
       <Box
         sx={{
           flex: 1,
           minHeight: 0,
+          minWidth: 0,
           display: "grid",
           gridTemplateColumns: {
             xs: "1fr",
-            md: maximized ? "1fr" : explorerCollapsed ? "56px minmax(0, 1fr)" : "280px minmax(0, 1fr)",
-            lg: maximized ? "1fr" : explorerCollapsed ? "56px minmax(0, 1fr)" : "320px minmax(0, 1fr)",
+            md: maximized ? "1fr" : explorerCollapsed ? "48px minmax(0, 1fr)" : "240px minmax(0, 1fr)",
+            lg: maximized ? "1fr" : explorerCollapsed ? "48px minmax(0, 1fr)" : "280px minmax(0, 1fr)",
           },
-          gap: 2,
           overflow: "hidden",
         }}
       >
         {!maximized && (
-          <Paper sx={{ ...panelSx, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-            <Box sx={{ p: explorerCollapsed ? 1 : 2, borderBottom: "1px solid rgba(148,163,184,0.16)" }}>
-              <Stack
-                direction={explorerCollapsed ? "column" : "row"}
-                spacing={1}
-                justifyContent="space-between"
-                alignItems={explorerCollapsed ? "center" : "center"}
-              >
-                {!explorerCollapsed ? (
-                  <TextField
-                    fullWidth
-                    size="small"
-                    value={serviceFilter}
-                    onChange={(event) => setServiceFilter(event.target.value)}
-                    placeholder="Search services"
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <SearchIcon fontSize="small" />
-                        </InputAdornment>
-                      ),
-                    }}
-                    sx={{ "& .MuiOutlinedInput-root": { borderRadius: 999 } }}
-                  />
-                ) : (
-                  <Tooltip title="Service explorer">
-                    <SearchIcon fontSize="small" color="action" />
-                  </Tooltip>
-                )}
-
-                <Tooltip title={explorerCollapsed ? "Expand explorer" : "Collapse explorer"}>
-                  <IconButton size="small" onClick={() => setExplorerCollapsed((previous) => !previous)}>
-                    {explorerCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-                  </IconButton>
-                </Tooltip>
-              </Stack>
-
+          <Box
+            sx={{
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              borderRight: "1px solid rgba(148,163,184,0.18)",
+              backgroundColor: "rgba(248,250,252,0.6)",
+            }}
+          >
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: explorerCollapsed ? "column" : "row",
+                alignItems: "center",
+                gap: 0.5,
+                px: 1,
+                minHeight: 40,
+                flexShrink: 0,
+                borderBottom: "1px solid rgba(148,163,184,0.16)",
+              }}
+            >
+              {!explorerCollapsed ? (
+                <TextField
+                  fullWidth
+                  size="small"
+                  value={serviceFilter}
+                  onChange={(event) => setServiceFilter(event.target.value)}
+                  placeholder="Search services"
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <SearchIcon sx={{ fontSize: "1rem" }} />
+                      </InputAdornment>
+                    ),
+                    sx: { height: 30, fontSize: "0.8rem", borderRadius: 999 },
+                  }}
+                />
+              ) : null}
+              <Tooltip title={explorerCollapsed ? "Expand explorer" : "Collapse explorer"}>
+                <IconButton size="small" onClick={() => setExplorerCollapsed((previous) => !previous)}>
+                  {explorerCollapsed ? <ChevronRightIcon fontSize="small" /> : <ChevronLeftIcon fontSize="small" />}
+                </IconButton>
+              </Tooltip>
             </Box>
 
             {!explorerCollapsed ? (
-              <Box sx={{ flexGrow: 1, overflow: "auto", p: 1.5, display: "flex", flexDirection: "column", gap: 1.25 }}>
+              <Box sx={{ flexGrow: 1, overflow: "auto", p: 0.75, display: "flex", flexDirection: "column", gap: 0.25 }}>
                 {filteredServices.map((service) => (
                   <ExplorerItem
                     key={service.name}
                     service={service}
                     active={currentService === service.name}
                     pinned={pinnedServices.includes(service.name)}
-                    onOpen={() => {
-                      setSelectedServiceName(service.name);
-                      if (!openServices.includes(service.name)) {
-                        onAddService(service.name);
-                      } else {
-                        onServiceTabChange(openServices.indexOf(service.name));
-                      }
-                    }}
+                    running={Boolean(runningServices[service.name])}
+                    onOpen={() => openServiceFromExplorer(service.name)}
                     onPin={() =>
                       setPinnedServices((previous) =>
                         previous.includes(service.name)
@@ -808,209 +935,51 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                 ) : null}
               </Box>
             ) : (
-              <Box sx={{ flexGrow: 1, overflow: "auto", p: 0.75, display: "flex", flexDirection: "column", alignItems: "center", gap: 0.75 }}>
+              <Box sx={{ flexGrow: 1, overflow: "auto", p: 0.5, display: "flex", flexDirection: "column", alignItems: "center", gap: 0.5 }}>
                 {filteredServices.slice(0, 18).map((service) => (
-                  <Tooltip key={service.name} title={service.name} placement="right">
+                  <Tooltip
+                    key={service.name}
+                    title={`${service.name} (${runningServices[service.name] ? "running" : "stopped"})`}
+                    placement="right"
+                  >
+                    <Box sx={{ position: "relative" }}>
                     <Chip
                       size="small"
                       clickable
                       color={currentService === service.name ? "primary" : "default"}
                       variant={currentService === service.name ? "filled" : "outlined"}
                       label={service.name.slice(0, 2).toUpperCase()}
-                      onClick={() => {
-                        setSelectedServiceName(service.name);
-                        if (!openServices.includes(service.name)) {
-                          onAddService(service.name);
-                        } else {
-                          onServiceTabChange(openServices.indexOf(service.name));
-                        }
-                      }}
-                      sx={{ width: 40, "& .MuiChip-label": { px: 0 } }}
+                      onClick={() => openServiceFromExplorer(service.name)}
+                      sx={{ width: 36, "& .MuiChip-label": { px: 0 } }}
                     />
+                    <Box
+                      component="span"
+                      sx={{
+                        position: "absolute",
+                        top: -1,
+                        right: -1,
+                        width: 7,
+                        height: 7,
+                        borderRadius: "50%",
+                        border: "1px solid #fff",
+                        backgroundColor: runningServices[service.name] ? "#10b981" : "rgba(148,163,184,0.8)",
+                        pointerEvents: "none",
+                      }}
+                    />
+                    </Box>
                   </Tooltip>
                 ))}
               </Box>
             )}
-          </Paper>
+          </Box>
         )}
 
-        <Paper sx={{ ...panelSx, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <Box sx={{ minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {currentService ? (
             <>
-              {openServices.length > 0 ? renderViewerTabs() : null}
-
-              <Box sx={{ p: maximized ? 1.25 : 2, borderBottom: maximized ? "1px solid rgba(148,163,184,0.16)" : "1px solid rgba(148,163,184,0.16)" }}>
-                {!maximized ? (
-                  <>
-                    <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} justifyContent="space-between">
-                      <Box>
-                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                        <Typography variant="h6" sx={{ fontWeight: 800 }}>
-                          {currentService}
-                          </Typography>
-                          <Chip size="small" label={selectedLogFile || "No file"} variant="outlined" />
-                          <Chip
-                            size="small"
-                            label={isArchivedSelection ? "Archived snapshot" : "Current live file"}
-                            color={isArchivedSelection ? "default" : "success"}
-                            variant={isArchivedSelection ? "outlined" : "filled"}
-                          />
-                          {loadingFiles ? <Chip size="small" label="Loading files…" color="warning" /> : null}
-                        </Stack>
-                        <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
-                          {isArchivedSelection
-                            ? "Archived files are read-only snapshots."
-                            : "Current log file streams live while the service is writing to it."}
-                        </Typography>
-                      </Box>
-                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap alignItems="center">
-                        {renderSearchControls()}
-                        <Button variant="outlined" startIcon={<RefreshIcon />} onClick={refreshCurrentLog}>
-                          Refresh
-                        </Button>
-                        <Tooltip title="Copy visible content">
-                          <IconButton onClick={copyLogs}>
-                            <ContentCopyIcon />
-                          </IconButton>
-                        </Tooltip>
-                        <Tooltip title="Clear current file">
-                          <IconButton onClick={clearCurrentLog} disabled={!selectedLogFile}>
-                            <ClearIcon />
-                          </IconButton>
-                        </Tooltip>
-                      </Stack>
-                    </Stack>
-
-                    <Divider sx={{ my: 1.5 }} />
-                  </>
-                ) : null}
-
-                <Stack direction={{ xs: "column", lg: "row" }} spacing={1.25} alignItems={{ xs: "flex-start", lg: "center" }}>
-                  <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                    {!maximized ? <FolderOpenIcon sx={{ color: "text.secondary", fontSize: "1rem" }} /> : null}
-                    {!maximized ? (
-                      <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
-                        Current
-                      </Typography>
-                    ) : null}
-                    {liveFile ? (
-                      <FileChip
-                        fileName={liveFile}
-                        active={selectedLogFile === liveFile}
-                        live
-                        onClick={() => setSelectedLogFile(liveFile)}
-                      />
-                    ) : (
-                      <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                        No active file
-                      </Typography>
-                    )}
-                  </Stack>
-
-                  {otherFiles.length > 0 ? (
-                    <FormControl size="small" sx={{ minWidth: { xs: "100%", md: 320 } }}>
-                      <InputLabel>Other Files</InputLabel>
-                      <Select
-                        value={selectedLogFile !== liveFile ? selectedLogFile : ""}
-                        label="Other Files"
-                        onChange={(event) => setSelectedLogFile(event.target.value)}
-                        sx={{ borderRadius: 999 }}
-                      >
-                        {activeLogFiles.slice(1).map((fileName) => (
-                          <MenuItem key={fileName} value={fileName}>
-                            {fileName}
-                          </MenuItem>
-                        ))}
-                        {archivedLogFiles.length > 0 ? (
-                          <MenuItem disabled value="__archive_header__">
-                            Archived files
-                          </MenuItem>
-                        ) : null}
-                        {archivedLogFiles.map((fileName) => (
-                          <MenuItem key={fileName} value={fileName}>
-                            {fileName}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  ) : null}
-                </Stack>
-
-                {debouncedSearchQuery ? (
-                  <Box sx={{ mt: 1.25 }}>
-                    <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }} sx={{ mb: 1 }}>
-                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                        <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
-                        Search Results
-                      </Typography>
-                        <Chip
-                          size="small"
-                          label={searchLoading
-                            ? "Searching…"
-                            : `${searchTotalMatches} match${searchTotalMatches === 1 ? "" : "es"}`}
-                          color={searchLoading ? "warning" : "default"}
-                          variant="outlined"
-                        />
-                      </Stack>
-                      <Typography variant="caption" sx={{ color: "text.secondary", fontWeight: 700 }}>
-                        {searchLoading
-                          ? `Searching ${selectedLogFile}…`
-                          : `Full log remains unchanged • ${selectedLogFile} • debounced ${SEARCH_DEBOUNCE_MS}ms`}
-                      </Typography>
-                    </Stack>
-                    {searchError ? (
-                      <Alert severity="warning" sx={{ borderRadius: 2 }}>
-                        Search is unavailable right now: {searchError}. If the backend was updated recently, restart it and try again.
-                      </Alert>
-                    ) : !searchLoading ? (
-                      <Paper
-                        variant="outlined"
-                        sx={{
-                          p: 1.25,
-                          borderRadius: 2,
-                          backgroundColor: "rgba(248,250,252,0.75)",
-                          borderColor: "rgba(148,163,184,0.16)",
-                        }}
-                      >
-                        {selectedMatch ? (
-                          <Stack spacing={1}>
-                            <Stack direction={{ xs: "column", md: "row" }} spacing={1} justifyContent="space-between" alignItems={{ xs: "flex-start", md: "center" }}>
-                              <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700 }}>
-                                Match {selectedMatchIndex + 1} of {searchResults.length} • Line {selectedMatch.lineNumber}
-                              </Typography>
-                              <Stack direction="row" spacing={1}>
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => moveToSearchResult("previous")}
-                                  disabled={selectedMatchIndex <= 0}
-                                >
-                                  Previous
-                                </Button>
-                                <Button
-                                  size="small"
-                                  variant="outlined"
-                                  onClick={() => moveToSearchResult("next")}
-                                  disabled={selectedMatchIndex === -1 || selectedMatchIndex >= searchResults.length - 1}
-                                >
-                                  Next
-                                </Button>
-                              </Stack>
-                            </Stack>
-                            <Typography variant="body2" sx={{ fontFamily: '"Monaco", "Menlo", "Ubuntu Mono", monospace', fontSize: "0.78rem", wordBreak: "break-word" }}>
-                              {selectedMatch.preview ? highlightMatchPreview(selectedMatch.preview, debouncedSearchQuery) : "(empty line)"}
-                            </Typography>
-                          </Stack>
-                        ) : (
-                          <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                            No matching lines found.
-                          </Typography>
-                        )}
-                      </Paper>
-                    ) : null}
-                  </Box>
-                ) : null}
-              </Box>
+              {renderViewerTabs()}
+              {renderLogToolbar()}
+              {debouncedSearchQuery ? renderSearchResults() : null}
 
               <Box
                 component="pre"
@@ -1020,7 +989,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                   minHeight: 0,
                   overflow: "auto",
                   m: 0,
-                  p: 2,
+                  px: 2,
+                  py: 1.5,
                   backgroundColor: "#0f172a",
                   color: "#e2e8f0",
                   whiteSpace: wrapped ? "pre-wrap" : "pre",
@@ -1037,9 +1007,10 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               <Alert severity="info">Select a service from the left to load its latest logs.</Alert>
             </Box>
           )}
-        </Paper>
+        </Box>
       </Box>
-    </Paper>
+      </Paper>
+    </Box>
   );
 });
 
