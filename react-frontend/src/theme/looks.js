@@ -1,5 +1,6 @@
 // One-click "Looks": recommended theme + card style pairs (Dashboard › View › Look).
 export const LOOKS = [
+  { id: "legacy", label: "Legacy", theme: "light", cardStyle: "classic", hint: "Light + Classic — the familiar look" },
   { id: "everyday", label: "Everyday", theme: "light", cardStyle: "detailed", hint: "Light + Detailed — clearest status" },
   { id: "modern", label: "Modern", theme: "light", cardStyle: "elevated", hint: "Light + Elevated — floating cards" },
   { id: "studio", label: "Studio", theme: "graphite", cardStyle: "strip", hint: "Graphite + Accent strip — best dark pair" },

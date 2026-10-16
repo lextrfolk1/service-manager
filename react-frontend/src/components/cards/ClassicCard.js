@@ -41,7 +41,7 @@ import {
 } from "@mui/icons-material";
 // The card from the main branch, kept as the "Classic" card style.
 import StatusChip from "../StatusChip";
-import BranchSelector from "../BranchSelector";
+import BranchSelector from "./ClassicBranchSelector";
 import { getServiceLinks, getDocsLabel, isFrontendService } from "../../utils/serviceUtils";
 
 function ServiceCard({
@@ -829,7 +829,7 @@ function ServiceCard({
                 sx={{
                   p: 0.5,
                   borderRadius: 1.5,
-                  "&:hover": { bgcolor: "color-mix(in srgb, var(--sm-accent) 8%, transparent)" },
+                  "&:hover": { bgcolor: "rgba(25, 118, 210, 0.08)" } /* keep-color: main's exact hover */,
                 }}
               >
                 <PlayArrowIcon fontSize="small" />

@@ -153,4 +153,11 @@ export const COLOR_VARS = {
   "--c-text-ef4444": { light: "#ef4444", dark: "#f37272", soft: "#dc5757", graphite: "#f37272" },
   "--c-text-f59e0b-007": { light: "rgba(245, 158, 11, 0.07)", dark: "rgba(244, 195, 113, 0.07)", soft: "rgba(219, 151, 37, 0.07)", graphite: "rgba(244, 195, 113, 0.07)" },
   "--c-text-ffffff": { light: "#ffffff", dark: "#ffffff", soft: "#a5998d", graphite: "#ffffff" },
+  "--c-bg-0f172a-01": { light: "rgba(15, 23, 42, 0.1)", dark: "rgba(15, 23, 42, 0.1)", soft: "rgba(18, 24, 39, 0.1)", graphite: "rgba(15, 23, 42, 0.1)" },
+  "--c-bg-e0f2fe": { light: "#e0f2fe", dark: "rgba(38, 145, 217, 0.16)", soft: "#e3f1fb", graphite: "rgba(38, 145, 217, 0.16)" },
+  "--c-bg-ed6c02-008": { light: "rgba(237, 108, 2, 0.08)", dark: "rgba(237, 108, 2, 0.08)", soft: "rgba(211, 111, 28, 0.08)", graphite: "rgba(237, 108, 2, 0.08)" },
+  "--c-bg-f59e0b-018": { light: "rgba(245, 158, 11, 0.18)", dark: "rgba(245, 158, 11, 0.18)", soft: "rgba(219, 151, 37, 0.18)", graphite: "rgba(245, 158, 11, 0.18)" },
+  "--c-shadow-1976d2-02": { light: "rgba(25, 118, 210, 0.2)", dark: "rgba(25, 118, 210, 0.2)", soft: "rgba(25, 118, 210, 0.16)", graphite: "rgba(25, 118, 210, 0.2)" },
+  "--c-text-0369a1": { light: "#0369a1", dark: "#71c5f4", soft: "#146490", graphite: "#71c5f4" },
+  "--c-text-ed6c02-014": { light: "rgba(237, 108, 2, 0.14)", dark: "rgba(244, 172, 113, 0.14)", soft: "rgba(211, 111, 28, 0.14)", graphite: "rgba(244, 172, 113, 0.14)" },
 };
