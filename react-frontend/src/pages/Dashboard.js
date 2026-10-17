@@ -377,7 +377,20 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       try {
         const data = await api.get("/services/metrics");
         if (isSubscribed && data?.metrics) {
-          setMetrics(data.metrics);
+          // Keep unchanged per-service objects so memoized cards whose numbers didn't move skip re-rendering.
+          setMetrics((previous) => {
+            let changed = Object.keys(previous).length !== Object.keys(data.metrics).length;
+            const next = {};
+            Object.entries(data.metrics).forEach(([name, value]) => {
+              if (isSameJson(previous[name], value)) {
+                next[name] = previous[name];
+              } else {
+                next[name] = value;
+                changed = true;
+              }
+            });
+            return changed ? next : previous;
+          });
         }
       } catch (e) {
         // Non-blocking

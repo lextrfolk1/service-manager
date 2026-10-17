@@ -1077,6 +1077,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
           <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ xs: "flex-start", md: "center" }}>
             <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700, flexShrink: 0 }}>
               Match {selectedMatchIndex + 1} of {searchResults.length} • Line {selectedMatch.lineNumber}
+              {selectedMatch.lineNumber <= logLineOffset ? " (before the part of the log shown below)" : ""}
             </Typography>
             <Typography
               variant="body2"

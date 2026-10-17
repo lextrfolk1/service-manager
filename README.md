@@ -255,6 +255,7 @@ Current log file behavior:
 - current active file supports live streaming
 - older files are static
 - log viewing is service-oriented in the UI
+- large logs open at their newest 2 MB (set `LOG_MAX_RESPONSE_BYTES` to change); search still covers the whole file
 
 ---
 

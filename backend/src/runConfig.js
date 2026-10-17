@@ -19,11 +19,22 @@ function normalize(data) {
   return { services };
 }
 
+// Parsed file is reused until it changes on disk (read runs on every health check).
+let readCache = null; // { filePath, mtimeMs, size, data }
+
 // Missing or unreadable file means "no run configuration".
 function read() {
+  const filePath = getFilePath();
   try {
-    return normalize(JSON.parse(fs.readFileSync(getFilePath(), "utf8")));
+    const stats = fs.statSync(filePath);
+    if (readCache && readCache.filePath === filePath && readCache.mtimeMs === stats.mtimeMs && readCache.size === stats.size) {
+      return readCache.data;
+    }
+    const data = normalize(JSON.parse(fs.readFileSync(filePath, "utf8")));
+    readCache = { filePath, mtimeMs: stats.mtimeMs, size: stats.size, data };
+    return data;
   } catch {
+    readCache = null;
     return { services: {} };
   }
 }
@@ -31,6 +42,7 @@ function read() {
 function write(data) {
   const local = normalize(data);
   fs.writeFileSync(getFilePath(), `${JSON.stringify(local, null, 2)}\n`, "utf8");
+  readCache = null;
   return local;
 }
 
