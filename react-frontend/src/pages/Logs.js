@@ -97,20 +97,26 @@ const DEFAULT_VIEWER_SETTINGS = {
   wrap: false,
   colorLevels: true,
   collapseStacks: true,
-  levels: null, // null: all levels; otherwise the list of levels shown
   caseSensitive: false,
   regex: false,
-  onlyMatching: false,
 };
 
+// Display preferences are saved per browser. Line filters (levels, only matching) are per service and not
+// saved, so a log never opens with lines silently hidden.
 function loadViewerSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(VIEWER_SETTINGS_KEY) || "{}");
-    return { ...DEFAULT_VIEWER_SETTINGS, ...(saved && typeof saved === "object" ? saved : {}) };
+    const settings = { ...DEFAULT_VIEWER_SETTINGS };
+    Object.keys(DEFAULT_VIEWER_SETTINGS).forEach((key) => {
+      if (saved && typeof saved === "object" && key in saved) settings[key] = saved[key];
+    });
+    return settings;
   } catch {
     return DEFAULT_VIEWER_SETTINGS;
   }
 }
+
+const NO_FILTERS = { levels: null, onlyMatching: false }; // levels: null = all, else the list shown
 
 const LEVEL_CHIP_COLORS = { error: "#dc2626", warn: "#d97706", info: "#2563eb", debug: "#64748b", other: "#94a3b8" };
 
@@ -407,7 +413,9 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const goToLineInputRef = useRef(null);
   const [serviceSearchState, setServiceSearchState] = useState({});
   const [viewerSettings, setViewerSettings] = useState(loadViewerSettings);
-  const { fontSize, wrap: wrapped, colorLevels, collapseStacks, caseSensitive, regex: regexSearch, onlyMatching } = viewerSettings;
+  const { fontSize, wrap: wrapped, colorLevels, collapseStacks, caseSensitive, regex: regexSearch } = viewerSettings;
+  const [serviceFilters, setServiceFilters] = useState({}); // service -> { levels, onlyMatching }
+  const [fileLevels, setFileLevels] = useState(null); // whole-file entry counts from the backend index
   const [selection, setSelection] = useState(null); // { anchor, from, to } file line numbers
   const [expandedFolds, setExpandedFolds] = useState(() => new Set()); // file line of each expanded stack fold
   const [paused, setPaused] = useState(false);
@@ -676,7 +684,31 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     setSelection(null);
     setExpandedFolds(new Set());
     setNotice("");
+    setFileLevels(null);
   }, [currentService, selectedLogFile]);
+
+  const selectedLogFileRef = useRef("");
+  selectedLogFileRef.current = selectedLogFile;
+
+  // Whole-file level counts (backend index); refreshed while the current run is open and the tab is shown.
+  useEffect(() => {
+    if (!isActive || !currentService || !selectedLogFile) return undefined;
+    let active = true;
+    const load = () => {
+      api.get(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/levels`)
+        .then((data) => {
+          if (active) setFileLevels((previous) => (JSON.stringify(previous) === JSON.stringify(data) ? previous : data));
+        })
+        .catch(() => {});
+    };
+    load();
+    if (!isActiveSelection) return () => { active = false; };
+    const interval = setInterval(load, FILE_LIST_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [currentService, isActive, isActiveSelection, selectedLogFile]);
 
   useEffect(() => {
     if (!selectedLogFile || !currentService) return undefined;
@@ -775,14 +807,24 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     () => buildMatcher(debouncedSearchQuery, { caseSensitive, regex: regexSearch }),
     [caseSensitive, debouncedSearchQuery, regexSearch]
   );
-  const levelFilter = useMemo(() => (viewerSettings.levels ? new Set(viewerSettings.levels) : null), [viewerSettings.levels]);
+  const { levels: shownLevels, onlyMatching } = serviceFilters[currentService] || NO_FILTERS;
+  const updateServiceFilters = useCallback((updates) => {
+    if (!currentService) return;
+    setServiceFilters((previous) => {
+      const current = previous[currentService] || NO_FILTERS;
+      return { ...previous, [currentService]: { ...current, ...(typeof updates === "function" ? updates(current) : updates) } };
+    });
+  }, [currentService]);
+  const levelFilter = useMemo(() => (shownLevels ? new Set(shownLevels) : null), [shownLevels]);
   const filterByMatch = onlyMatching && matcher && !matcher.error ? matcher : null;
   const rows = useMemo(
     () => buildRows(logView, { levels: levelFilter, matcher: filterByMatch, collapseStacks, expandedFolds }),
     [collapseStacks, expandedFolds, filterByMatch, levelFilter, logView]
   );
   const levelCounts = useMemo(() => countLevels(logView), [logView]);
-  const layoutKey = `${logView.version}|${logLineOffset}|${viewerSettings.levels?.join(",") || "all"}|${filterByMatch ? debouncedSearchQuery : ""}|${caseSensitive}|${regexSearch}|${collapseStacks}|${expandedFolds.size}|${[...expandedFolds].join(",")}`;
+  // Loaded lines are only part of the file (older lines trimmed, or an earlier window is shown).
+  const partialView = logLineOffset > 0 || logWindowed || (fileLevels ? fileLevels.lineCount > loadedLineCount : false);
+  const layoutKey = `${logView.version}|${logLineOffset}|${shownLevels?.join(",") || "all"}|${filterByMatch ? debouncedSearchQuery : ""}|${caseSensitive}|${regexSearch}|${collapseStacks}|${expandedFolds.size}|${[...expandedFolds].join(",")}`;
 
   const lineIndex = useCallback((line) => line - logLineOffset - 1, [logLineOffset]);
   const isLineLoaded = useCallback(
@@ -904,14 +946,21 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         return;
       }
     }
-    setNotice(
-      direction === "next"
-        ? "No more errors in the loaded lines."
-        : logLineOffset > 0
-          ? "No earlier errors in the loaded lines (earlier output isn't loaded — search for ERROR to reach it)."
-          : "No earlier errors."
-    );
-  }, [lineIndex, loadedLineCount, logLineOffset, logView, revealLine, selection]);
+    // Not in the loaded lines: ask the backend's level index, which covers the whole file.
+    if (!currentService || !selectedLogFile) return;
+    const fileName = selectedLogFile;
+    api.get(`/logs/${currentService}/${encodeURIComponent(fileName)}/levels/find?level=error&from=${fromLine}&direction=${direction}`)
+      .then((data) => {
+        if (fileName !== selectedLogFileRef.current) return;
+        if (data?.lineNumber) {
+          setSelection({ anchor: data.lineNumber, from: data.lineNumber, to: data.lineNumber });
+          revealLine(data.lineNumber);
+        } else {
+          setNotice(direction === "next" ? "No more errors in this log." : "No earlier errors in this log.");
+        }
+      })
+      .catch((error) => setNotice(`Couldn't look up errors: ${error.message}`));
+  }, [currentService, lineIndex, loadedLineCount, logLineOffset, logView, revealLine, selectedLogFile, selection]);
 
   const handleGutterClick = useCallback((lineNumber, event) => {
     setSelection((previous) => {
@@ -931,14 +980,14 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   }, []);
 
   const toggleLevel = useCallback((level) => {
-    updateViewerSettings((previous) => {
+    updateServiceFilters((previous) => {
       const current = new Set(previous.levels || LEVELS);
       if (current.has(level)) current.delete(level);
       else current.add(level);
       const levels = LEVELS.filter((item) => current.has(item));
       return { levels: levels.length === 0 || levels.length === LEVELS.length ? null : levels };
     });
-  }, [updateViewerSettings]);
+  }, [updateServiceFilters]);
 
   const followLatest = useCallback(() => {
     setFollowing(true);
@@ -1147,14 +1196,24 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       }}
     >
       {LEVELS.map((level) => {
-        const shown = !viewerSettings.levels || viewerSettings.levels.includes(level);
+        const shown = !shownLevels || shownLevels.includes(level);
+        const fileCount = fileLevels?.counts?.[level];
+        const showFileCount = partialView && fileCount !== undefined && fileCount !== levelCounts[level];
+        const countText = showFileCount
+          ? `${levelCounts[level].toLocaleString()} / ${fileCount.toLocaleString()}`
+          : levelCounts[level].toLocaleString();
         return (
-          <Tooltip key={level} title={`${shown ? "Hide" : "Show"} ${LEVEL_LABELS[level].toLowerCase()} — loaded lines only`}>
+          <Tooltip
+            key={level}
+            title={`${shown ? "Hide" : "Show"} ${LEVEL_LABELS[level].toLowerCase()}${showFileCount
+              ? ` · ${levelCounts[level].toLocaleString()} loaded, ${fileCount.toLocaleString()} in the whole file`
+              : ""}`}
+          >
             <Chip
               size="small"
               clickable
               onClick={() => toggleLevel(level)}
-              label={`${LEVEL_LABELS[level]} ${levelCounts[level].toLocaleString()}`}
+              label={`${LEVEL_LABELS[level]} ${countText}`}
               variant={shown ? "filled" : "outlined"}
               sx={{
                 ...compactChipSx,
@@ -1173,7 +1232,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
             size="small"
             clickable
             disabled={!debouncedSearchQuery}
-            onClick={() => updateViewerSettings({ onlyMatching: !onlyMatching })}
+            onClick={() => updateServiceFilters({ onlyMatching: !onlyMatching })}
             label="Only matching lines"
             color={onlyMatching && debouncedSearchQuery ? "primary" : "default"}
             variant={onlyMatching && debouncedSearchQuery ? "filled" : "outlined"}
@@ -1821,7 +1880,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                 onFollowingChange={handleFollowingChange}
                 onGutterClick={handleGutterClick}
                 onToggleFold={toggleFold}
-                emptyText={filterByMatch || viewerSettings.levels ? "(no lines match the filters)" : "(empty log)"}
+                emptyText={filterByMatch || shownLevels ? "(no lines match the filters)" : "(empty log)"}
               />
             </>
           ) : (

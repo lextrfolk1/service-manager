@@ -488,6 +488,26 @@ app.get("/logs/:name/:file/search", async (req, res) => {
   }
 });
 
+// Logs: entry counts per level for the whole file
+app.get("/logs/:name/:file/levels", async (req, res) => {
+  try {
+    res.json(await logger.getLevelSummary(req.params.name, req.params.file));
+  } catch (err) {
+    res.status(err.code === "ENOENT" ? 404 : err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+// Logs: next/previous entry at a level (?level=error|warn&from=<line>&direction=next|previous)
+app.get("/logs/:name/:file/levels/find", async (req, res) => {
+  try {
+    const fromLine = Number(req.query.from) || 0;
+    const direction = req.query.direction === "previous" ? "previous" : "next";
+    res.json(await logger.findLevelEntry(req.params.name, req.params.file, String(req.query.level || "error"), fromLine, direction));
+  } catch (err) {
+    res.status(err.code === "ENOENT" ? 404 : err.statusCode || 500).json({ error: err.message });
+  }
+});
+
 // Logs: download the whole log file
 app.get("/logs/:name/:file/download", (req, res) => {
   const { name, file } = req.params;

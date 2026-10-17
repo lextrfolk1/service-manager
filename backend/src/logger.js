@@ -75,6 +75,97 @@ function plainLine(rawLine) {
   return text.includes("\x1b") ? text.replace(ANSI_ESCAPES, "") : text;
 }
 
+// Level named on a line (keep in sync with detectLevel in react-frontend/src/components/logViewer/logLines.js).
+const LEVEL_KEY_VALUE = /\blevel["']?\s*[=:]\s*["']?(fatal|error|err|warn(?:ing)?|info|debug|trace)\b/i;
+const LEVEL_WORD = /\b(FATAL|SEVERE|ERROR|ERR|WARN(?:ING)?|INFO|DEBUG|TRACE)\b/;
+const LEVEL_ALIASES = { fatal: "error", severe: "error", error: "error", err: "error", warn: "warn", warning: "warn", info: "info", debug: "debug", trace: "debug" };
+
+function detectLevel(text) {
+  const head = text.length > 300 ? text.slice(0, 300) : text;
+  const match = LEVEL_KEY_VALUE.exec(head) || LEVEL_WORD.exec(head);
+  return match ? LEVEL_ALIASES[match[1].toLowerCase()] || null : null;
+}
+
+// Per-file level index: entry counts per level and the line numbers of error/warning entries, so the UI can
+// show whole-file totals and jump between errors beyond the loaded lines. Built incrementally: a growing log
+// only scans the bytes added since the last call. Only complete lines (ending in "\n") are indexed.
+const MAX_INDEXED_FILES = 50;
+const MAX_INDEXED_ENTRIES = 200000; // per level; further entries are counted but not listed
+const logIndexes = new Map(); // filePath -> index
+
+function emptyIndex(ino) {
+  return {
+    ino,
+    bytes: 0,
+    lineCount: 0,
+    lastLevel: "other",
+    counts: { error: 0, warn: 0, info: 0, debug: 0, other: 0 },
+    entries: { error: [], warn: [] },
+    scanning: null,
+  };
+}
+
+async function scanLogIndex(index, filePath, endByte) {
+  const stream = fs.createReadStream(filePath, { start: index.bytes, end: endByte - 1 });
+  let leftover = Buffer.alloc(0);
+  try {
+    for await (const chunk of stream) {
+      const buffer = leftover.length ? Buffer.concat([leftover, chunk]) : chunk;
+      let lineStart = 0;
+      let newline = buffer.indexOf(10);
+      while (newline !== -1) {
+        const text = plainLine(buffer.toString("utf8", lineStart, newline));
+        const level = detectLevel(text);
+        index.lineCount += 1;
+        if (level) {
+          index.lastLevel = level;
+          index.counts[level] += 1;
+          const list = index.entries[level];
+          if (list && list.length < MAX_INDEXED_ENTRIES) list.push(index.lineCount);
+        } else if (index.lastLevel === "other") {
+          index.counts.other += 1;
+        }
+        index.bytes += newline + 1 - lineStart;
+        lineStart = newline + 1;
+        newline = buffer.indexOf(10, lineStart);
+      }
+      leftover = buffer.subarray(lineStart);
+    }
+  } finally {
+    stream.destroy();
+  }
+}
+
+async function getLogIndex(filePath) {
+  const stats = await fsp.stat(filePath);
+  let index = logIndexes.get(filePath);
+  if (!index || stats.ino !== index.ino || stats.size < index.bytes) {
+    index = emptyIndex(stats.ino); // new file, or truncated (cleared)
+    logIndexes.delete(filePath);
+    logIndexes.set(filePath, index);
+    while (logIndexes.size > MAX_INDEXED_FILES) logIndexes.delete(logIndexes.keys().next().value);
+  }
+  while (index.scanning) await index.scanning;
+  if (stats.size > index.bytes) {
+    index.scanning = scanLogIndex(index, filePath, stats.size).finally(() => {
+      index.scanning = null;
+    });
+    await index.scanning;
+  }
+  return index;
+}
+
+function firstAfter(list, value) {
+  let low = 0;
+  let high = list.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (list[middle] > value) high = middle;
+    else low = middle + 1;
+  }
+  return low;
+}
+
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -341,6 +432,28 @@ module.exports = {
   },
 
   readLogTail,
+
+  async getLevelSummary(service, file) {
+    const index = await getLogIndex(this.getLogPath(service, file));
+    return { lineCount: index.lineCount, counts: { ...index.counts } };
+  },
+
+  // Line number of the next/previous entry at a level ("error" or "warn") after/before fromLine, or null.
+  async findLevelEntry(service, file, level, fromLine, direction = "next") {
+    const index = await getLogIndex(this.getLogPath(service, file));
+    const list = index.entries[level];
+    if (!list) {
+      const invalid = new Error(`Unsupported level: ${level}`);
+      invalid.statusCode = 400;
+      throw invalid;
+    }
+    if (direction === "previous") {
+      const position = firstAfter(list, fromLine - 1) - 1; // last entry < fromLine
+      return { lineNumber: position >= 0 ? list[position] : null };
+    }
+    const position = firstAfter(list, fromLine); // first entry > fromLine
+    return { lineNumber: position < list.length ? list[position] : null };
+  },
 
   MAX_LOG_RESPONSE_BYTES,
 
