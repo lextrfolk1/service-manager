@@ -2,6 +2,7 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const { StringDecoder } = require("string_decoder");
+const crypto = require("crypto");
 
 const LOG_ROOT = path.join(__dirname, "..", "logs");
 const { readConfig } = require("./configResolver");
@@ -88,21 +89,125 @@ function detectLevel(text) {
 
 // Per-file level index: entry counts per level and the line numbers of error/warning entries, so the UI can
 // show whole-file totals and jump between errors beyond the loaded lines. Built incrementally: a growing log
-// only scans the bytes added since the last call. Only complete lines (ending in "\n") are indexed.
+// only scans the bytes added since the last call. Only complete lines (ending in "\n") are indexed; the line
+// still being written is counted on the fly by levelSummary.
+//
+// Indexes are also saved under logs/.index, so a backend restart reuses them. A saved index is used only if
+// the file is the same (inode), not shorter, and sampled bytes of the indexed part are unchanged.
 const MAX_INDEXED_FILES = 50;
 const MAX_INDEXED_ENTRIES = 200000; // per level; further entries are counted but not listed
+const INDEX_DIR = path.join(LOG_ROOT, ".index");
+const INDEX_FORMAT = 2;
+const MAX_SAVED_INDEXES = 200;
+const FINGERPRINT_BYTES = 256;
+const SAVE_DELAY_MS = 3000;
+const MAX_PENDING_LINE_BYTES = 64 * 1024;
 const logIndexes = new Map(); // filePath -> index
+const indexQueues = new Map(); // filePath -> promise; updates of one file run one at a time
+const saveTimers = new Map();
 
 function emptyIndex(ino) {
   return {
     ino,
     bytes: 0,
+    pendingBytes: 0, // bytes after the last "\n" (line still being written)
     lineCount: 0,
     lastLevel: "other",
     counts: { error: 0, warn: 0, info: 0, debug: 0, other: 0 },
     entries: { error: [], warn: [] },
-    scanning: null,
   };
+}
+
+function indexFilePath(filePath) {
+  return path.join(INDEX_DIR, `${crypto.createHash("sha1").update(filePath).digest("hex")}.json`);
+}
+
+// Hash of small samples spread over [0, endByte): the start, the end and evenly spaced points between.
+// Cheap check that the indexed part of the file is still the same content.
+async function fingerprint(filePath, endByte) {
+  const samples = 10;
+  const hash = crypto.createHash("sha1");
+  const handle = await fsp.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(FINGERPRINT_BYTES);
+    for (let sample = 0; sample < samples; sample += 1) {
+      const start = Math.max(0, Math.floor(((endByte - FINGERPRINT_BYTES) * sample) / (samples - 1)));
+      const length = Math.min(FINGERPRINT_BYTES, endByte - start);
+      if (length <= 0) break;
+      const { bytesRead } = await handle.read(buffer, 0, length, start);
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    return hash.digest("hex");
+  } finally {
+    await handle.close();
+  }
+}
+
+async function loadSavedIndex(filePath, stats) {
+  try {
+    const saved = JSON.parse(await fsp.readFile(indexFilePath(filePath), "utf8"));
+    if (saved.format !== INDEX_FORMAT || saved.filePath !== filePath || saved.ino !== stats.ino || saved.bytes > stats.size) {
+      return null;
+    }
+    if (saved.fingerprint !== (await fingerprint(filePath, saved.bytes))) return null;
+    return {
+      ...emptyIndex(saved.ino),
+      bytes: saved.bytes,
+      lineCount: saved.lineCount,
+      lastLevel: saved.lastLevel,
+      counts: saved.counts,
+      entries: saved.entries,
+    };
+  } catch {
+    return null; // missing or unreadable: rebuild
+  }
+}
+
+async function pruneSavedIndexes() {
+  const names = (await fsp.readdir(INDEX_DIR)).filter((name) => name.endsWith(".json"));
+  if (names.length <= MAX_SAVED_INDEXES) return;
+  const withTimes = await Promise.all(names.map(async (name) => {
+    try {
+      return { name, mtimeMs: (await fsp.stat(path.join(INDEX_DIR, name))).mtimeMs };
+    } catch {
+      return { name, mtimeMs: 0 };
+    }
+  }));
+  withTimes.sort((left, right) => left.mtimeMs - right.mtimeMs);
+  await Promise.all(withTimes.slice(0, names.length - MAX_SAVED_INDEXES).map(({ name }) =>
+    fsp.unlink(path.join(INDEX_DIR, name)).catch(() => {})
+  ));
+}
+
+// Saves a snapshot a few seconds after the last change (one write per burst of appends).
+function saveIndexSoon(filePath, index) {
+  if (saveTimers.has(filePath)) return;
+  const timer = setTimeout(async () => {
+    saveTimers.delete(filePath);
+    const snapshot = {
+      format: INDEX_FORMAT,
+      filePath,
+      ino: index.ino,
+      bytes: index.bytes,
+      lineCount: index.lineCount,
+      lastLevel: index.lastLevel,
+      counts: { ...index.counts },
+      entries: { error: index.entries.error.slice(), warn: index.entries.warn.slice() },
+    };
+    try {
+      snapshot.fingerprint = await fingerprint(filePath, snapshot.bytes);
+      await fsp.mkdir(INDEX_DIR, { recursive: true });
+      const target = indexFilePath(filePath);
+      const temporary = `${target}.${process.pid}.tmp`;
+      await fsp.writeFile(temporary, JSON.stringify(snapshot));
+      await fsp.rename(temporary, target);
+      await pruneSavedIndexes();
+    } catch {
+      // The index is only a cache; it is rebuilt when missing
+    }
+  }, SAVE_DELAY_MS);
+  timer.unref?.();
+  saveTimers.set(filePath, timer);
 }
 
 async function scanLogIndex(index, filePath, endByte) {
@@ -134,25 +239,67 @@ async function scanLogIndex(index, filePath, endByte) {
   } finally {
     stream.destroy();
   }
+  index.pendingBytes = endByte - index.bytes;
 }
 
-async function getLogIndex(filePath) {
+async function updateLogIndex(filePath) {
   const stats = await fsp.stat(filePath);
   let index = logIndexes.get(filePath);
-  if (!index || stats.ino !== index.ino || stats.size < index.bytes) {
-    index = emptyIndex(stats.ino); // new file, or truncated (cleared)
-    logIndexes.delete(filePath);
-    logIndexes.set(filePath, index);
-    while (logIndexes.size > MAX_INDEXED_FILES) logIndexes.delete(logIndexes.keys().next().value);
+  if (!index) {
+    index = (await loadSavedIndex(filePath, stats)) || emptyIndex(stats.ino);
+  } else if (stats.ino !== index.ino || stats.size < index.bytes) {
+    index = emptyIndex(stats.ino); // replaced or truncated (cleared)
   }
-  while (index.scanning) await index.scanning;
+  logIndexes.delete(filePath); // re-insert: most recently used last
+  logIndexes.set(filePath, index);
+  while (logIndexes.size > MAX_INDEXED_FILES) logIndexes.delete(logIndexes.keys().next().value);
+
   if (stats.size > index.bytes) {
-    index.scanning = scanLogIndex(index, filePath, stats.size).finally(() => {
-      index.scanning = null;
-    });
-    await index.scanning;
+    const before = index.bytes;
+    await scanLogIndex(index, filePath, stats.size);
+    if (index.bytes > before) saveIndexSoon(filePath, index);
+  } else {
+    index.pendingBytes = 0;
   }
   return index;
+}
+
+function getLogIndex(filePath) {
+  const previous = indexQueues.get(filePath) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => updateLogIndex(filePath));
+  indexQueues.set(filePath, next);
+  next.catch(() => {}).finally(() => {
+    if (indexQueues.get(filePath) === next) indexQueues.delete(filePath);
+  });
+  return next;
+}
+
+// Whole-file counts, including the line still being written (counted like the viewer does).
+async function levelSummary(filePath) {
+  const index = await getLogIndex(filePath);
+  const counts = { ...index.counts };
+  let lineCount = index.lineCount;
+  if (index.pendingBytes > 0 && index.pendingBytes <= MAX_PENDING_LINE_BYTES) {
+    try {
+      const handle = await fsp.open(filePath, "r");
+      try {
+        const buffer = Buffer.alloc(index.pendingBytes);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, index.bytes);
+        const text = plainLine(buffer.toString("utf8", 0, bytesRead));
+        if (text) {
+          const level = detectLevel(text);
+          lineCount += 1;
+          if (level) counts[level] += 1;
+          else if (index.lastLevel === "other") counts.other += 1;
+        }
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      // File changed underneath; the next call catches up
+    }
+  }
+  return { lineCount, counts };
 }
 
 function firstAfter(list, value) {
@@ -434,9 +581,10 @@ module.exports = {
   readLogTail,
 
   async getLevelSummary(service, file) {
-    const index = await getLogIndex(this.getLogPath(service, file));
-    return { lineCount: index.lineCount, counts: { ...index.counts } };
+    return levelSummary(this.getLogPath(service, file));
   },
+
+  levelSummary,
 
   // Line number of the next/previous entry at a level ("error" or "warn") after/before fromLine, or null.
   async findLevelEntry(service, file, level, fromLine, direction = "next") {

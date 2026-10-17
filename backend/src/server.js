@@ -552,12 +552,22 @@ app.get("/logs/:name/:file/stream", async (req, res) => {
 
   const logPath = logger.getLogPath(serviceName, fileName);
 
+  // Whole-file level counts follow the stream, so the UI never waits for a poll.
+  const sendLevels = async () => {
+    try {
+      send({ type: "levels", ...(await logger.levelSummary(logPath)) });
+    } catch {
+      // Counts are optional; the file may not exist yet
+    }
+  };
+
   // Sends the newest part of the file (bounded size) and remembers how much was read.
   const sendTail = async (type) => {
     try {
       const tail = await logger.readLogTail(logPath);
       lastSize = tail.size;
       send({ type, content: tail.content, lineOffset: tail.lineOffset, truncated: tail.truncated });
+      await sendLevels();
     } catch (error) {
       lastSize = 0;
       send({ type, content: error.code === "ENOENT" ? "" : `Error loading log: ${error.message}`, lineOffset: 0 });
@@ -586,6 +596,7 @@ app.get("/logs/:name/:file/stream", async (req, res) => {
           if (end > 0) {
             send({ type: "append", content: buffer.toString("utf8", 0, end) });
             lastSize += end;
+            await sendLevels();
           }
         } finally {
           await handle.close();

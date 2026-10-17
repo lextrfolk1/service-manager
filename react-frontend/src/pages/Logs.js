@@ -625,6 +625,12 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     stream.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        if (data.type === "levels") {
+          // Whole-file counts arrive with each update (also while paused: they describe the file, not the view).
+          const next = { lineCount: data.lineCount, counts: data.counts };
+          setFileLevels((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
+          return;
+        }
         if (pausedRef.current && (data.type === "replace" || data.type === "append")) {
           const buffer = pausedBufferRef.current;
           if (data.type === "replace") {
@@ -690,9 +696,11 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const selectedLogFileRef = useRef("");
   selectedLogFileRef.current = selectedLogFile;
 
-  // Whole-file level counts (backend index); refreshed while the current run is open and the tab is shown.
+  // Whole-file level counts (backend index). While the live stream is connected it sends them with every
+  // update; otherwise (previous run, earlier window shown, stream down) they are fetched here.
+  const streamConnected = connectionStatus === "connected";
   useEffect(() => {
-    if (!isActive || !currentService || !selectedLogFile) return undefined;
+    if (!isActive || !currentService || !selectedLogFile || streamConnected) return undefined;
     let active = true;
     const load = () => {
       api.get(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/levels`)
@@ -708,7 +716,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       active = false;
       clearInterval(interval);
     };
-  }, [currentService, isActive, isActiveSelection, selectedLogFile]);
+  }, [currentService, isActive, isActiveSelection, selectedLogFile, streamConnected]);
 
   useEffect(() => {
     if (!selectedLogFile || !currentService) return undefined;
