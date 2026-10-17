@@ -589,6 +589,7 @@ module.exports = {
   },
 
   readLogTail,
+  plainLine,
 
   async getLevelSummary(service, file) {
     return levelSummary(this.getLogPath(service, file));
@@ -659,6 +660,17 @@ module.exports = {
       totalMatches,
       matches,
     };
+  },
+
+  // Newest log in the service's folder, i.e. its current run (file names sort by start time), or null.
+  async getCurrentLogPath(service) {
+    const dir = getServiceDir(service);
+    try {
+      const files = (await fsp.readdir(dir)).filter((fileName) => fileName.endsWith(".log")).sort();
+      return files.length ? path.join(dir, files[files.length - 1]) : null;
+    } catch {
+      return null;
+    }
   },
 
   getLogPath(service, file) {

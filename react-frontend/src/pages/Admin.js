@@ -819,7 +819,7 @@ function stableConfigString(value) {
 }
 
 // Defaults used by the backend when config.logs is not set (keep in sync with backend/src/logger.js).
-const DEFAULT_LOG_SETTINGS = { previousRuns: "archive", retentionDays: 3, maxRuns: 20 };
+const DEFAULT_LOG_SETTINGS = { previousRuns: "archive", retentionDays: 3, maxRuns: 20, combinedView: false };
 
 function formatBytes(bytes = 0) {
   if (bytes < 1024) return `${bytes} B`;
@@ -862,9 +862,11 @@ function summarizeConfigChanges(savedConfig, basePaths, services, logSettings = 
     ["previousRuns", "Log previous runs"],
     ["retentionDays", "Log retention (days)"],
     ["maxRuns", "Log max runs per service"],
+    ["combinedView", "Combined log view"],
   ].forEach(([key, label]) => {
-    const before = savedLogs[key] ?? DEFAULT_LOG_SETTINGS[key];
-    const after = logSettings[key] ?? DEFAULT_LOG_SETTINGS[key];
+    const show = (value) => (typeof value === "boolean" ? (value ? "on" : "off") : value);
+    const before = show(savedLogs[key] ?? DEFAULT_LOG_SETTINGS[key]);
+    const after = show(logSettings[key] ?? DEFAULT_LOG_SETTINGS[key]);
     if (String(before) !== String(after)) changes.push({ kind: "changed", text: `${label}: ${before} → ${after}` });
   });
   const savedPaths = savedConfig?.config?.basePaths || {};
@@ -1775,7 +1777,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
         >
           <Tab icon={<StorageIcon fontSize="small" />} iconPosition="start" label={`Paths (${Object.keys(basePaths).length})`} />
           <Tab icon={<SettingsIcon fontSize="small" />} iconPosition="start" label={`Services (${Object.keys(services).length})`} />
-          <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Log retention" />
+          <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Logs" />
           <Tab icon={<PresetsIcon fontSize="small" />} iconPosition="start" label={`Presets (${presetNames.length})`} />
           <Tab icon={<AppearanceIcon fontSize="small" />} iconPosition="start" label="Appearance" />
           <Tab icon={<ImportExportIcon fontSize="small" />} iconPosition="start" label="Import / Export" />
@@ -2089,6 +2091,30 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
                     ? "Only the current run of each service is kept. Earlier runs are deleted as soon as a service starts again."
                     : `Earlier runs are kept for up to ${effectiveLogSettings.retentionDays} day${effectiveLogSettings.retentionDays === 1 ? "" : "s"} and at most ${effectiveLogSettings.maxRuns} per service, whichever limit is reached first.`}
                 </Alert>
+
+                <Box sx={{ mt: 2.5, pt: 2, borderTop: "1px solid var(--c-border-94a3b8-02)" }}>
+                  <Typography variant="overline" sx={{ fontWeight: 800, color: "text.secondary" }}>Log viewer</Typography>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        size="small"
+                        checked={logSettings.combinedView === true}
+                        onChange={(event) =>
+                          setLogSettings((previous) => {
+                            const { combinedView: _previousCombinedView, ...rest } = previous;
+                            return event.target.checked ? { ...rest, combinedView: true } : rest;
+                          })
+                        }
+                      />
+                    }
+                    label={<Typography variant="body2" sx={{ fontWeight: 700 }}>Combined log view</Typography>}
+                    sx={{ display: "flex", ml: 0, gap: 1 }}
+                  />
+                  <Typography variant="body2" sx={{ color: "text.secondary", mt: 0.5 }}>
+                    Adds a Combined logs button to the Logs page: several services in one live view, ordered by time and
+                    tagged with their service. Filter by a trace ID to follow one request across services. Off by default.
+                  </Typography>
+                </Box>
               </Box>
 
               <Box sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2.5, p: 2.5 }}>
