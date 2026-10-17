@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -62,6 +62,11 @@ const LOG_LINE_STYLE = { display: "block", width: "100%", paddingLeft: 8, margin
 const SELECTED_LOG_LINE_STYLE = { ...LOG_LINE_STYLE, backgroundColor: "rgba(59,130,246,0.18)", borderLeft: "2px solid rgba(96,165,250,0.95)" };
 const MATCH_MARK_STYLE = { backgroundColor: "rgba(250,204,21,0.45)", color: "inherit", padding: "0 2px", borderRadius: 4 };
 const TRUNCATED_NOTICE_STYLE = { display: "block", color: "#64748b", fontStyle: "italic" };
+const NOTICE_BUTTON_STYLE = { background: "none", border: 0, padding: 0, color: "#93c5fd", cursor: "pointer", font: "inherit", textDecoration: "underline" };
+
+// Lines loaded around a search match that is outside the part of the log currently shown.
+const MATCH_CONTEXT_LINES_BEFORE = 1000;
+const MATCH_CONTEXT_LINES = 3000;
 
 // Appends output and drops the oldest whole lines once the view grows past MAX_LOG_CHARS.
 // lineOffset counts file lines before the first line shown, so line numbers stay file-based.
@@ -317,7 +322,15 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [archivedLogFiles, setArchivedLogFiles] = useState([]);
   const [logFileDetails, setLogFileDetails] = useState({});
   const [logView, setLogView] = useState({ content: "(select a service to load logs)", lineOffset: 0 });
-  const { content: logContent, lineOffset: logLineOffset } = logView;
+  // windowed: an earlier part of the log is shown (loaded around a search match); live updates are paused.
+  const { content: logContent, lineOffset: logLineOffset, windowed: logWindowed = false } = logView;
+  const loadedLineCount = useMemo(() => {
+    let count = 1;
+    for (let index = logContent.indexOf("\n"); index !== -1; index = logContent.indexOf("\n", index + 1)) count += 1;
+    return count;
+  }, [logContent]);
+  const pendingScrollLineRef = useRef(null);
+  const windowRequestRef = useRef(0);
   const [serviceSearchState, setServiceSearchState] = useState({});
   const [wrapped, setWrapped] = useState(false);
   const [following, setFollowing] = useState(true); // keep the view pinned to the newest line
@@ -637,14 +650,64 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     setTimeout(() => setCopyState(""), 2000);
   };
 
+  const scrollToLine = useCallback((lineNumber, lineOffset) => {
+    if (!logContentRef.current) return;
+    const lineHeightPx = 19.2;
+    logContentRef.current.scrollTop = Math.max(0, (lineNumber - lineOffset - 3) * lineHeightPx);
+  }, []);
+
+  // Loads the lines around a match that is not in the loaded part, pausing live updates while it is shown.
+  const loadLinesAround = useCallback(async (lineNumber) => {
+    if (!currentService || !selectedLogFile) return;
+    const requestId = windowRequestRef.current + 1;
+    windowRequestRef.current = requestId;
+    stopStreaming();
+    const startLine = Math.max(1, lineNumber - MATCH_CONTEXT_LINES_BEFORE);
+    try {
+      const data = await api.get(
+        `/logs/${currentService}/${encodeURIComponent(selectedLogFile)}?startLine=${startLine}&count=${MATCH_CONTEXT_LINES}`
+      );
+      if (windowRequestRef.current !== requestId) return;
+      pendingScrollLineRef.current = lineNumber;
+      setLogView({ content: data.content || "", lineOffset: data.lineOffset || 0, windowed: true });
+    } catch (error) {
+      if (windowRequestRef.current !== requestId) return;
+      setLogView({ content: `Error loading log lines: ${error.message}`, lineOffset: 0, windowed: true });
+    }
+  }, [currentService, selectedLogFile, stopStreaming]);
+
+  // Scroll once a loaded range has rendered.
+  useLayoutEffect(() => {
+    if (pendingScrollLineRef.current === null) return;
+    scrollToLine(pendingScrollLineRef.current, logLineOffset);
+    pendingScrollLineRef.current = null;
+  }, [logContent, logLineOffset, scrollToLine]);
+
+  const isLineLoaded = useCallback(
+    (lineNumber) => lineNumber > logLineOffset && lineNumber <= logLineOffset + loadedLineCount,
+    [loadedLineCount, logLineOffset]
+  );
+
   const jumpToMatch = useCallback((lineNumber) => {
     updateCurrentSearchState({
       selectedMatchLine: lineNumber,
     });
-    if (!logContentRef.current) return;
-    const lineHeightPx = 19.2;
-    logContentRef.current.scrollTop = Math.max(0, (lineNumber - logLineOffset - 3) * lineHeightPx);
-  }, [logLineOffset, updateCurrentSearchState]);
+    if (isLineLoaded(lineNumber)) {
+      scrollToLine(lineNumber, logLineOffset);
+    } else {
+      loadLinesAround(lineNumber);
+    }
+  }, [isLineLoaded, loadLinesAround, logLineOffset, scrollToLine, updateCurrentSearchState]);
+
+  // Leaves an earlier part of the log and goes back to the newest output (live again for the current run).
+  const showLatestLog = useCallback(() => {
+    windowRequestRef.current += 1;
+    if (isActiveSelection) {
+      startStreaming();
+    } else {
+      refreshCurrentLog();
+    }
+  }, [isActiveSelection, refreshCurrentLog, startStreaming]);
 
   const moveToSearchResult = useCallback((direction) => {
     if (!searchResults.length) return;
@@ -716,6 +779,20 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       // Highlight the run header ([RUN STARTED], [RUN CONFIG], [RUN COMMAND]) written at the top of each run.
       const headerEnd = logContent.search(/\n(?!\[RUN [A-Z]+\])[^\n]*\n?/);
       const header = headerEnd === -1 ? logContent : logContent.slice(0, headerEnd + 1);
+      if (logWindowed) {
+        return (
+          <>
+            <span style={TRUNCATED_NOTICE_STYLE}>
+              Showing lines {(logLineOffset + 1).toLocaleString()}–{(logLineOffset + loadedLineCount).toLocaleString()} (live
+              updates paused){" "}
+              <button type="button" onClick={showLatestLog} style={NOTICE_BUTTON_STYLE}>
+                Back to latest
+              </button>
+            </span>
+            {logContent}
+          </>
+        );
+      }
       if (!header.startsWith("[RUN ")) {
         if (logLineOffset > 0) {
           return (
@@ -758,7 +835,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         </div>
       );
     });
-  }, [debouncedSearchQuery, highlightLogLine, logContent, logLineOffset, selectedMatchLine]);
+  }, [debouncedSearchQuery, highlightLogLine, loadedLineCount, logContent, logLineOffset, logWindowed, selectedMatchLine, showLatestLog]);
 
   const renderSearchControls = () => (
     <Stack direction="row" spacing={0.5} alignItems="center">
@@ -1077,7 +1154,6 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
           <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ xs: "flex-start", md: "center" }}>
             <Typography variant="caption" sx={{ color: "primary.main", fontWeight: 700, flexShrink: 0 }}>
               Match {selectedMatchIndex + 1} of {searchResults.length} • Line {selectedMatch.lineNumber}
-              {selectedMatch.lineNumber <= logLineOffset ? " (before the part of the log shown below)" : ""}
             </Typography>
             <Typography
               variant="body2"
@@ -1087,6 +1163,16 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               {selectedMatch.preview ? highlightMatchPreview(selectedMatch.preview, debouncedSearchQuery) : "(empty line)"}
             </Typography>
             <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+              {!isLineLoaded(selectedMatch.lineNumber) ? (
+                <Button size="small" variant="contained" disableElevation onClick={() => jumpToMatch(selectedMatch.lineNumber)}>
+                  Show line
+                </Button>
+              ) : null}
+              {logWindowed ? (
+                <Button size="small" onClick={showLatestLog}>
+                  Back to latest
+                </Button>
+              ) : null}
               <Button
                 size="small"
                 variant="outlined"

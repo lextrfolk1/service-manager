@@ -1,10 +1,10 @@
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
-const readline = require("readline");
+const { StringDecoder } = require("string_decoder");
 
 const LOG_ROOT = path.join(__dirname, "..", "logs");
-const { resolveConfigPath } = require("./configResolver");
+const { readConfig } = require("./configResolver");
 
 // Defaults when config.logs is not set (env vars can still override).
 const DEFAULT_LOG_SETTINGS = {
@@ -62,12 +62,63 @@ async function readLogTail(filePath, maxBytes = MAX_LOG_RESPONSE_BYTES) {
   }
 }
 
-// Reads config.logs from the active services config on each call, so Admin changes apply without a restart.
+// Calls onLine(line, lineNumber) for each line, splitting on "\n" only so numbering matches the viewer
+// (a lone "\r" from progress output does not start a new line). Return false from onLine to stop early.
+async function forEachLine(filePath, onLine) {
+  const stream = fs.createReadStream(filePath);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let lineNumber = 0;
+  try {
+    for await (const chunk of stream) {
+      pending += decoder.write(chunk);
+      let lineStart = 0;
+      let newline = pending.indexOf("\n");
+      while (newline !== -1) {
+        lineNumber += 1;
+        if (onLine(pending.slice(lineStart, newline), lineNumber) === false) return;
+        lineStart = newline + 1;
+        newline = pending.indexOf("\n", lineStart);
+      }
+      pending = pending.slice(lineStart);
+    }
+    pending += decoder.end();
+    if (pending) {
+      lineNumber += 1;
+      onLine(pending, lineNumber);
+    }
+  } finally {
+    stream.destroy();
+  }
+}
+
+// Lines startLine..startLine+count-1 (1-based), capped at maxBytes of text.
+async function readLogLines(filePath, startLine, count, maxBytes = MAX_LOG_RESPONSE_BYTES) {
+  const first = Math.max(1, Math.floor(startLine) || 1);
+  const last = first + Math.max(1, Math.floor(count) || 1) - 1;
+  const lines = [];
+  let bytes = 0;
+  await forEachLine(filePath, (line, lineNumber) => {
+    if (lineNumber < first) return true;
+    bytes += Buffer.byteLength(line) + 1;
+    if (lineNumber > last || bytes > maxBytes) return false;
+    lines.push(line);
+    return true;
+  });
+  return {
+    content: lines.length ? `${lines.join("\n")}\n` : "",
+    lineOffset: first - 1,
+    lineCount: lines.length,
+    truncated: true,
+  };
+}
+
+// Reads config.logs from the active services config (cached until the file changes), so Admin changes
+// apply without a restart.
 function getLogSettings() {
   let configured = {};
   try {
-    const raw = JSON.parse(fs.readFileSync(resolveConfigPath(), "utf8"));
-    configured = raw?.config?.logs || {};
+    configured = readConfig()?.config?.logs || {};
   } catch {
     // Fall back to defaults if the config can't be read
   }
@@ -258,12 +309,16 @@ module.exports = {
     return { files, archivedFiles, details };
   },
 
-  async getLog(service, file) {
+  // Newest part of the log, or with startLine, the lines from startLine onwards (count lines).
+  async getLog(service, file, { startLine, count } = {}) {
     const activePath = path.join(getServiceDir(service), file);
     const archivePath = path.join(getArchiveDir(service), file);
     const filePath = fs.existsSync(activePath) ? activePath : archivePath;
     if (!fs.existsSync(filePath)) {
       return { content: "", size: 0, lineOffset: 0, truncated: false };
+    }
+    if (startLine) {
+      return readLogLines(filePath, startLine, count || 2000);
     }
     return readLogTail(filePath);
   },
@@ -288,15 +343,9 @@ module.exports = {
     const needle = trimmedQuery.toLowerCase();
     const matches = [];
     let totalMatches = 0;
-    let lineNumber = 0;
 
     // Stream line by line so large logs are never held in memory at once.
-    const lines = readline.createInterface({
-      input: fs.createReadStream(filePath, { encoding: "utf8" }),
-      crlfDelay: Infinity,
-    });
-    for await (const line of lines) {
-      lineNumber += 1;
+    await forEachLine(filePath, (line, lineNumber) => {
       if (line.toLowerCase().includes(needle)) {
         totalMatches += 1;
         if (matches.length < limit) {
@@ -306,7 +355,7 @@ module.exports = {
           });
         }
       }
-    }
+    });
 
     return {
       query: trimmedQuery,

@@ -9,7 +9,7 @@ const { execFile } = require("child_process");
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
 const runConfig = require("./runConfig");
-const { resolveConfigPath, getConfigMetadata } = require("./configResolver");
+const { resolveConfigPath, getConfigMetadata, readConfig, invalidateConfigCache } = require("./configResolver");
 const { killProcessOnPort, getPortProcess } = require("./utils/portUtils");
 let servicesConfigPath = resolveConfigPath();
 
@@ -82,29 +82,9 @@ async function openNativeDirectoryPicker(initialPath) {
   }
 }
 
-// Parsed config is reused until the file changes on disk, so manual edits are still picked up
-// without re-reading and re-parsing it on every request.
-let configCache = null; // { path, mtimeMs, size, parsed }
-
-function invalidateConfigCache() {
-  configCache = null;
-}
-
 function loadConfig() {
   servicesConfigPath = resolveConfigPath();
-  const stats = fs.statSync(servicesConfigPath);
-  if (
-    configCache &&
-    configCache.path === servicesConfigPath &&
-    configCache.mtimeMs === stats.mtimeMs &&
-    configCache.size === stats.size
-  ) {
-    return configCache.parsed;
-  }
-  const parsed = JSON.parse(fs.readFileSync(servicesConfigPath, "utf8"));
-  console.log("Config loaded from", servicesConfigPath, "- services:", Object.keys(parsed.services || {}).length);
-  configCache = { path: servicesConfigPath, mtimeMs: stats.mtimeMs, size: stats.size, parsed };
-  return parsed;
+  return readConfig();
 }
 
 // Length of buffer[0..length) without a trailing, incomplete UTF-8 character
@@ -131,7 +111,8 @@ function sendOperationError(res, err) {
   });
 }
 
-let config = loadConfig();
+// Own copy: the PUT handlers below modify `config` before writing it, and must not touch the shared cache.
+let config = structuredClone(loadConfig());
 let services = config.services;
 let manager = new ServiceManager(config);
 
@@ -142,7 +123,7 @@ app.use(express.json());
 // Reload config helper
 function reloadConfig() {
   invalidateConfigCache();
-  config = loadConfig();
+  config = structuredClone(loadConfig());
   services = config.services;
   manager = new ServiceManager(config);
 }
@@ -483,7 +464,9 @@ app.get("/logs/:name", (req, res) => {
 // Logs: get content
 app.get("/logs/:name/:file", async (req, res) => {
   try {
-    const data = await logger.getLog(req.params.name, req.params.file);
+    const startLine = Number(req.query.startLine) || undefined;
+    const count = Number(req.query.count) || undefined;
+    const data = await logger.getLog(req.params.name, req.params.file, { startLine, count });
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
