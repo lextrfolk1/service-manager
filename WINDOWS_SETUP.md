@@ -14,12 +14,9 @@ This guide explains how to set up and run Struo Service Manager on Windows.
 
 ### Option 1: Use Windows Configuration (Recommended)
 
-1. **Copy the Windows configuration:**
-   ```cmd
-   copy backend\config\services.windows.json backend\config\services.json
-   ```
+On Windows, Struo uses `backend/config/services.windows.json` automatically when it exists, so no copying is needed.
 
-2. **Update the base paths** in `backend/config/services.json`:
+1. **Update the base paths** in `backend/config/services.windows.json` (or in **Admin › Paths** once Struo is running):
    ```json
    {
      "config": {
@@ -34,14 +31,20 @@ This guide explains how to set up and run Struo Service Manager on Windows.
    }
    ```
 
-3. **Run the Windows startup script:**
+2. **Run the Windows startup script:**
    ```cmd
    start-application.bat
    ```
 
-### Option 2: Manual Configuration
+### Option 2: Use Another Config File
 
-1. **Edit the existing configuration** in `backend/config/services.json`:
+To use a different file, point `STRUO_CONFIG_FILE` at it before starting:
+
+```cmd
+set STRUO_CONFIG_FILE=backend\config\services.json && start-application.bat
+```
+
+1. **Edit that configuration**:
    - Update `basePaths` to use Windows paths (e.g., `C:/codebase/lextr`)
    - Update Python commands to use Windows virtual environment paths:
      ```json
@@ -74,6 +77,9 @@ This guide explains how to set up and run Struo Service Manager on Windows.
 ### Process Management
 - **Windows:** Uses `taskkill` and `netstat`
 - **Unix/Linux/macOS:** Uses `kill` and `lsof`
+
+### Machine-Specific Settings
+JVM options, program arguments and environment variables (such as API keys) for this machine belong in run configuration, not in `services.windows.json`. Edit them in **Admin › Services › Run configuration**; they are saved in `backend/config/run-config.json`, which is git-ignored. See [docs/MEMORY_LIMITS.md](docs/MEMORY_LIMITS.md) for recommended memory settings.
 
 ## Service Configuration Examples
 
@@ -162,7 +168,7 @@ Logs are written to the `logs/` directory:
 After successful startup:
 - **Frontend:** http://localhost:4005
 - **Backend API:** http://localhost:4000
-- **Individual services:** Check their configured ports in the services.json
+- **Individual services:** Check their configured ports in Admin › Services
 
 ## Support
 
