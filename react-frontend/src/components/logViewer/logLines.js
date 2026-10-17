@@ -38,11 +38,21 @@ export function plainText(rawLine) {
   return text.includes("\x1b") ? text.replace(ANSI_ANY, "") : text;
 }
 
+// Node / npm / Vite / webpack output has no level word, so it is recognised by its usual messages.
+const TOOL_LEVELS = [
+  ["error", /^\s*(?:Uncaught\s+)?(?:[A-Z]\w*)?Error(?:\s*\[\w+\])?:|Internal server error|Pre-transform error|Failed to (?:compile|resolve|load)|error while updating|Module not found/],
+  ["warn", /^\s*(?:\(node:\d+\)\s+)?(?:\[\w+\]\s+)?(?:[A-Z]\w*)?Warning:|Could not Fast Refresh|Compiled with warnings/],
+  // Also Struo's "[GIT PULL STDOUT]" headers, npm's "> name@1.0.0 dev" / "> vite" and dev-server "➜  Local:" lines.
+  ["info", /\[vite\]|\bVITE v\d|[Cc]ompiled successfully|^\[[A-Z][A-Z ]+\]$|^> \S|^\s*➜/],
+];
+
 // Level written on the line itself (looks at the start of the line only), or null.
 export function detectLevel(text) {
   const head = text.length > 300 ? text.slice(0, 300) : text;
   const match = LEVEL_KEY_VALUE.exec(head) || LEVEL_WORD.exec(head);
-  return match ? LEVEL_ALIASES[match[1].toLowerCase()] || null : null;
+  if (match) return LEVEL_ALIASES[match[1].toLowerCase()] || null;
+  const tool = TOOL_LEVELS.find(([, pattern]) => pattern.test(head));
+  return tool ? tool[0] : null;
 }
 
 export function isStackFrame(text, previousWasFrame) {
