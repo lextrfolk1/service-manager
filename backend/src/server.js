@@ -478,11 +478,27 @@ app.get("/logs/:name/:file/search", async (req, res) => {
   try {
     const query = req.query.q || "";
     const limit = Number(req.query.limit || 100);
-    const data = await logger.searchLog(req.params.name, req.params.file, query, limit);
+    const data = await logger.searchLog(req.params.name, req.params.file, query, limit, {
+      caseSensitive: req.query.case === "true",
+      regex: req.query.regex === "true",
+    });
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
+});
+
+// Logs: download the whole log file
+app.get("/logs/:name/:file/download", (req, res) => {
+  const { name, file } = req.params;
+  if (path.basename(file) !== file || !file.endsWith(".log") || name.includes("..") || name.includes("/")) {
+    return res.status(400).json({ error: "Invalid log file" });
+  }
+  const logPath = logger.getLogPath(name, file);
+  if (!fs.existsSync(logPath)) {
+    return res.status(404).json({ error: "Log file not found" });
+  }
+  res.download(logPath, file);
 });
 
 // Logs: stream content via Server-Sent Events

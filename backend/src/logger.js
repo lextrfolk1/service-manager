@@ -14,7 +14,7 @@ const DEFAULT_LOG_SETTINGS = {
 };
 
 // Largest slice of a log sent to the UI at once; bigger files are sent as their newest part.
-const MAX_LOG_RESPONSE_BYTES = Number(process.env.LOG_MAX_RESPONSE_BYTES || 2 * 1024 * 1024);
+const MAX_LOG_RESPONSE_BYTES = Number(process.env.LOG_MAX_RESPONSE_BYTES || 8 * 1024 * 1024);
 const COUNT_CHUNK_BYTES = 1024 * 1024;
 
 async function countNewlines(handle, endByte) {
@@ -60,6 +60,23 @@ async function readLogTail(filePath, maxBytes = MAX_LOG_RESPONSE_BYTES) {
   } finally {
     await handle.close();
   }
+}
+
+const ANSI_ESCAPES = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g; // eslint-disable-line no-control-regex
+
+// Text as the log viewer shows it (keep in sync with plainText in react-frontend/src/components/logViewer/logLines.js):
+// ANSI codes removed and, for progress output rewritten with "\r", only the last version kept.
+function plainLine(rawLine) {
+  let text = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+  if (text.includes("\r")) {
+    const parts = text.split("\r").filter(Boolean);
+    text = parts.length ? parts[parts.length - 1] : "";
+  }
+  return text.includes("\x1b") ? text.replace(ANSI_ESCAPES, "") : text;
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Calls onLine(line, lineNumber) for each line, splitting on "\n" only so numbering matches the viewer
@@ -327,7 +344,8 @@ module.exports = {
 
   MAX_LOG_RESPONSE_BYTES,
 
-  async searchLog(service, file, query, limit = 100) {
+  // Options: caseSensitive, regex. An invalid regular expression throws an error with statusCode 400.
+  async searchLog(service, file, query, limit = 100, { caseSensitive = false, regex = false } = {}) {
     const trimmedQuery = String(query || "").trim();
     if (!trimmedQuery) {
       return { query: "", totalMatches: 0, matches: [] };
@@ -340,18 +358,26 @@ module.exports = {
       return { query: trimmedQuery, totalMatches: 0, matches: [] };
     }
 
-    const needle = trimmedQuery.toLowerCase();
+    let pattern;
+    try {
+      pattern = new RegExp(regex ? trimmedQuery : escapeRegExp(trimmedQuery), caseSensitive ? "" : "i");
+    } catch (error) {
+      const invalid = new Error(error.message);
+      invalid.statusCode = 400;
+      throw invalid;
+    }
     const matches = [];
     let totalMatches = 0;
 
     // Stream line by line so large logs are never held in memory at once.
     await forEachLine(filePath, (line, lineNumber) => {
-      if (line.toLowerCase().includes(needle)) {
+      const text = plainLine(line);
+      if (pattern.test(text)) {
         totalMatches += 1;
         if (matches.length < limit) {
           matches.push({
             lineNumber,
-            preview: line,
+            preview: text.length > 500 ? `${text.slice(0, 500)}…` : text,
           });
         }
       }
