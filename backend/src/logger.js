@@ -81,10 +81,20 @@ const LEVEL_KEY_VALUE = /\blevel["']?\s*[=:]\s*["']?(fatal|error|err|warn(?:ing)
 const LEVEL_WORD = /\b(FATAL|SEVERE|ERROR|ERR|WARN(?:ING)?|INFO|DEBUG|TRACE)\b/;
 const LEVEL_ALIASES = { fatal: "error", severe: "error", error: "error", err: "error", warn: "warn", warning: "warn", info: "info", debug: "debug", trace: "debug" };
 
+// Node / npm / Vite / webpack output has no level word, so it is recognised by its usual messages.
+const TOOL_LEVELS = [
+  ["error", /^\s*(?:Uncaught\s+)?(?:[A-Z]\w*)?Error(?:\s*\[\w+\])?:|Internal server error|Pre-transform error|Failed to (?:compile|resolve|load)|error while updating|Module not found/],
+  ["warn", /^\s*(?:\(node:\d+\)\s+)?(?:\[\w+\]\s+)?(?:[A-Z]\w*)?Warning:|Could not Fast Refresh|Compiled with warnings/],
+  // Also Struo's "[GIT PULL STDOUT]" headers, npm's "> name@1.0.0 dev" / "> vite" and dev-server "➜  Local:" lines.
+  ["info", /\[vite\]|\bVITE v\d|[Cc]ompiled successfully|^\[[A-Z][A-Z ]+\]$|^> \S|^\s*➜/],
+];
+
 function detectLevel(text) {
   const head = text.length > 300 ? text.slice(0, 300) : text;
   const match = LEVEL_KEY_VALUE.exec(head) || LEVEL_WORD.exec(head);
-  return match ? LEVEL_ALIASES[match[1].toLowerCase()] || null : null;
+  if (match) return LEVEL_ALIASES[match[1].toLowerCase()] || null;
+  const tool = TOOL_LEVELS.find(([, pattern]) => pattern.test(head));
+  return tool ? tool[0] : null;
 }
 
 // Per-file level index: entry counts per level and the line numbers of error/warning entries, so the UI can
@@ -97,7 +107,7 @@ function detectLevel(text) {
 const MAX_INDEXED_FILES = 50;
 const MAX_INDEXED_ENTRIES = 200000; // per level; further entries are counted but not listed
 const INDEX_DIR = path.join(LOG_ROOT, ".index");
-const INDEX_FORMAT = 2;
+const INDEX_FORMAT = 3;
 const MAX_SAVED_INDEXES = 200;
 const FINGERPRINT_BYTES = 256;
 const SAVE_DELAY_MS = 3000;
