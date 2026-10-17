@@ -54,6 +54,28 @@ const contentCardSx = {
 };
 
 const FILE_LIST_POLL_MS = 5000;
+// Live output is kept to roughly this many characters; older lines are dropped from the view
+// (search still covers the whole file on the server).
+const MAX_LOG_CHARS = 2000000;
+const TRIM_TO_LOG_CHARS = 1500000;
+const LOG_LINE_STYLE = { display: "block", width: "100%", paddingLeft: 8, marginLeft: -8, borderLeft: "2px solid transparent" };
+const SELECTED_LOG_LINE_STYLE = { ...LOG_LINE_STYLE, backgroundColor: "rgba(59,130,246,0.18)", borderLeft: "2px solid rgba(96,165,250,0.95)" };
+const MATCH_MARK_STYLE = { backgroundColor: "rgba(250,204,21,0.45)", color: "inherit", padding: "0 2px", borderRadius: 4 };
+const TRUNCATED_NOTICE_STYLE = { display: "block", color: "#64748b", fontStyle: "italic" };
+
+// Appends output and drops the oldest whole lines once the view grows past MAX_LOG_CHARS.
+// lineOffset counts file lines before the first line shown, so line numbers stay file-based.
+function appendToLogView(view, chunk) {
+  const content = view.content + chunk;
+  if (content.length <= MAX_LOG_CHARS) return { content, lineOffset: view.lineOffset };
+  const cutAt = content.indexOf("\n", content.length - TRIM_TO_LOG_CHARS);
+  if (cutAt === -1) return { content, lineOffset: view.lineOffset };
+  let dropped = 0;
+  for (let index = content.indexOf("\n"); index !== -1 && index <= cutAt; index = content.indexOf("\n", index + 1)) {
+    dropped += 1;
+  }
+  return { content: content.slice(cutAt + 1), lineOffset: view.lineOffset + dropped };
+}
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -294,7 +316,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [activeLogFiles, setActiveLogFiles] = useState([]);
   const [archivedLogFiles, setArchivedLogFiles] = useState([]);
   const [logFileDetails, setLogFileDetails] = useState({});
-  const [logContent, setLogContent] = useState("(select a service to load logs)");
+  const [logView, setLogView] = useState({ content: "(select a service to load logs)", lineOffset: 0 });
+  const { content: logContent, lineOffset: logLineOffset } = logView;
   const [serviceSearchState, setServiceSearchState] = useState({});
   const [wrapped, setWrapped] = useState(false);
   const [following, setFollowing] = useState(true); // keep the view pinned to the newest line
@@ -387,7 +410,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       setServices(data.services || []);
     } catch (error) {
       setServices([]);
-      setLogContent(`Unable to load services: ${error.message}`);
+      setLogView({ content: `Unable to load services: ${error.message}`, lineOffset: 0 });
     }
   }, []);
 
@@ -413,14 +436,14 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         return files[0] || archivedFiles[0] || "";
       });
       if (!files[0] && !archivedFiles[0]) {
-        setLogContent("(no log files available for this service)");
+        setLogView({ content: "(no log files available for this service)", lineOffset: 0 });
       }
     } catch (error) {
       if (silent) return;
       setActiveLogFiles([]);
       setArchivedLogFiles([]);
       setSelectedLogFile("");
-      setLogContent(`Error loading log files: ${error.message}`);
+      setLogView({ content: `Error loading log files: ${error.message}`, lineOffset: 0 });
     } finally {
       if (!silent) setLoadingFiles(false);
     }
@@ -430,16 +453,16 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     if (!currentService || !selectedLogFile) return;
     try {
       const data = await api.get(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}`);
-      setLogContent(data.content || "(empty)");
+      setLogView({ content: data.content || "(empty)", lineOffset: data.lineOffset || 0 });
     } catch (error) {
-      setLogContent(`Error loading log content: ${error.message}`);
+      setLogView({ content: `Error loading log content: ${error.message}`, lineOffset: 0 });
     }
   }, [currentService, selectedLogFile]);
 
   const clearCurrentLog = useCallback(async () => {
     if (!currentService || !selectedLogFile) return;
     await api.post(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/clear`);
-    setLogContent("");
+    setLogView({ content: "", lineOffset: 0 });
   }, [currentService, selectedLogFile]);
 
   // Follow mode: stay at the newest line while new output arrives; scrolling up pauses it.
@@ -468,9 +491,9 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       try {
         const data = JSON.parse(event.data);
         if (data.type === "initial" || data.type === "replace") {
-          setLogContent(data.content || "(empty)");
+          setLogView({ content: data.content || "(empty)", lineOffset: data.lineOffset || 0 });
         } else if (data.type === "append") {
-          setLogContent((previous) => previous + (data.content || ""));
+          setLogView((previous) => appendToLogView(previous, data.content || ""));
         }
       } catch {
         setConnectionStatus("error");
@@ -620,8 +643,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     });
     if (!logContentRef.current) return;
     const lineHeightPx = 19.2;
-    logContentRef.current.scrollTop = Math.max(0, (lineNumber - 3) * lineHeightPx);
-  }, [updateCurrentSearchState]);
+    logContentRef.current.scrollTop = Math.max(0, (lineNumber - logLineOffset - 3) * lineHeightPx);
+  }, [logLineOffset, updateCurrentSearchState]);
 
   const moveToSearchResult = useCallback((direction) => {
     if (!searchResults.length) return;
@@ -673,18 +696,9 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         parts.push(sourceLine.slice(cursor, matchIndex));
       }
       parts.push(
-        <Box
-          key={`${matchIndex}-${cursor}`}
-          component="mark"
-          sx={{
-            backgroundColor: "rgba(250,204,21,0.45)",
-            color: "inherit",
-            px: 0.25,
-            borderRadius: 0.5,
-          }}
-        >
+        <mark key={`${matchIndex}-${cursor}`} style={MATCH_MARK_STYLE}>
           {sourceLine.slice(matchIndex, matchIndex + query.length)}
-        </Box>
+        </mark>
       );
       cursor = matchIndex + query.length;
       matchIndex = lowerLine.indexOf(lowerQuery, cursor);
@@ -703,6 +717,16 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       const headerEnd = logContent.search(/\n(?!\[RUN [A-Z]+\])[^\n]*\n?/);
       const header = headerEnd === -1 ? logContent : logContent.slice(0, headerEnd + 1);
       if (!header.startsWith("[RUN ")) {
+        if (logLineOffset > 0) {
+          return (
+            <>
+              <span style={TRUNCATED_NOTICE_STYLE}>
+                … {logLineOffset.toLocaleString()} earlier lines not shown (search covers the full file)
+              </span>
+              {logContent}
+            </>
+          );
+        }
         return logContent;
       }
       return (
@@ -725,30 +749,16 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       );
     }
 
+    // Plain elements with shared style objects: this can be tens of thousands of lines.
     return logContent.split("\n").map((line, index) => {
-      const lineNumber = index + 1;
-      const isSelected = selectedMatchLine === lineNumber;
-
+      const lineNumber = logLineOffset + index + 1;
       return (
-        <Box
-          key={`${lineNumber}-${line}`}
-          component="div"
-          sx={{
-            display: "block",
-            width: "100%",
-            backgroundColor: isSelected
-              ? "rgba(59,130,246,0.18)"
-              : "transparent",
-            borderLeft: isSelected ? "2px solid rgba(96,165,250,0.95)" : "2px solid transparent",
-            pl: 1,
-            ml: -1,
-          }}
-        >
+        <div key={lineNumber} style={selectedMatchLine === lineNumber ? SELECTED_LOG_LINE_STYLE : LOG_LINE_STYLE}>
           {highlightLogLine(line, debouncedSearchQuery)}
-        </Box>
+        </div>
       );
     });
-  }, [debouncedSearchQuery, highlightLogLine, logContent, selectedMatchLine]);
+  }, [debouncedSearchQuery, highlightLogLine, logContent, logLineOffset, selectedMatchLine]);
 
   const renderSearchControls = () => (
     <Stack direction="row" spacing={0.5} alignItems="center">

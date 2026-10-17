@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
@@ -81,13 +82,43 @@ async function openNativeDirectoryPicker(initialPath) {
   }
 }
 
+// Parsed config is reused until the file changes on disk, so manual edits are still picked up
+// without re-reading and re-parsing it on every request.
+let configCache = null; // { path, mtimeMs, size, parsed }
+
+function invalidateConfigCache() {
+  configCache = null;
+}
+
 function loadConfig() {
   servicesConfigPath = resolveConfigPath();
-  console.log('Loading config from:', servicesConfigPath);
-  const raw = fs.readFileSync(servicesConfigPath, "utf8");
-  const parsed = JSON.parse(raw);
-  console.log('Config loaded, services found:', Object.keys(parsed.services || {}));
+  const stats = fs.statSync(servicesConfigPath);
+  if (
+    configCache &&
+    configCache.path === servicesConfigPath &&
+    configCache.mtimeMs === stats.mtimeMs &&
+    configCache.size === stats.size
+  ) {
+    return configCache.parsed;
+  }
+  const parsed = JSON.parse(fs.readFileSync(servicesConfigPath, "utf8"));
+  console.log("Config loaded from", servicesConfigPath, "- services:", Object.keys(parsed.services || {}).length);
+  configCache = { path: servicesConfigPath, mtimeMs: stats.mtimeMs, size: stats.size, parsed };
   return parsed;
+}
+
+// Length of buffer[0..length) without a trailing, incomplete UTF-8 character
+// (it is picked up on the next read once the rest of its bytes are written).
+function completeUtf8Length(buffer, length) {
+  let continuation = 0;
+  while (continuation < 3 && continuation < length && (buffer[length - 1 - continuation] & 0xc0) === 0x80) {
+    continuation += 1;
+  }
+  const leadIndex = length - 1 - continuation;
+  if (leadIndex < 0) return length;
+  const lead = buffer[leadIndex];
+  const expected = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+  return expected > continuation + 1 ? leadIndex : length;
 }
 
 function sendOperationError(res, err) {
@@ -110,6 +141,7 @@ app.use(express.json());
 
 // Reload config helper
 function reloadConfig() {
+  invalidateConfigCache();
   config = loadConfig();
   services = config.services;
   manager = new ServiceManager(config);
@@ -121,9 +153,7 @@ app.get("/services", (req, res) => {
     // Always use fresh config to catch manual edits
     const freshConfig = loadConfig();
     const freshServices = freshConfig.services;
-    
-    console.log('Services endpoint called, found services:', Object.keys(freshServices));
-    
+
     const list = Object.entries(freshServices).map(([name, meta]) => ({
       name,
       type: meta.type,
@@ -139,8 +169,7 @@ app.get("/services", (req, res) => {
       healthPath: meta.healthPath || null,
       enableGit: meta.enableGit !== false && freshConfig.config?.enableGit !== false
     }));
-    
-    console.log('Returning services list:', list.map(s => s.name));
+
     res.json({ services: list });
   } catch (error) {
     console.error('Error in /services endpoint:', error);
@@ -160,6 +189,20 @@ app.get("/services/metrics", async (req, res) => {
   }
 });
 
+// Status of all (or ?names=a,b) services in one request; ?git=false skips git info
+app.get("/services/status", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const names = req.query.names
+      ? String(req.query.names).split(",").map((name) => name.trim()).filter(Boolean)
+      : undefined;
+    const statuses = await freshManager.statusAll(names, { includeGit: req.query.git !== "false" });
+    res.json({ statuses });
+  } catch (error) {
+    sendOperationError(res, error);
+  }
+});
+
 // Get single service metadata
 app.get("/services/:name", (req, res) => {
   // Always use fresh config to catch manual edits
@@ -174,7 +217,6 @@ app.get("/config", (req, res) => {
   try {
     // Always read fresh from file to catch manual edits
     const freshConfig = loadConfig();
-    console.log('Config loaded successfully, keys:', Object.keys(freshConfig));
     res.json({
       ...freshConfig,
       runtime: getConfigMetadata(),
@@ -439,9 +481,9 @@ app.get("/logs/:name", (req, res) => {
 });
 
 // Logs: get content
-app.get("/logs/:name/:file", (req, res) => {
+app.get("/logs/:name/:file", async (req, res) => {
   try {
-    const data = logger.getLog(req.params.name, req.params.file);
+    const data = await logger.getLog(req.params.name, req.params.file);
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -449,11 +491,11 @@ app.get("/logs/:name/:file", (req, res) => {
 });
 
 // Logs: search within file
-app.get("/logs/:name/:file/search", (req, res) => {
+app.get("/logs/:name/:file/search", async (req, res) => {
   try {
     const query = req.query.q || "";
     const limit = Number(req.query.limit || 100);
-    const data = logger.searchLog(req.params.name, req.params.file, query, limit);
+    const data = await logger.searchLog(req.params.name, req.params.file, query, limit);
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -461,94 +503,84 @@ app.get("/logs/:name/:file/search", (req, res) => {
 });
 
 // Logs: stream content via Server-Sent Events
-app.get("/logs/:name/:file/stream", (req, res) => {
-  try {
-    const serviceName = req.params.name;
-    const fileName = req.params.file;
-    
-    // Set SSE headers
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Cache-Control'
-    });
+app.get("/logs/:name/:file/stream", async (req, res) => {
+  const serviceName = req.params.name;
+  const fileName = req.params.file;
+  let closed = false;
+  let lastSize = 0;
+  let checking = false;
+  let watchInterval = null;
+  let heartbeatInterval = null;
 
-    // Send initial log content
+  const send = (payload) => {
+    if (!closed) res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+  const cleanup = () => {
+    closed = true;
+    clearInterval(watchInterval);
+    clearInterval(heartbeatInterval);
+  };
+  req.on("close", cleanup);
+  req.on("aborted", cleanup);
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Cache-Control"
+  });
+
+  const logPath = logger.getLogPath(serviceName, fileName);
+
+  // Sends the newest part of the file (bounded size) and remembers how much was read.
+  const sendTail = async (type) => {
     try {
-      const initialData = logger.getLog(serviceName, fileName);
-      res.write(`data: ${JSON.stringify({ type: 'initial', content: initialData.content })}\n\n`);
+      const tail = await logger.readLogTail(logPath);
+      lastSize = tail.size;
+      send({ type, content: tail.content, lineOffset: tail.lineOffset, truncated: tail.truncated });
     } catch (error) {
-      res.write(`data: ${JSON.stringify({ type: 'initial', content: `Error loading log: ${error.message}` })}\n\n`);
+      lastSize = 0;
+      send({ type, content: error.code === "ENOENT" ? "" : `Error loading log: ${error.message}`, lineOffset: 0 });
     }
+  };
 
-    // Set up file watching
-    const logPath = logger.getLogPath(serviceName, fileName);
-    let lastSize = 0;
-    
-    if (fs.existsSync(logPath)) {
-      lastSize = fs.statSync(logPath).size;
-    }
+  await sendTail("initial");
+  if (closed) return;
 
-    const watchInterval = setInterval(() => {
-      try {
-        if (fs.existsSync(logPath)) {
-          const stats = fs.statSync(logPath);
-          if (stats.size > lastSize) {
-            // Read only the new content
-            const stream = fs.createReadStream(logPath, { start: lastSize });
-            let newContent = '';
-            
-            stream.on('data', (chunk) => {
-              newContent += chunk.toString();
-            });
-            
-            stream.on('end', () => {
-              if (newContent) {
-                res.write(`data: ${JSON.stringify({ type: 'append', content: newContent })}\n\n`);
-              }
-              lastSize = stats.size;
-            });
-
-            stream.on('error', (error) => {
-              console.error('Error reading log stream:', error);
-            });
-          } else if (stats.size < lastSize) {
-            // File was truncated (cleared)
-            try {
-              const fullContent = fs.readFileSync(logPath, 'utf8');
-              res.write(`data: ${JSON.stringify({ type: 'replace', content: fullContent })}\n\n`);
-              lastSize = stats.size;
-            } catch (readError) {
-              console.error('Error reading cleared log file:', readError);
-              res.write(`data: ${JSON.stringify({ type: 'replace', content: '' })}\n\n`);
-              lastSize = 0;
-            }
+  // Poll size with async stat; skip a tick if the previous read is still running.
+  watchInterval = setInterval(async () => {
+    if (checking || closed) return;
+    checking = true;
+    try {
+      const { size } = await fsp.stat(logPath);
+      if (size < lastSize || size - lastSize > logger.MAX_LOG_RESPONSE_BYTES) {
+        // Truncated (cleared), or too much new output to append: resend the newest part.
+        await sendTail("replace");
+      } else if (size > lastSize) {
+        const handle = await fsp.open(logPath, "r");
+        try {
+          const length = size - lastSize;
+          const buffer = Buffer.alloc(length);
+          const { bytesRead } = await handle.read(buffer, 0, length, lastSize);
+          const end = completeUtf8Length(buffer, bytesRead);
+          if (end > 0) {
+            send({ type: "append", content: buffer.toString("utf8", 0, end) });
+            lastSize += end;
           }
+        } finally {
+          await handle.close();
         }
-      } catch (error) {
-        console.error('Error watching log file:', error);
       }
-    }, 1000); // Check every second
+    } catch (error) {
+      if (error.code !== "ENOENT") console.error("Error watching log file:", error);
+    } finally {
+      checking = false;
+    }
+  }, 1000);
 
-    // Send heartbeat every 30 seconds to keep connection alive
-    const heartbeatInterval = setInterval(() => {
-      res.write(`data: ${JSON.stringify({ type: 'heartbeat' })}\n\n`);
-    }, 30000);
-
-    // Clean up on client disconnect
-    const cleanup = () => {
-      clearInterval(watchInterval);
-      clearInterval(heartbeatInterval);
-    };
-
-    req.on('close', cleanup);
-    req.on('aborted', cleanup);
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  // Send heartbeat every 30 seconds to keep connection alive
+  heartbeatInterval = setInterval(() => send({ type: "heartbeat" }), 30000);
 });
 
 // Logs: clear log file

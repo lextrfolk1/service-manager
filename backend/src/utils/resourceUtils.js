@@ -54,10 +54,6 @@ function formatMemory(rssKb) {
   return `${gb.toFixed(1)} GB`;
 }
 
-let metricsCache = null;
-let metricsCacheTime = 0;
-const CACHE_TTL_MS = 1500;
-
 function fetchProcessMetrics(pids) {
   return new Promise((resolve) => {
     if (!Array.isArray(pids) || pids.length === 0) {

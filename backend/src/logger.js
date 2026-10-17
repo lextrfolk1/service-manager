@@ -1,5 +1,7 @@
 const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
+const readline = require("readline");
 
 const LOG_ROOT = path.join(__dirname, "..", "logs");
 const { resolveConfigPath } = require("./configResolver");
@@ -10,6 +12,55 @@ const DEFAULT_LOG_SETTINGS = {
   retentionDays: Number(process.env.LOG_RETENTION_DAYS || 3),
   maxRuns: Number(process.env.LOG_MAX_ARCHIVED_RUNS || 20),
 };
+
+// Largest slice of a log sent to the UI at once; bigger files are sent as their newest part.
+const MAX_LOG_RESPONSE_BYTES = Number(process.env.LOG_MAX_RESPONSE_BYTES || 2 * 1024 * 1024);
+const COUNT_CHUNK_BYTES = 1024 * 1024;
+
+async function countNewlines(handle, endByte) {
+  const buffer = Buffer.alloc(COUNT_CHUNK_BYTES);
+  let count = 0;
+  let position = 0;
+  while (position < endByte) {
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(COUNT_CHUNK_BYTES, endByte - position), position);
+    if (bytesRead === 0) break;
+    let index = buffer.indexOf(10);
+    while (index !== -1 && index < bytesRead) {
+      count += 1;
+      index = buffer.indexOf(10, index + 1);
+    }
+    position += bytesRead;
+  }
+  return count;
+}
+
+// Reads at most maxBytes from the end of a file, starting on a line boundary.
+// Returns the text, its size in bytes on disk, and how many lines were skipped before it.
+async function readLogTail(filePath, maxBytes = MAX_LOG_RESPONSE_BYTES) {
+  const handle = await fsp.open(filePath, "r");
+  try {
+    const { size } = await handle.stat();
+    if (size <= maxBytes) {
+      const buffer = Buffer.alloc(size);
+      const { bytesRead } = await handle.read(buffer, 0, size, 0);
+      return { content: buffer.toString("utf8", 0, bytesRead), size: bytesRead, lineOffset: 0, truncated: false };
+    }
+    const start = size - maxBytes;
+    const buffer = Buffer.alloc(maxBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, start);
+    const firstNewline = buffer.indexOf(10);
+    const cut = firstNewline === -1 || firstNewline >= bytesRead ? 0 : firstNewline + 1;
+    const lineOffset = (await countNewlines(handle, start)) + (cut > 0 ? 1 : 0);
+    return {
+      content: buffer.toString("utf8", cut, bytesRead),
+      size: start + bytesRead,
+      lineOffset,
+      truncated: true,
+    };
+  } finally {
+    await handle.close();
+  }
+}
 
 // Reads config.logs from the active services config on each call, so Admin changes apply without a restart.
 function getLogSettings() {
@@ -207,18 +258,21 @@ module.exports = {
     return { files, archivedFiles, details };
   },
 
-  getLog(service, file) {
+  async getLog(service, file) {
     const activePath = path.join(getServiceDir(service), file);
     const archivePath = path.join(getArchiveDir(service), file);
     const filePath = fs.existsSync(activePath) ? activePath : archivePath;
     if (!fs.existsSync(filePath)) {
-      return { content: "" };
+      return { content: "", size: 0, lineOffset: 0, truncated: false };
     }
-    const content = fs.readFileSync(filePath, "utf8");
-    return { content };
+    return readLogTail(filePath);
   },
 
-  searchLog(service, file, query, limit = 100) {
+  readLogTail,
+
+  MAX_LOG_RESPONSE_BYTES,
+
+  async searchLog(service, file, query, limit = 100) {
     const trimmedQuery = String(query || "").trim();
     if (!trimmedQuery) {
       return { query: "", totalMatches: 0, matches: [] };
@@ -232,21 +286,27 @@ module.exports = {
     }
 
     const needle = trimmedQuery.toLowerCase();
-    const lines = fs.readFileSync(filePath, "utf8").split("\n");
     const matches = [];
     let totalMatches = 0;
+    let lineNumber = 0;
 
-    lines.forEach((line, index) => {
+    // Stream line by line so large logs are never held in memory at once.
+    const lines = readline.createInterface({
+      input: fs.createReadStream(filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+    for await (const line of lines) {
+      lineNumber += 1;
       if (line.toLowerCase().includes(needle)) {
         totalMatches += 1;
         if (matches.length < limit) {
           matches.push({
-            lineNumber: index + 1,
+            lineNumber,
             preview: line,
           });
         }
       }
-    });
+    }
 
     return {
       query: trimmedQuery,

@@ -37,11 +37,15 @@ function waitForPort(port, timeoutMs = 60000) {
 
 let listeningCache = null;
 let listeningCacheTime = 0;
+let listeningInFlight = null; // shared by concurrent callers so only one lsof/netstat runs at a time
+let cacheGeneration = 0; // bumped on invalidate so results of older queries are not cached
 const CACHE_TTL_MS = 2000;
 
 function invalidatePortCache() {
   listeningCache = null;
   listeningCacheTime = 0;
+  listeningInFlight = null;
+  cacheGeneration += 1;
 }
 
 function parseListeningPortsUnix(stdout) {
@@ -79,18 +83,32 @@ function parseListeningPortsUnix(stdout) {
 }
 
 function getAllListeningPorts(forceFresh = false) {
-  return new Promise((resolve) => {
-    const now = Date.now();
-    if (!forceFresh && listeningCache && now - listeningCacheTime < CACHE_TTL_MS) {
-      return resolve(listeningCache);
+  const now = Date.now();
+  if (!forceFresh && listeningCache && now - listeningCacheTime < CACHE_TTL_MS) {
+    return Promise.resolve(listeningCache);
+  }
+  if (!forceFresh && listeningInFlight) {
+    return listeningInFlight;
+  }
+  const generation = cacheGeneration;
+  const request = queryListeningPorts().then((map) => {
+    if (generation === cacheGeneration) {
+      listeningCache = map;
+      listeningCacheTime = Date.now();
     }
+    if (listeningInFlight === request) listeningInFlight = null;
+    return map;
+  });
+  listeningInFlight = request;
+  return request;
+}
 
+function queryListeningPorts() {
+  return new Promise((resolve) => {
     const isWindows = process.platform === "win32";
     if (isWindows) {
       exec("netstat -ano -p tcp", (err, stdout) => {
         if (err || !stdout) {
-          listeningCache = {};
-          listeningCacheTime = now;
           return resolve({});
         }
         const map = {};
@@ -108,21 +126,14 @@ function getAllListeningPorts(forceFresh = false) {
             }
           }
         }
-        listeningCache = map;
-        listeningCacheTime = now;
         resolve(map);
       });
     } else {
       exec("lsof -nP -iTCP -sTCP:LISTEN -F pcfLn", { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
         if (err && !stdout) {
-          listeningCache = {};
-          listeningCacheTime = now;
           return resolve({});
         }
-        const map = parseListeningPortsUnix(stdout || "");
-        listeningCache = map;
-        listeningCacheTime = now;
-        resolve(map);
+        resolve(parseListeningPortsUnix(stdout || ""));
       });
     }
   });

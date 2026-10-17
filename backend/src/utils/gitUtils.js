@@ -26,72 +26,77 @@ async function isGitRepository(dir) {
   }
 }
 
+const NOT_A_REPO = {
+  isGitRepo: false,
+  currentBranch: null,
+  isDirty: false,
+  uncommittedCount: 0,
+  ahead: 0,
+  behind: 0,
+  hasUpstream: false,
+  upstreamBranch: null
+};
+
+// One `git status --porcelain=v2 --branch` call reports branch, upstream, ahead/behind and changed files.
 async function getGitInfo(dir) {
-  const isRepo = await isGitRepository(dir);
-  if (!isRepo) {
-    return {
-      isGitRepo: false,
-      currentBranch: null,
-      isDirty: false,
-      uncommittedCount: 0,
-      ahead: 0,
-      behind: 0,
-      hasUpstream: false,
-      upstreamBranch: null
-    };
+  if (!dir || typeof dir !== "string" || !fs.existsSync(dir)) {
+    return { ...NOT_A_REPO };
   }
 
-  let currentBranch = null;
+  let statusOut;
   try {
-    currentBranch = await runGit(["branch", "--show-current"], dir);
-    if (!currentBranch) {
-      const shortHead = await runGit(["rev-parse", "--short", "HEAD"], dir);
-      currentBranch = `HEAD (${shortHead})`;
-    }
+    statusOut = await runGit(["status", "--porcelain=v2", "--branch"], dir);
   } catch {
+    return { ...NOT_A_REPO };
+  }
+
+  let oid = null;
+  let head = null;
+  let upstreamBranch = null;
+  let ahead = 0;
+  let behind = 0;
+  let hasAheadBehind = false;
+  let uncommittedCount = 0;
+
+  for (const line of statusOut.split("\n")) {
+    if (!line) continue;
+    if (line.startsWith("# branch.oid ")) {
+      oid = line.slice("# branch.oid ".length);
+    } else if (line.startsWith("# branch.head ")) {
+      head = line.slice("# branch.head ".length);
+    } else if (line.startsWith("# branch.upstream ")) {
+      upstreamBranch = line.slice("# branch.upstream ".length);
+    } else if (line.startsWith("# branch.ab ")) {
+      const [aheadPart, behindPart] = line.slice("# branch.ab ".length).split(" ");
+      ahead = Math.abs(parseInt(aheadPart, 10)) || 0;
+      behind = Math.abs(parseInt(behindPart, 10)) || 0;
+      hasAheadBehind = true;
+    } else if (!line.startsWith("#")) {
+      uncommittedCount += 1;
+    }
+  }
+
+  let currentBranch;
+  if (head && head !== "(detached)") {
+    currentBranch = head;
+  } else if (oid && oid !== "(initial)") {
+    currentBranch = `HEAD (${oid.slice(0, 7)})`;
+  } else {
     currentBranch = "unknown";
   }
 
-  let isDirty = false;
-  let uncommittedCount = 0;
-  try {
-    const statusOut = await runGit(["status", "--porcelain"], dir);
-    if (statusOut) {
-      const lines = statusOut.split("\n").filter(Boolean);
-      uncommittedCount = lines.length;
-      isDirty = uncommittedCount > 0;
-    }
-  } catch {
-    // Ignore error reading porcelain status
-  }
-
-  let ahead = 0;
-  let behind = 0;
-  let hasUpstream = false;
-  let upstreamBranch = null;
-  try {
-    const upstreamOut = await runGit(["rev-parse", "--abbrev-ref", "@{upstream}"], dir, 3000);
-    if (upstreamOut && !upstreamOut.includes("fatal:")) {
-      hasUpstream = true;
-      upstreamBranch = upstreamOut;
-      const countOut = await runGit(["rev-list", "--left-right", "--count", "HEAD...@{upstream}"], dir, 3000);
-      const [left, right] = countOut.split(/\s+/).map((n) => parseInt(n, 10) || 0);
-      ahead = left || 0;
-      behind = right || 0;
-    }
-  } catch {
-    // No upstream configured, detached HEAD, or network/remote unavailable
-  }
+  // branch.ab is only reported when the upstream exists, matching the old @{upstream} check.
+  const hasUpstream = Boolean(upstreamBranch && hasAheadBehind);
 
   return {
     isGitRepo: true,
     currentBranch,
-    isDirty,
+    isDirty: uncommittedCount > 0,
     uncommittedCount,
     ahead,
     behind,
     hasUpstream,
-    upstreamBranch
+    upstreamBranch: hasUpstream ? upstreamBranch : null
   };
 }
 

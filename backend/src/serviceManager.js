@@ -19,7 +19,8 @@ const gitUtils = require("./utils/gitUtils");
 const { fetchProcessMetrics, formatUptime, formatMemory } = require("./utils/resourceUtils");
 
 const gitCache = new Map();
-const GIT_CACHE_TTL_MS = 10000;
+const gitInFlight = new Map(); // resolvedDir -> pending git status, shared by concurrent callers
+const GIT_CACHE_TTL_MS = 30000;
 
 // Shared tracker across ServiceManager instances so PID tracking is preserved
 const managedProcesses = new Map(); // serviceName -> { pid, startedAt }
@@ -165,9 +166,19 @@ class ServiceManager {
       return cached.data;
     }
 
-    const data = await gitUtils.getGitInfo(resolvedDir);
-    gitCache.set(resolvedDir, { data, timestamp: now });
-    return data;
+    if (!forceFresh && gitInFlight.has(resolvedDir)) {
+      return gitInFlight.get(resolvedDir);
+    }
+    const request = gitUtils.getGitInfo(resolvedDir)
+      .then((data) => {
+        gitCache.set(resolvedDir, { data, timestamp: now });
+        return data;
+      })
+      .finally(() => {
+        if (gitInFlight.get(resolvedDir) === request) gitInFlight.delete(resolvedDir);
+      });
+    gitInFlight.set(resolvedDir, request);
+    return request;
   }
 
   async getGitBranches(name, shouldFetch = false) {
@@ -236,7 +247,7 @@ class ServiceManager {
       timestamp: Date.now()
     });
 
-    const currentStatus = await this.status(name);
+    const currentStatus = await this.status(name, { includeGit: false });
     let restarted = false;
 
     if (restart && currentStatus.running) {
@@ -293,7 +304,7 @@ class ServiceManager {
       timestamp: Date.now()
     });
 
-    const currentStatus = await this.status(name);
+    const currentStatus = await this.status(name, { includeGit: false });
     let restarted = false;
 
     if (restart && currentStatus.running) {
@@ -374,7 +385,7 @@ class ServiceManager {
     const dep = this.services[depName];
     // Nothing to check (no port, health command or health endpoint): don't block services that depend on it.
     if (!dep.port && !dep.healthCommand && !dep.healthPath) return "ready";
-    const status = await this.status(depName);
+    const status = await this.status(depName, { includeGit: false });
     if (!status.running) {
       const managed = managedProcesses.get(depName);
       return managed && isProcessAlive(managed.pid) ? "starting" : "stopped";
@@ -698,7 +709,21 @@ class ServiceManager {
     return this.start(name);
   }
 
-  async status(name) {
+  // Status for several services in one pass; port lookup is shared, so lsof runs once.
+  async statusAll(names = Object.keys(this.services), options = {}) {
+    const entries = await Promise.all(
+      names.map(async (name) => {
+        try {
+          return [name, await this.status(name, options)];
+        } catch {
+          return [name, null];
+        }
+      })
+    );
+    return Object.fromEntries(entries);
+  }
+
+  async status(name, { includeGit = true } = {}) {
     const svc = this._getService(name);
     let running = false;
     let checkable = true;
@@ -749,7 +774,7 @@ class ServiceManager {
 
     const healthy = checkable ? (running ? true : null) : null;
     const lifecycleState = running ? "running" : "stopped";
-    const git = await this.getGitInfo(name);
+    const git = includeGit ? await this.getGitInfo(name) : undefined;
 
     return {
       service: name,
