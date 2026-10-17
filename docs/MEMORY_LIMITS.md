@@ -89,7 +89,10 @@ Docker containers (clickhouse, neo4j-augmenta, opa) are already capped by Docker
 1. Open the service's run configuration in either place:
    - **Admin › Services**, select the service, then the **Run configuration** section.
    - On the Dashboard, the service card's menu **Run configuration…**. Only the Detailed, Accent strip and Elevated card styles have this menu item.
+   - **Admin › Import / Export**, the `run-config.json` tab of the JSON editor (choose **Unlock to edit**, then **Apply to editor**). Use this to change several services at once.
 2. Edit **JVM arguments** (Java) or the environment variable (`MAVEN_OPTS`, `NODE_OPTIONS`).
 3. Save, and restart the service. Limits only apply when the service starts.
+
+To set up a new machine with these values, export **Run configuration** from **Admin › Import / Export** on a configured machine and import it on the new one.
 
 If a service logs `java.lang.OutOfMemoryError`, raise only that service's `-Xmx` by one step (for example 512m to 768m), restart it, and update the table above if the new value should become the default.

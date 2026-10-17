@@ -8,11 +8,17 @@ It is designed to work across macOS, Linux, and Windows, while keeping service c
 
 ## Features
 
-- Unified dashboard for local services
+- Unified dashboard for local services, organised in groups
 - Start / stop / restart actions with port cleanup
+- Service dependencies: start a service together with the services it needs
+- Presets: start a named set of services in one click
 - Build-on-start support
-- Real-time status monitoring
-- Multi-service log viewing with live streaming for current files
+- Real-time status monitoring, with optional live CPU and memory per service
+- Git on each card: current branch, branch switching, pull and push
+- Per-machine run configuration: JVM options, program arguments and environment variables
+- Import / export of the configuration, and a JSON editor
+- Multi-service log viewing with live streaming for current files, and log retention settings
+- Themes (Light, Dark, Graphite, Warm, Follow system) and selectable card styles
 - Config-driven service definitions
 - Base path templates for reusable service locations
 - Native folder picker support in Admin
@@ -54,10 +60,13 @@ After startup:
 service-manager/
 ├── backend/
 │   ├── config/
-│   │   ├── services.json
-│   │   └── services.windows.json
+│   │   ├── services.json           # shared service definitions (committed)
+│   │   ├── services.windows.json   # Windows variant, picked automatically on Windows
+│   │   └── run-config.json         # this machine's run configuration (git-ignored)
 │   └── src/
 ├── react-frontend/
+├── docs/
+│   └── MEMORY_LIMITS.md            # recommended memory settings per service
 ├── logs/
 ├── start-application.sh
 └── start-application.bat
@@ -143,11 +152,44 @@ Use them in service paths like:
       "command": ".venv/bin/python worker.py",
       "stopCommand": "pkill -f worker.py",
       "healthCommand": "pgrep -f worker.py > /dev/null",
+      "dependsOn": ["execution-service"],
+      "group": "Background",
       "description": "Background execution worker"
     }
   }
 }
 ```
+
+### Service fields
+
+| Field | Purpose |
+| --- | --- |
+| `type` | `java`, `python`, `npm`, `listener`, `redis`, `neo4j`, `database` or `docker`; decides which run configuration fields apply |
+| `path` | Folder the commands run in; can use `${basePaths.<key>}` |
+| `command` | Start command |
+| `build` | Build command, run before start when build mode is on |
+| `port` | Port the service listens on; used for status, port cleanup and links |
+| `stopCommand` | Custom stop command (otherwise the process on the port is stopped) |
+| `healthCommand` | Command that exits 0 when the service is healthy |
+| `daemon` | `true` when the start command returns immediately and the service keeps running in the background |
+| `dependsOn` | Services that must be running first |
+| `group` | Dashboard group the service is shown in |
+| `docsPath` | Path of the API docs (for example `/swagger-ui.html`), shown as a link on the card |
+| `description` | Short description shown on the card |
+| `enableGit` | `false` hides git features for the service |
+| `gitAutoPull` | `false` skips the `git pull` before each start |
+
+### Run configuration (per machine)
+
+Each machine can add its own settings to a service without changing the shared `services.json`:
+
+- **JVM arguments** (Java services), such as heap limits or `spring.profiles.active=local`
+- **Program arguments**
+- **Environment variables**, such as API keys
+
+They are stored in `backend/config/run-config.json`, which is git-ignored and never committed. Edit them in **Admin › Services › Run configuration**, from a card's **Run configuration…** menu item, or in the `run-config.json` tab of **Admin › Import / Export**. Changes apply the next time the service starts.
+
+See [docs/MEMORY_LIMITS.md](docs/MEMORY_LIMITS.md) for recommended memory settings for each service.
 
 ---
 
@@ -224,15 +266,35 @@ The startup scripts:
 
 ---
 
+## Dashboard
+
+- Services are shown by group (turn off with **View › Group services**); collapsed groups are remembered
+- Start, stop and restart from each card, or for a selection of services
+- When a start fails because a dependency isn't running, **Start all needed** starts the service with everything it depends on (Detailed, Accent strip and Elevated cards, when the dependency check is on)
+- Presets start a named set of services
+- Search and filters by status, type and group
+- The **View** menu turns grouping, git branches and live resources (CPU, memory) on cards on or off, toggles **Build before start**, and sets the look, theme and card style for you only
+
 ## Admin Experience
 
-The Admin screen supports:
+The Admin screen has these tabs:
 
-- editing base paths
-- editing service definitions
-- native folder picking
-- raw JSON editing for advanced cases
-- validation before save
+| Tab | What it does |
+| --- | --- |
+| Paths | Base paths, with native folder picking |
+| Services | Service definitions, dependencies, groups and run configuration |
+| Log retention | How many earlier runs to keep and for how long |
+| Presets | Named service lists for the dashboard |
+| Appearance | Default card style for everyone, with live previews, and your own theme |
+| Import / Export | Export or import the configuration, and edit `services.json` or `run-config.json` as JSON |
+
+Every change is checked before saving, and **Save** lists all changes for confirmation before anything is written.
+
+### Import / Export
+
+- **Export** downloads or copies the chosen sections. Paths and run configuration are off by default, and secret values are written as `<hidden>` unless you choose to include them.
+- **Import** loads an exported file or a plain `services.json`. Choose the sections and **Merge** (add and update) or **Replace**, review the preview of changes and any new problems, then **Apply to editor**. Nothing is written until you Save. Paths from another operating system start unticked.
+- The **JSON editor** has a tab per file. It is read-only until you choose **Unlock to edit**; syntax errors show their line and column.
 
 Runtime metadata is shown in Admin so users can see:
 
@@ -255,6 +317,7 @@ Current log file behavior:
 - current active file supports live streaming
 - older files are static
 - log viewing is service-oriented in the UI
+- earlier runs are archived and kept for 3 days or 20 runs by default; change this in **Admin › Log retention** or with `LOG_RETENTION_DAYS` and `LOG_MAX_ARCHIVED_RUNS`
 
 ---
 
@@ -281,6 +344,15 @@ Current log file behavior:
 ### Java or Maven not found
 
 - ensure `java` and `mvn` are installed and available in `PATH`
+
+### "Start X first"
+
+- the service depends on another service that isn't running
+- start the dependency first, or use **Start all needed** on the card (Detailed, Accent strip and Elevated card styles)
+
+### Service uses too much memory
+
+- set heap limits in the service's run configuration; see [docs/MEMORY_LIMITS.md](docs/MEMORY_LIMITS.md)
 
 ### Health looks wrong
 
