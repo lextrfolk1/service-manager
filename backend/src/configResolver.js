@@ -34,6 +34,31 @@ function resolveConfigPath() {
   return resolvedPath;
 }
 
+// Parsed config is reused until the file changes on disk, so manual edits are still picked up
+// without re-reading and re-parsing it on every request. Callers must not modify the returned object.
+let configCache = null; // { path, mtimeMs, size, parsed }
+
+function invalidateConfigCache() {
+  configCache = null;
+}
+
+function readConfig() {
+  const configPath = resolveConfigPath();
+  const stats = fs.statSync(configPath);
+  if (
+    configCache &&
+    configCache.path === configPath &&
+    configCache.mtimeMs === stats.mtimeMs &&
+    configCache.size === stats.size
+  ) {
+    return configCache.parsed;
+  }
+  const parsed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  console.log("Config loaded from", configPath, "- services:", Object.keys(parsed.services || {}).length);
+  configCache = { path: configPath, mtimeMs: stats.mtimeMs, size: stats.size, parsed };
+  return parsed;
+}
+
 function getConfigMetadata() {
   const configPath = resolveConfigPath();
   return {
@@ -47,4 +72,6 @@ function getConfigMetadata() {
 module.exports = {
   resolveConfigPath,
   getConfigMetadata,
+  readConfig,
+  invalidateConfigCache,
 };

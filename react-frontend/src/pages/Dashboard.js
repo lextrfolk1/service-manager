@@ -49,6 +49,7 @@ import { LOOKS, findLook } from "../theme/looks";
 import { SEARCH_INPUT_SX, STATUS_COLORS } from "../theme/tokens";
 import { RunConfigDialog, cleanRunConfig, countRunConfigValues } from "../components/RunConfigEditor";
 import api from "../services/api";
+import usePageVisible from "../hooks/usePageVisible";
 import {
   DEFAULT_GROUPS,
   buildDependencyMap,
@@ -198,7 +199,7 @@ function mergeDisplayState(baseState, uiState) {
   return baseState;
 }
 
-const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditInAdmin }, ref) => {
+const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditInAdmin, isActive = true }, ref) => {
   const [services, setServices] = useState([]);
   const [statuses, setStatuses] = useState({});
   const [uiStates, setUiStates] = useState({});
@@ -353,25 +354,43 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     loadPresets();
   }, []);
 
+  // Background polling runs only while the Dashboard tab is shown and the browser tab is visible.
+  const pageVisible = usePageVisible();
+  const pollingActive = isActive && pageVisible;
+
   useEffect(() => {
-    if (!normalizedServices.length) return undefined;
+    if (!pollingActive || !normalizedServices.length) return undefined;
     loadServiceStatuses(normalizedServices);
     const interval = setInterval(() => loadServiceStatuses(normalizedServices), 5000);
     return () => clearInterval(interval);
-  }, [normalizedServices]);
+  }, [normalizedServices, pollingActive]);
 
   useEffect(() => {
     if (!showLiveMetrics) {
       setMetrics({});
       return undefined;
     }
+    if (!pollingActive) return undefined;
 
     let isSubscribed = true;
     async function fetchMetrics() {
       try {
         const data = await api.get("/services/metrics");
         if (isSubscribed && data?.metrics) {
-          setMetrics(data.metrics);
+          // Keep unchanged per-service objects so memoized cards whose numbers didn't move skip re-rendering.
+          setMetrics((previous) => {
+            let changed = Object.keys(previous).length !== Object.keys(data.metrics).length;
+            const next = {};
+            Object.entries(data.metrics).forEach(([name, value]) => {
+              if (isSameJson(previous[name], value)) {
+                next[name] = previous[name];
+              } else {
+                next[name] = value;
+                changed = true;
+              }
+            });
+            return changed ? next : previous;
+          });
         }
       } catch (e) {
         // Non-blocking
@@ -384,9 +403,10 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [showLiveMetrics]);
+  }, [showLiveMetrics, pollingActive]);
 
   useEffect(() => {
+    if (!pollingActive) return undefined;
     const interval = setInterval(async () => {
       const latest = await loadServices(false);
       loadRunConfig();
@@ -394,7 +414,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       if (latest.length) await loadServiceStatuses(latest.map(normalizeService));
     }, AUTO_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, []);
+  }, [pollingActive]);
 
   useImperativeHandle(ref, () => ({
     refreshServices: loadServices,
@@ -539,16 +559,15 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   }
 
   async function loadServiceStatuses(serviceList) {
-    const results = await Promise.all(
-      serviceList.map(async (service) => {
-        try {
-          const status = await api.get(`/service/${service.name}/status`);
-          return [service.name, status];
-        } catch (err) {
-          return [service.name, null];
-        }
-      })
-    );
+    let statuses = {};
+    try {
+      const names = serviceList.map((service) => service.name).join(",");
+      const data = await api.get(`/services/status?names=${encodeURIComponent(names)}`);
+      statuses = data?.statuses || {};
+    } catch (err) {
+      // Leave every status as null below
+    }
+    const results = serviceList.map((service) => [service.name, statuses[service.name] || null]);
 
     setStatuses((previous) => {
       let changed = false;

@@ -1,8 +1,11 @@
 const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
+const { StringDecoder } = require("string_decoder");
+const crypto = require("crypto");
 
 const LOG_ROOT = path.join(__dirname, "..", "logs");
-const { resolveConfigPath } = require("./configResolver");
+const { readConfig } = require("./configResolver");
 
 // Defaults when config.logs is not set (env vars can still override).
 const DEFAULT_LOG_SETTINGS = {
@@ -11,12 +14,366 @@ const DEFAULT_LOG_SETTINGS = {
   maxRuns: Number(process.env.LOG_MAX_ARCHIVED_RUNS || 20),
 };
 
-// Reads config.logs from the active services config on each call, so Admin changes apply without a restart.
+// Largest slice of a log sent to the UI at once; bigger files are sent as their newest part.
+const MAX_LOG_RESPONSE_BYTES = Number(process.env.LOG_MAX_RESPONSE_BYTES || 8 * 1024 * 1024);
+const COUNT_CHUNK_BYTES = 1024 * 1024;
+
+async function countNewlines(handle, endByte) {
+  const buffer = Buffer.alloc(COUNT_CHUNK_BYTES);
+  let count = 0;
+  let position = 0;
+  while (position < endByte) {
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(COUNT_CHUNK_BYTES, endByte - position), position);
+    if (bytesRead === 0) break;
+    let index = buffer.indexOf(10);
+    while (index !== -1 && index < bytesRead) {
+      count += 1;
+      index = buffer.indexOf(10, index + 1);
+    }
+    position += bytesRead;
+  }
+  return count;
+}
+
+// Reads at most maxBytes from the end of a file, starting on a line boundary.
+// Returns the text, its size in bytes on disk, and how many lines were skipped before it.
+async function readLogTail(filePath, maxBytes = MAX_LOG_RESPONSE_BYTES) {
+  const handle = await fsp.open(filePath, "r");
+  try {
+    const { size } = await handle.stat();
+    if (size <= maxBytes) {
+      const buffer = Buffer.alloc(size);
+      const { bytesRead } = await handle.read(buffer, 0, size, 0);
+      return { content: buffer.toString("utf8", 0, bytesRead), size: bytesRead, lineOffset: 0, truncated: false };
+    }
+    const start = size - maxBytes;
+    const buffer = Buffer.alloc(maxBytes);
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, start);
+    const firstNewline = buffer.indexOf(10);
+    const cut = firstNewline === -1 || firstNewline >= bytesRead ? 0 : firstNewline + 1;
+    const lineOffset = (await countNewlines(handle, start)) + (cut > 0 ? 1 : 0);
+    return {
+      content: buffer.toString("utf8", cut, bytesRead),
+      size: start + bytesRead,
+      lineOffset,
+      truncated: true,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+const ANSI_ESCAPES = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*\x07/g; // eslint-disable-line no-control-regex
+
+// Text as the log viewer shows it (keep in sync with plainText in react-frontend/src/components/logViewer/logLines.js):
+// ANSI codes removed and, for progress output rewritten with "\r", only the last version kept.
+function plainLine(rawLine) {
+  let text = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+  if (text.includes("\r")) {
+    const parts = text.split("\r").filter(Boolean);
+    text = parts.length ? parts[parts.length - 1] : "";
+  }
+  return text.includes("\x1b") ? text.replace(ANSI_ESCAPES, "") : text;
+}
+
+// Level named on a line (keep in sync with detectLevel in react-frontend/src/components/logViewer/logLines.js).
+const LEVEL_KEY_VALUE = /\blevel["']?\s*[=:]\s*["']?(fatal|error|err|warn(?:ing)?|info|debug|trace)\b/i;
+const LEVEL_WORD = /\b(FATAL|SEVERE|ERROR|ERR|WARN(?:ING)?|INFO|DEBUG|TRACE)\b/;
+const LEVEL_ALIASES = { fatal: "error", severe: "error", error: "error", err: "error", warn: "warn", warning: "warn", info: "info", debug: "debug", trace: "debug" };
+
+function detectLevel(text) {
+  const head = text.length > 300 ? text.slice(0, 300) : text;
+  const match = LEVEL_KEY_VALUE.exec(head) || LEVEL_WORD.exec(head);
+  return match ? LEVEL_ALIASES[match[1].toLowerCase()] || null : null;
+}
+
+// Per-file level index: entry counts per level and the line numbers of error/warning entries, so the UI can
+// show whole-file totals and jump between errors beyond the loaded lines. Built incrementally: a growing log
+// only scans the bytes added since the last call. Only complete lines (ending in "\n") are indexed; the line
+// still being written is counted on the fly by levelSummary.
+//
+// Indexes are also saved under logs/.index, so a backend restart reuses them. A saved index is used only if
+// the file is the same (inode), not shorter, and sampled bytes of the indexed part are unchanged.
+const MAX_INDEXED_FILES = 50;
+const MAX_INDEXED_ENTRIES = 200000; // per level; further entries are counted but not listed
+const INDEX_DIR = path.join(LOG_ROOT, ".index");
+const INDEX_FORMAT = 2;
+const MAX_SAVED_INDEXES = 200;
+const FINGERPRINT_BYTES = 256;
+const SAVE_DELAY_MS = 3000;
+const MAX_PENDING_LINE_BYTES = 64 * 1024;
+const logIndexes = new Map(); // filePath -> index
+const indexQueues = new Map(); // filePath -> promise; updates of one file run one at a time
+const saveTimers = new Map();
+
+function emptyIndex(ino) {
+  return {
+    ino,
+    bytes: 0,
+    pendingBytes: 0, // bytes after the last "\n" (line still being written)
+    lineCount: 0,
+    lastLevel: "other",
+    counts: { error: 0, warn: 0, info: 0, debug: 0, other: 0 },
+    entries: { error: [], warn: [] },
+  };
+}
+
+function indexFilePath(filePath) {
+  return path.join(INDEX_DIR, `${crypto.createHash("sha1").update(filePath).digest("hex")}.json`);
+}
+
+// Hash of small samples spread over [0, endByte): the start, the end and evenly spaced points between.
+// Cheap check that the indexed part of the file is still the same content.
+async function fingerprint(filePath, endByte) {
+  const samples = 10;
+  const hash = crypto.createHash("sha1");
+  const handle = await fsp.open(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(FINGERPRINT_BYTES);
+    for (let sample = 0; sample < samples; sample += 1) {
+      const start = Math.max(0, Math.floor(((endByte - FINGERPRINT_BYTES) * sample) / (samples - 1)));
+      const length = Math.min(FINGERPRINT_BYTES, endByte - start);
+      if (length <= 0) break;
+      const { bytesRead } = await handle.read(buffer, 0, length, start);
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    return hash.digest("hex");
+  } finally {
+    await handle.close();
+  }
+}
+
+async function loadSavedIndex(filePath, stats) {
+  try {
+    const saved = JSON.parse(await fsp.readFile(indexFilePath(filePath), "utf8"));
+    if (saved.format !== INDEX_FORMAT || saved.filePath !== filePath || saved.ino !== stats.ino || saved.bytes > stats.size) {
+      return null;
+    }
+    if (saved.fingerprint !== (await fingerprint(filePath, saved.bytes))) return null;
+    return {
+      ...emptyIndex(saved.ino),
+      bytes: saved.bytes,
+      lineCount: saved.lineCount,
+      lastLevel: saved.lastLevel,
+      counts: saved.counts,
+      entries: saved.entries,
+    };
+  } catch {
+    return null; // missing or unreadable: rebuild
+  }
+}
+
+async function pruneSavedIndexes() {
+  const names = (await fsp.readdir(INDEX_DIR)).filter((name) => name.endsWith(".json"));
+  if (names.length <= MAX_SAVED_INDEXES) return;
+  const withTimes = await Promise.all(names.map(async (name) => {
+    try {
+      return { name, mtimeMs: (await fsp.stat(path.join(INDEX_DIR, name))).mtimeMs };
+    } catch {
+      return { name, mtimeMs: 0 };
+    }
+  }));
+  withTimes.sort((left, right) => left.mtimeMs - right.mtimeMs);
+  await Promise.all(withTimes.slice(0, names.length - MAX_SAVED_INDEXES).map(({ name }) =>
+    fsp.unlink(path.join(INDEX_DIR, name)).catch(() => {})
+  ));
+}
+
+// Saves a snapshot a few seconds after the last change (one write per burst of appends).
+function saveIndexSoon(filePath, index) {
+  if (saveTimers.has(filePath)) return;
+  const timer = setTimeout(async () => {
+    saveTimers.delete(filePath);
+    const snapshot = {
+      format: INDEX_FORMAT,
+      filePath,
+      ino: index.ino,
+      bytes: index.bytes,
+      lineCount: index.lineCount,
+      lastLevel: index.lastLevel,
+      counts: { ...index.counts },
+      entries: { error: index.entries.error.slice(), warn: index.entries.warn.slice() },
+    };
+    try {
+      snapshot.fingerprint = await fingerprint(filePath, snapshot.bytes);
+      await fsp.mkdir(INDEX_DIR, { recursive: true });
+      const target = indexFilePath(filePath);
+      const temporary = `${target}.${process.pid}.tmp`;
+      await fsp.writeFile(temporary, JSON.stringify(snapshot));
+      await fsp.rename(temporary, target);
+      await pruneSavedIndexes();
+    } catch {
+      // The index is only a cache; it is rebuilt when missing
+    }
+  }, SAVE_DELAY_MS);
+  timer.unref?.();
+  saveTimers.set(filePath, timer);
+}
+
+async function scanLogIndex(index, filePath, endByte) {
+  const stream = fs.createReadStream(filePath, { start: index.bytes, end: endByte - 1 });
+  let leftover = Buffer.alloc(0);
+  try {
+    for await (const chunk of stream) {
+      const buffer = leftover.length ? Buffer.concat([leftover, chunk]) : chunk;
+      let lineStart = 0;
+      let newline = buffer.indexOf(10);
+      while (newline !== -1) {
+        const text = plainLine(buffer.toString("utf8", lineStart, newline));
+        const level = detectLevel(text);
+        index.lineCount += 1;
+        if (level) {
+          index.lastLevel = level;
+          index.counts[level] += 1;
+          const list = index.entries[level];
+          if (list && list.length < MAX_INDEXED_ENTRIES) list.push(index.lineCount);
+        } else if (index.lastLevel === "other") {
+          index.counts.other += 1;
+        }
+        index.bytes += newline + 1 - lineStart;
+        lineStart = newline + 1;
+        newline = buffer.indexOf(10, lineStart);
+      }
+      leftover = buffer.subarray(lineStart);
+    }
+  } finally {
+    stream.destroy();
+  }
+  index.pendingBytes = endByte - index.bytes;
+}
+
+async function updateLogIndex(filePath) {
+  const stats = await fsp.stat(filePath);
+  let index = logIndexes.get(filePath);
+  if (!index) {
+    index = (await loadSavedIndex(filePath, stats)) || emptyIndex(stats.ino);
+  } else if (stats.ino !== index.ino || stats.size < index.bytes) {
+    index = emptyIndex(stats.ino); // replaced or truncated (cleared)
+  }
+  logIndexes.delete(filePath); // re-insert: most recently used last
+  logIndexes.set(filePath, index);
+  while (logIndexes.size > MAX_INDEXED_FILES) logIndexes.delete(logIndexes.keys().next().value);
+
+  if (stats.size > index.bytes) {
+    const before = index.bytes;
+    await scanLogIndex(index, filePath, stats.size);
+    if (index.bytes > before) saveIndexSoon(filePath, index);
+  } else {
+    index.pendingBytes = 0;
+  }
+  return index;
+}
+
+function getLogIndex(filePath) {
+  const previous = indexQueues.get(filePath) || Promise.resolve();
+  const next = previous.catch(() => {}).then(() => updateLogIndex(filePath));
+  indexQueues.set(filePath, next);
+  next.catch(() => {}).finally(() => {
+    if (indexQueues.get(filePath) === next) indexQueues.delete(filePath);
+  });
+  return next;
+}
+
+// Whole-file counts, including the line still being written (counted like the viewer does).
+async function levelSummary(filePath) {
+  const index = await getLogIndex(filePath);
+  const counts = { ...index.counts };
+  let lineCount = index.lineCount;
+  if (index.pendingBytes > 0 && index.pendingBytes <= MAX_PENDING_LINE_BYTES) {
+    try {
+      const handle = await fsp.open(filePath, "r");
+      try {
+        const buffer = Buffer.alloc(index.pendingBytes);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, index.bytes);
+        const text = plainLine(buffer.toString("utf8", 0, bytesRead));
+        if (text) {
+          const level = detectLevel(text);
+          lineCount += 1;
+          if (level) counts[level] += 1;
+          else if (index.lastLevel === "other") counts.other += 1;
+        }
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      // File changed underneath; the next call catches up
+    }
+  }
+  return { lineCount, counts };
+}
+
+function firstAfter(list, value) {
+  let low = 0;
+  let high = list.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (list[middle] > value) high = middle;
+    else low = middle + 1;
+  }
+  return low;
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Calls onLine(line, lineNumber) for each line, splitting on "\n" only so numbering matches the viewer
+// (a lone "\r" from progress output does not start a new line). Return false from onLine to stop early.
+async function forEachLine(filePath, onLine) {
+  const stream = fs.createReadStream(filePath);
+  const decoder = new StringDecoder("utf8");
+  let pending = "";
+  let lineNumber = 0;
+  try {
+    for await (const chunk of stream) {
+      pending += decoder.write(chunk);
+      let lineStart = 0;
+      let newline = pending.indexOf("\n");
+      while (newline !== -1) {
+        lineNumber += 1;
+        if (onLine(pending.slice(lineStart, newline), lineNumber) === false) return;
+        lineStart = newline + 1;
+        newline = pending.indexOf("\n", lineStart);
+      }
+      pending = pending.slice(lineStart);
+    }
+    pending += decoder.end();
+    if (pending) {
+      lineNumber += 1;
+      onLine(pending, lineNumber);
+    }
+  } finally {
+    stream.destroy();
+  }
+}
+
+// Lines startLine..startLine+count-1 (1-based), capped at maxBytes of text.
+async function readLogLines(filePath, startLine, count, maxBytes = MAX_LOG_RESPONSE_BYTES) {
+  const first = Math.max(1, Math.floor(startLine) || 1);
+  const last = first + Math.max(1, Math.floor(count) || 1) - 1;
+  const lines = [];
+  let bytes = 0;
+  await forEachLine(filePath, (line, lineNumber) => {
+    if (lineNumber < first) return true;
+    bytes += Buffer.byteLength(line) + 1;
+    if (lineNumber > last || bytes > maxBytes) return false;
+    lines.push(line);
+    return true;
+  });
+  return {
+    content: lines.length ? `${lines.join("\n")}\n` : "",
+    lineOffset: first - 1,
+    lineCount: lines.length,
+    truncated: true,
+  };
+}
+
+// Reads config.logs from the active services config (cached until the file changes), so Admin changes
+// apply without a restart.
 function getLogSettings() {
   let configured = {};
   try {
-    const raw = JSON.parse(fs.readFileSync(resolveConfigPath(), "utf8"));
-    configured = raw?.config?.logs || {};
+    configured = readConfig()?.config?.logs || {};
   } catch {
     // Fall back to defaults if the config can't be read
   }
@@ -207,18 +564,49 @@ module.exports = {
     return { files, archivedFiles, details };
   },
 
-  getLog(service, file) {
+  // Newest part of the log, or with startLine, the lines from startLine onwards (count lines).
+  async getLog(service, file, { startLine, count } = {}) {
     const activePath = path.join(getServiceDir(service), file);
     const archivePath = path.join(getArchiveDir(service), file);
     const filePath = fs.existsSync(activePath) ? activePath : archivePath;
     if (!fs.existsSync(filePath)) {
-      return { content: "" };
+      return { content: "", size: 0, lineOffset: 0, truncated: false };
     }
-    const content = fs.readFileSync(filePath, "utf8");
-    return { content };
+    if (startLine) {
+      return readLogLines(filePath, startLine, count || 2000);
+    }
+    return readLogTail(filePath);
   },
 
-  searchLog(service, file, query, limit = 100) {
+  readLogTail,
+
+  async getLevelSummary(service, file) {
+    return levelSummary(this.getLogPath(service, file));
+  },
+
+  levelSummary,
+
+  // Line number of the next/previous entry at a level ("error" or "warn") after/before fromLine, or null.
+  async findLevelEntry(service, file, level, fromLine, direction = "next") {
+    const index = await getLogIndex(this.getLogPath(service, file));
+    const list = index.entries[level];
+    if (!list) {
+      const invalid = new Error(`Unsupported level: ${level}`);
+      invalid.statusCode = 400;
+      throw invalid;
+    }
+    if (direction === "previous") {
+      const position = firstAfter(list, fromLine - 1) - 1; // last entry < fromLine
+      return { lineNumber: position >= 0 ? list[position] : null };
+    }
+    const position = firstAfter(list, fromLine); // first entry > fromLine
+    return { lineNumber: position < list.length ? list[position] : null };
+  },
+
+  MAX_LOG_RESPONSE_BYTES,
+
+  // Options: caseSensitive, regex. An invalid regular expression throws an error with statusCode 400.
+  async searchLog(service, file, query, limit = 100, { caseSensitive = false, regex = false } = {}) {
     const trimmedQuery = String(query || "").trim();
     if (!trimmedQuery) {
       return { query: "", totalMatches: 0, matches: [] };
@@ -231,18 +619,26 @@ module.exports = {
       return { query: trimmedQuery, totalMatches: 0, matches: [] };
     }
 
-    const needle = trimmedQuery.toLowerCase();
-    const lines = fs.readFileSync(filePath, "utf8").split("\n");
+    let pattern;
+    try {
+      pattern = new RegExp(regex ? trimmedQuery : escapeRegExp(trimmedQuery), caseSensitive ? "" : "i");
+    } catch (error) {
+      const invalid = new Error(error.message);
+      invalid.statusCode = 400;
+      throw invalid;
+    }
     const matches = [];
     let totalMatches = 0;
 
-    lines.forEach((line, index) => {
-      if (line.toLowerCase().includes(needle)) {
+    // Stream line by line so large logs are never held in memory at once.
+    await forEachLine(filePath, (line, lineNumber) => {
+      const text = plainLine(line);
+      if (pattern.test(text)) {
         totalMatches += 1;
         if (matches.length < limit) {
           matches.push({
-            lineNumber: index + 1,
-            preview: line,
+            lineNumber,
+            preview: text.length > 500 ? `${text.slice(0, 500)}…` : text,
           });
         }
       }

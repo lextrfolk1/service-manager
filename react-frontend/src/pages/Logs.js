@@ -8,8 +8,12 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   IconButton,
   InputAdornment,
+  ListItemIcon,
+  ListItemText,
+  Menu,
   MenuItem,
   Paper,
   Select,
@@ -36,12 +40,37 @@ import {
   SyncRounded as ReloadIcon,
   VerticalAlignBottomRounded as FollowIcon,
   WrapText as WrapTextIcon,
+  PauseRounded as PauseIcon,
+  PlayArrowRounded as ResumeIcon,
+  ErrorOutline as ErrorIcon,
+  FileDownloadOutlined as DownloadIcon,
+  KeyboardOutlined as KeyboardIcon,
+  TuneRounded as ViewOptionsIcon,
+  TextIncrease as TextIncreaseIcon,
+  TextDecrease as TextDecreaseIcon,
+  UnfoldLess as CollapseIcon,
+  KeyboardArrowUp as ArrowUpIcon,
+  KeyboardArrowDown as ArrowDownIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
 import useServiceRunningStates from "../hooks/useServiceRunningStates";
 import { CODE_FONT, SEARCH_INPUT_SX, STATUS_COLORS, TOP_BAR_HEIGHT } from "../theme/tokens";
 import StatusDot from "../components/StatusDot";
 import EmptyState from "../components/EmptyState";
+import LogViewer from "../components/logViewer/LogViewer";
+import {
+  LEVELS,
+  LEVEL_LABELS,
+  appendToLogView,
+  buildMatcher,
+  buildRows,
+  countLevels,
+  createLogView,
+  joinPlain,
+  messageView,
+  rowsToIndexes,
+  visibleLineCount,
+} from "../components/logViewer/logLines";
 
 const SEARCH_DEBOUNCE_MS = 400;
 const SEARCH_MIN_CHARS = 2;
@@ -54,6 +83,84 @@ const contentCardSx = {
 };
 
 const FILE_LIST_POLL_MS = 5000;
+// Same backend the live stream connects to (EventSource and downloads bypass the dev proxy).
+const LOG_API_BASE = "http://localhost:4000";
+
+// Lines loaded around a search match that is outside the part of the log currently shown.
+const MATCH_CONTEXT_LINES_BEFORE = 1000;
+const MATCH_CONTEXT_LINES = 3000;
+
+const FONT_SIZES = [11, 12, 13, 14, 16];
+const VIEWER_SETTINGS_KEY = "struo_log_viewer_settings";
+const DEFAULT_VIEWER_SETTINGS = {
+  fontSize: 12,
+  wrap: false,
+  colorLevels: true,
+  collapseStacks: true,
+  caseSensitive: false,
+  regex: false,
+};
+
+// Display preferences are saved per browser. Line filters (levels, only matching) are per service and not
+// saved, so a log never opens with lines silently hidden.
+function loadViewerSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(VIEWER_SETTINGS_KEY) || "{}");
+    const settings = { ...DEFAULT_VIEWER_SETTINGS };
+    Object.keys(DEFAULT_VIEWER_SETTINGS).forEach((key) => {
+      if (saved && typeof saved === "object" && key in saved) settings[key] = saved[key];
+    });
+    return settings;
+  } catch {
+    return DEFAULT_VIEWER_SETTINGS;
+  }
+}
+
+const NO_FILTERS = { levels: null, onlyMatching: false }; // levels: null = all, else the list shown
+
+const LEVEL_CHIP_COLORS = { error: "#dc2626", warn: "#d97706", info: "#2563eb", debug: "#64748b", other: "#94a3b8" };
+
+const SHORTCUTS = [
+  ["Ctrl/⌘ F", "Search in this log"],
+  ["Enter / Shift+Enter", "Next / previous match (in the search box)"],
+  ["n / Shift+N", "Next / previous match"],
+  ["e / Shift+E", "Next / previous error"],
+  ["Ctrl/⌘ G", "Go to line"],
+  ["Click / Shift+click line number", "Select a line / a range of lines"],
+  ["Ctrl/⌘ C", "Copy selected lines (when no text is highlighted)"],
+  ["Esc", "Clear line selection"],
+  ["p", "Pause / resume live output"],
+  ["End or Shift+G", "Jump to latest and follow"],
+  ["Home", "Jump to top"],
+  ["w", "Toggle line wrap"],
+  ["+ / -", "Larger / smaller text"],
+  ["?", "Show these shortcuts"],
+];
+
+function countNewlines(text) {
+  let count = 0;
+  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) count += 1;
+  return count;
+}
+
+// Clipboard API needs a secure context (https or localhost); fall back to a hidden textarea otherwise.
+async function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  document.body.removeChild(textarea);
+  if (!copied) throw new Error("Copy was blocked");
+}
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -294,9 +401,33 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [activeLogFiles, setActiveLogFiles] = useState([]);
   const [archivedLogFiles, setArchivedLogFiles] = useState([]);
   const [logFileDetails, setLogFileDetails] = useState({});
-  const [logContent, setLogContent] = useState("(select a service to load logs)");
+  // Lines on screen; see createLogView. windowed: an earlier part of the log is shown (loaded around a
+  // search match or a "go to line"); live updates are paused until "Back to latest".
+  const [logView, setLogView] = useState(() => messageView("(select a service to load logs)"));
+  const { lineOffset: logLineOffset, windowed: logWindowed } = logView;
+  const loadedLineCount = visibleLineCount(logView);
+  const pendingScrollLineRef = useRef(null);
+  const windowRequestRef = useRef(0);
+  const viewerRef = useRef(null);
+  const searchInputRef = useRef(null);
+  const goToLineInputRef = useRef(null);
   const [serviceSearchState, setServiceSearchState] = useState({});
-  const [wrapped, setWrapped] = useState(false);
+  const [viewerSettings, setViewerSettings] = useState(loadViewerSettings);
+  const { fontSize, wrap: wrapped, colorLevels, collapseStacks, caseSensitive, regex: regexSearch } = viewerSettings;
+  const [serviceFilters, setServiceFilters] = useState({}); // service -> { levels, onlyMatching }
+  const [fileLevels, setFileLevels] = useState(null); // whole-file entry counts from the backend index
+  const [selection, setSelection] = useState(null); // { anchor, from, to } file line numbers
+  const [expandedFolds, setExpandedFolds] = useState(() => new Set()); // file line of each expanded stack fold
+  const [paused, setPaused] = useState(false);
+  const [pausedNewLines, setPausedNewLines] = useState(0);
+  const pausedRef = useRef(false);
+  const pausedBufferRef = useRef({ replace: null, chunks: [] });
+  const [goToLineText, setGoToLineText] = useState("");
+  const [notice, setNotice] = useState(""); // short message such as "No more errors in the loaded lines"
+  const [copyMenuAnchor, setCopyMenuAnchor] = useState(null);
+  const [viewMenuAnchor, setViewMenuAnchor] = useState(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [copiedLabel, setCopiedLabel] = useState("");
   const [following, setFollowing] = useState(true); // keep the view pinned to the newest line
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [copyState, setCopyState] = useState(""); // "" | "copied" | "failed" — brief feedback on the Copy button
@@ -307,7 +438,6 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
   const eventSourceRef = useRef(null);
   const latestFileRef = useRef("");
-  const logContentRef = useRef(null);
 
   const activeServiceFromTabs = openServices[activeServiceTab] || "";
   const currentService = activeServiceFromTabs || selectedServiceName || services[0]?.name || "";
@@ -387,7 +517,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       setServices(data.services || []);
     } catch (error) {
       setServices([]);
-      setLogContent(`Unable to load services: ${error.message}`);
+      setLogView(messageView(`Unable to load services: ${error.message}`));
     }
   }, []);
 
@@ -413,14 +543,14 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         return files[0] || archivedFiles[0] || "";
       });
       if (!files[0] && !archivedFiles[0]) {
-        setLogContent("(no log files available for this service)");
+        setLogView(messageView("(no log files available for this service)"));
       }
     } catch (error) {
       if (silent) return;
       setActiveLogFiles([]);
       setArchivedLogFiles([]);
       setSelectedLogFile("");
-      setLogContent(`Error loading log files: ${error.message}`);
+      setLogView(messageView(`Error loading log files: ${error.message}`));
     } finally {
       if (!silent) setLoadingFiles(false);
     }
@@ -430,47 +560,92 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     if (!currentService || !selectedLogFile) return;
     try {
       const data = await api.get(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}`);
-      setLogContent(data.content || "(empty)");
+      setLogView(createLogView(data.content || "", { lineOffset: data.lineOffset || 0 }));
     } catch (error) {
-      setLogContent(`Error loading log content: ${error.message}`);
+      setLogView(messageView(`Error loading log content: ${error.message}`));
     }
   }, [currentService, selectedLogFile]);
 
   const clearCurrentLog = useCallback(async () => {
     if (!currentService || !selectedLogFile) return;
     await api.post(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/clear`);
-    setLogContent("");
+    setLogView(createLogView(""));
   }, [currentService, selectedLogFile]);
 
-  // Follow mode: stay at the newest line while new output arrives; scrolling up pauses it.
-  useEffect(() => {
-    const element = logContentRef.current;
-    if (!element || !following || debouncedSearchQuery) return;
-    element.scrollTop = element.scrollHeight;
-  }, [logContent, following, debouncedSearchQuery]);
-
-  const handleLogScroll = useCallback((event) => {
-    const element = event.currentTarget;
-    const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+  // Follow mode (viewer keeps the newest line in view) turns off when the user scrolls up.
+  const handleFollowingChange = useCallback((atBottom) => {
     setFollowing((previous) => (previous === atBottom ? previous : atBottom));
   }, []);
 
+  const updateViewerSettings = useCallback((updates) => {
+    setViewerSettings((previous) => {
+      const next = { ...previous, ...(typeof updates === "function" ? updates(previous) : updates) };
+      try {
+        localStorage.setItem(VIEWER_SETTINGS_KEY, JSON.stringify(next));
+      } catch {
+        // Settings still apply for this session
+      }
+      return next;
+    });
+  }, []);
+
+  const resetPause = useCallback(() => {
+    pausedRef.current = false;
+    pausedBufferRef.current = { replace: null, chunks: [] };
+    setPaused(false);
+    setPausedNewLines(0);
+  }, []);
+
+  // Pause keeps the view still while output keeps arriving; resume applies everything buffered at once.
+  const togglePause = useCallback(() => {
+    if (!pausedRef.current) {
+      pausedRef.current = true;
+      setPaused(true);
+      return;
+    }
+    const { replace, chunks } = pausedBufferRef.current;
+    resetPause();
+    if (replace || chunks.length) {
+      setLogView((previous) => {
+        const base = replace ? createLogView(replace.content || "", { lineOffset: replace.lineOffset || 0 }) : previous;
+        return appendToLogView(base, chunks.join(""));
+      });
+    }
+  }, [resetPause]);
+
   const startStreaming = useCallback(() => {
     stopStreaming();
+    resetPause();
     if (!currentService || !selectedLogFile || !isActiveSelection) return;
 
     setConnectionStatus("connecting");
-    const base = "http://localhost:4000";
-    const stream = new EventSource(`${base}/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/stream`);
+    const stream = new EventSource(`${LOG_API_BASE}/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/stream`);
 
     stream.onopen = () => setConnectionStatus("connected");
     stream.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        if (data.type === "levels") {
+          // Whole-file counts arrive with each update (also while paused: they describe the file, not the view).
+          const next = { lineCount: data.lineCount, counts: data.counts };
+          setFileLevels((previous) => (JSON.stringify(previous) === JSON.stringify(next) ? previous : next));
+          return;
+        }
+        if (pausedRef.current && (data.type === "replace" || data.type === "append")) {
+          const buffer = pausedBufferRef.current;
+          if (data.type === "replace") {
+            pausedBufferRef.current = { replace: data, chunks: [] };
+            setPausedNewLines(countNewlines(data.content || ""));
+          } else {
+            buffer.chunks.push(data.content || "");
+            setPausedNewLines((count) => count + countNewlines(data.content || ""));
+          }
+          return;
+        }
         if (data.type === "initial" || data.type === "replace") {
-          setLogContent(data.content || "(empty)");
+          setLogView(createLogView(data.content || "", { lineOffset: data.lineOffset || 0 }));
         } else if (data.type === "append") {
-          setLogContent((previous) => previous + (data.content || ""));
+          setLogView((previous) => appendToLogView(previous, data.content || ""));
         }
       } catch {
         setConnectionStatus("error");
@@ -478,7 +653,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     };
     stream.onerror = () => setConnectionStatus("error");
     eventSourceRef.current = stream;
-  }, [currentService, isActiveSelection, selectedLogFile, stopStreaming]);
+  }, [currentService, isActiveSelection, resetPause, selectedLogFile, stopStreaming]);
 
   useEffect(() => {
     loadServices();
@@ -510,6 +685,38 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     const interval = setInterval(() => loadLogFiles(currentService, { silent: true }), FILE_LIST_POLL_MS);
     return () => clearInterval(interval);
   }, [isActive, currentService, loadLogFiles]);
+
+  useEffect(() => {
+    setSelection(null);
+    setExpandedFolds(new Set());
+    setNotice("");
+    setFileLevels(null);
+  }, [currentService, selectedLogFile]);
+
+  const selectedLogFileRef = useRef("");
+  selectedLogFileRef.current = selectedLogFile;
+
+  // Whole-file level counts (backend index). While the live stream is connected it sends them with every
+  // update; otherwise (previous run, earlier window shown, stream down) they are fetched here.
+  const streamConnected = connectionStatus === "connected";
+  useEffect(() => {
+    if (!isActive || !currentService || !selectedLogFile || streamConnected) return undefined;
+    let active = true;
+    const load = () => {
+      api.get(`/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/levels`)
+        .then((data) => {
+          if (active) setFileLevels((previous) => (JSON.stringify(previous) === JSON.stringify(data) ? previous : data));
+        })
+        .catch(() => {});
+    };
+    load();
+    if (!isActiveSelection) return () => { active = false; };
+    const interval = setInterval(load, FILE_LIST_POLL_MS);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [currentService, isActive, isActiveSelection, selectedLogFile, streamConnected]);
 
   useEffect(() => {
     if (!selectedLogFile || !currentService) return undefined;
@@ -552,7 +759,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       });
       try {
         const data = await api.get(
-          `/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/search?q=${encodeURIComponent(debouncedSearchQuery)}&limit=50`
+          `/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/search?q=${encodeURIComponent(debouncedSearchQuery)}&limit=200&case=${caseSensitive}&regex=${regexSearch}`
         );
         if (!active) return;
         updateCurrentSearchState({
@@ -581,7 +788,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     return () => {
       active = false;
     };
-  }, [currentService, debouncedSearchQuery, selectedLogFile, updateCurrentSearchState]);
+  }, [caseSensitive, currentService, debouncedSearchQuery, regexSearch, selectedLogFile, updateCurrentSearchState]);
 
   const runningServices = useServiceRunningStates(services, isActive);
 
@@ -604,24 +811,208 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
 
   const streamChip = prettifyStatus(connectionStatus);
 
-  const copyLogs = async () => {
+  const matcher = useMemo(
+    () => buildMatcher(debouncedSearchQuery, { caseSensitive, regex: regexSearch }),
+    [caseSensitive, debouncedSearchQuery, regexSearch]
+  );
+  const { levels: shownLevels, onlyMatching } = serviceFilters[currentService] || NO_FILTERS;
+  const updateServiceFilters = useCallback((updates) => {
+    if (!currentService) return;
+    setServiceFilters((previous) => {
+      const current = previous[currentService] || NO_FILTERS;
+      return { ...previous, [currentService]: { ...current, ...(typeof updates === "function" ? updates(current) : updates) } };
+    });
+  }, [currentService]);
+  const levelFilter = useMemo(() => (shownLevels ? new Set(shownLevels) : null), [shownLevels]);
+  const filterByMatch = onlyMatching && matcher && !matcher.error ? matcher : null;
+  const rows = useMemo(
+    () => buildRows(logView, { levels: levelFilter, matcher: filterByMatch, collapseStacks, expandedFolds }),
+    [collapseStacks, expandedFolds, filterByMatch, levelFilter, logView]
+  );
+  const levelCounts = useMemo(() => countLevels(logView), [logView]);
+  // Loaded lines are only part of the file (older lines trimmed, or an earlier window is shown).
+  const partialView = logLineOffset > 0 || logWindowed || (fileLevels ? fileLevels.lineCount > loadedLineCount : false);
+  const layoutKey = `${logView.version}|${logLineOffset}|${shownLevels?.join(",") || "all"}|${filterByMatch ? debouncedSearchQuery : ""}|${caseSensitive}|${regexSearch}|${collapseStacks}|${expandedFolds.size}|${[...expandedFolds].join(",")}`;
+
+  const lineIndex = useCallback((line) => line - logLineOffset - 1, [logLineOffset]);
+  const isLineLoaded = useCallback(
+    (lineNumber) => lineNumber > logLineOffset && lineNumber <= logLineOffset + loadedLineCount,
+    [loadedLineCount, logLineOffset]
+  );
+
+  const showCopied = useCallback((label) => {
+    setCopiedLabel(label);
+    setCopyState("copied");
+    setTimeout(() => setCopyState(""), 2000);
+  }, []);
+
+  const copyLines = useCallback(async (indexes, label) => {
+    if (!indexes.length) return;
     try {
-      await navigator.clipboard.writeText(logContent);
-      setCopyState("copied");
+      await copyToClipboard(joinPlain(logView, indexes));
+      showCopied(label || `Copied ${indexes.length.toLocaleString()} line${indexes.length === 1 ? "" : "s"}`);
     } catch {
       setCopyState("failed");
+      setTimeout(() => setCopyState(""), 2500);
     }
-    setTimeout(() => setCopyState(""), 2000);
-  };
+  }, [logView, showCopied]);
+
+  const selectedIndexes = useMemo(() => {
+    if (!selection) return [];
+    const first = Math.max(0, lineIndex(Math.min(selection.from, selection.to)));
+    const last = Math.min(loadedLineCount - 1, lineIndex(Math.max(selection.from, selection.to)));
+    const indexes = [];
+    for (let index = first; index <= last; index += 1) indexes.push(index);
+    return indexes;
+  }, [lineIndex, loadedLineCount, selection]);
+
+  const copySelectedLines = useCallback(() => copyLines(selectedIndexes), [copyLines, selectedIndexes]);
+  const copyVisibleLines = useCallback(() => copyLines(rowsToIndexes(rows)), [copyLines, rows]);
+  const copyAllLines = useCallback(() => {
+    const indexes = [];
+    for (let index = 0; index < loadedLineCount; index += 1) indexes.push(index);
+    copyLines(indexes);
+  }, [copyLines, loadedLineCount]);
+
+  const downloadLogFile = useCallback(() => {
+    if (!currentService || !selectedLogFile) return;
+    const link = document.createElement("a");
+    link.href = `${LOG_API_BASE}/logs/${currentService}/${encodeURIComponent(selectedLogFile)}/download`;
+    link.download = selectedLogFile;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [currentService, selectedLogFile]);
+
+  // Loads lines around a line that is not loaded, pausing live updates while they are shown.
+  const loadLinesAround = useCallback(async (lineNumber) => {
+    if (!currentService || !selectedLogFile) return;
+    const requestId = windowRequestRef.current + 1;
+    windowRequestRef.current = requestId;
+    stopStreaming();
+    resetPause();
+    const startLine = Math.max(1, lineNumber - MATCH_CONTEXT_LINES_BEFORE);
+    try {
+      const data = await api.get(
+        `/logs/${currentService}/${encodeURIComponent(selectedLogFile)}?startLine=${startLine}&count=${MATCH_CONTEXT_LINES}`
+      );
+      if (windowRequestRef.current !== requestId) return;
+      if (!data.lineCount) {
+        setNotice(`Line ${lineNumber.toLocaleString()} is past the end of this log.`);
+        return;
+      }
+      pendingScrollLineRef.current = lineNumber;
+      setLogView(createLogView(data.content || "", { lineOffset: data.lineOffset || 0, windowed: true }));
+    } catch (error) {
+      if (windowRequestRef.current !== requestId) return;
+      setLogView(messageView(`Error loading log lines: ${error.message}`));
+    }
+  }, [currentService, resetPause, selectedLogFile, stopStreaming]);
+
+  // Scroll once lines loaded by loadLinesAround have rendered.
+  useEffect(() => {
+    if (pendingScrollLineRef.current === null) return;
+    viewerRef.current?.scrollToLine(pendingScrollLineRef.current);
+    pendingScrollLineRef.current = null;
+  }, [logView]);
+
+  // Scrolls to a file line, loading it first when it is outside the loaded part.
+  const revealLine = useCallback((lineNumber) => {
+    setFollowing(false);
+    setNotice("");
+    if (isLineLoaded(lineNumber)) {
+      viewerRef.current?.scrollToLine(lineNumber);
+    } else {
+      loadLinesAround(lineNumber);
+    }
+  }, [isLineLoaded, loadLinesAround]);
 
   const jumpToMatch = useCallback((lineNumber) => {
     updateCurrentSearchState({
       selectedMatchLine: lineNumber,
     });
-    if (!logContentRef.current) return;
-    const lineHeightPx = 19.2;
-    logContentRef.current.scrollTop = Math.max(0, (lineNumber - 3) * lineHeightPx);
-  }, [updateCurrentSearchState]);
+    revealLine(lineNumber);
+  }, [revealLine, updateCurrentSearchState]);
+
+  const goToLine = useCallback(() => {
+    const lineNumber = parseInt(goToLineText, 10);
+    if (!lineNumber || lineNumber < 1) return;
+    setSelection({ anchor: lineNumber, from: lineNumber, to: lineNumber });
+    revealLine(lineNumber);
+  }, [goToLineText, revealLine]);
+
+  // Next/previous log entry at ERROR level within the loaded lines, starting from the selection or the top of the view.
+  const moveToError = useCallback((direction) => {
+    const fromLine = selection?.to ?? viewerRef.current?.getTopLine() ?? logLineOffset + 1;
+    const step = direction === "next" ? 1 : -1;
+    let index = lineIndex(fromLine) + (selection || direction === "previous" ? step : 0);
+    for (; index >= 0 && index < loadedLineCount; index += step) {
+      if (logView.starts[index] && logView.levels[index] === "error") {
+        const lineNumber = logLineOffset + index + 1;
+        setSelection({ anchor: lineNumber, from: lineNumber, to: lineNumber });
+        revealLine(lineNumber);
+        return;
+      }
+    }
+    // Not in the loaded lines: ask the backend's level index, which covers the whole file.
+    if (!currentService || !selectedLogFile) return;
+    const fileName = selectedLogFile;
+    api.get(`/logs/${currentService}/${encodeURIComponent(fileName)}/levels/find?level=error&from=${fromLine}&direction=${direction}`)
+      .then((data) => {
+        if (fileName !== selectedLogFileRef.current) return;
+        if (data?.lineNumber) {
+          setSelection({ anchor: data.lineNumber, from: data.lineNumber, to: data.lineNumber });
+          revealLine(data.lineNumber);
+        } else {
+          setNotice(direction === "next" ? "No more errors in this log." : "No earlier errors in this log.");
+        }
+      })
+      .catch((error) => setNotice(`Couldn't look up errors: ${error.message}`));
+  }, [currentService, lineIndex, loadedLineCount, logLineOffset, logView, revealLine, selectedLogFile, selection]);
+
+  const handleGutterClick = useCallback((lineNumber, event) => {
+    setSelection((previous) => {
+      if (event.shiftKey && previous) return { anchor: previous.anchor, from: previous.anchor, to: lineNumber };
+      if (previous && previous.from === lineNumber && previous.to === lineNumber) return null;
+      return { anchor: lineNumber, from: lineNumber, to: lineNumber };
+    });
+  }, []);
+
+  const toggleFold = useCallback((foldLine) => {
+    setExpandedFolds((previous) => {
+      const next = new Set(previous);
+      if (next.has(foldLine)) next.delete(foldLine);
+      else next.add(foldLine);
+      return next;
+    });
+  }, []);
+
+  const toggleLevel = useCallback((level) => {
+    updateServiceFilters((previous) => {
+      const current = new Set(previous.levels || LEVELS);
+      if (current.has(level)) current.delete(level);
+      else current.add(level);
+      const levels = LEVELS.filter((item) => current.has(item));
+      return { levels: levels.length === 0 || levels.length === LEVELS.length ? null : levels };
+    });
+  }, [updateServiceFilters]);
+
+  const followLatest = useCallback(() => {
+    setFollowing(true);
+    viewerRef.current?.scrollToBottom();
+  }, []);
+
+  // Leaves an earlier part of the log and goes back to the newest output (live again for the current run).
+  const showLatestLog = useCallback(() => {
+    windowRequestRef.current += 1;
+    setFollowing(true);
+    setSelection(null);
+    if (isActiveSelection) {
+      startStreaming();
+    } else {
+      refreshCurrentLog();
+    }
+  }, [isActiveSelection, refreshCurrentLog, startStreaming]);
 
   const moveToSearchResult = useCallback((direction) => {
     if (!searchResults.length) return;
@@ -653,114 +1044,82 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     );
   }, []);
 
-  const highlightLogLine = useCallback((line, query) => {
-    if (!query) return line || "\u00A0";
+  // Keyboard shortcuts while the Logs tab is shown (see SHORTCUTS).
+  useEffect(() => {
+    if (!isActive || !currentService) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      const inField = target instanceof HTMLElement &&
+        (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+      const modifier = event.ctrlKey || event.metaKey;
+      const key = event.key;
 
-    const sourceLine = String(line || "");
-    const lowerLine = sourceLine.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-
-    if (!lowerLine.includes(lowerQuery)) {
-      return sourceLine || "\u00A0";
-    }
-
-    const parts = [];
-    let cursor = 0;
-    let matchIndex = lowerLine.indexOf(lowerQuery);
-
-    while (matchIndex !== -1) {
-      if (matchIndex > cursor) {
-        parts.push(sourceLine.slice(cursor, matchIndex));
+      if (modifier && !event.altKey && key.toLowerCase() === "f") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+        return;
       }
-      parts.push(
-        <Box
-          key={`${matchIndex}-${cursor}`}
-          component="mark"
-          sx={{
-            backgroundColor: "rgba(250,204,21,0.45)",
-            color: "inherit",
-            px: 0.25,
-            borderRadius: 0.5,
-          }}
-        >
-          {sourceLine.slice(matchIndex, matchIndex + query.length)}
-        </Box>
-      );
-      cursor = matchIndex + query.length;
-      matchIndex = lowerLine.indexOf(lowerQuery, cursor);
-    }
-
-    if (cursor < sourceLine.length) {
-      parts.push(sourceLine.slice(cursor));
-    }
-
-    return parts.length > 0 ? parts : "\u00A0";
-  }, []);
-
-  const renderedLogContent = useMemo(() => {
-    if (!debouncedSearchQuery) {
-      // Highlight the run header ([RUN STARTED], [RUN CONFIG], [RUN COMMAND]) written at the top of each run.
-      const headerEnd = logContent.search(/\n(?!\[RUN [A-Z]+\])[^\n]*\n?/);
-      const header = headerEnd === -1 ? logContent : logContent.slice(0, headerEnd + 1);
-      if (!header.startsWith("[RUN ")) {
-        return logContent;
+      if (modifier && !event.altKey && key.toLowerCase() === "g") {
+        event.preventDefault();
+        goToLineInputRef.current?.focus();
+        goToLineInputRef.current?.select();
+        return;
       }
-      return (
-        <>
-          {header.split("\n").filter(Boolean).map((line, index) => (
-            <Box
-              key={`run-header-${index}`}
-              component="span"
-              sx={{
-                display: "block",
-                color: line.startsWith("[RUN CONFIG]") ? "#5eead4" : line.startsWith("[RUN COMMAND]") ? "#93c5fd" : "#94a3b8",
-                fontWeight: line.startsWith("[RUN STARTED]") ? 400 : 600,
-              }}
-            >
-              {line}
-            </Box>
-          ))}
-          {logContent.slice(header.length)}
-        </>
-      );
-    }
+      if (inField || document.querySelector('[role="dialog"], [role="menu"]')) return;
+      if (modifier && key.toLowerCase() === "c") {
+        if (selection && !window.getSelection()?.toString()) {
+          event.preventDefault();
+          copySelectedLines();
+        }
+        return;
+      }
+      if (modifier || event.altKey) return;
 
-    return logContent.split("\n").map((line, index) => {
-      const lineNumber = index + 1;
-      const isSelected = selectedMatchLine === lineNumber;
-
-      return (
-        <Box
-          key={`${lineNumber}-${line}`}
-          component="div"
-          sx={{
-            display: "block",
-            width: "100%",
-            backgroundColor: isSelected
-              ? "rgba(59,130,246,0.18)"
-              : "transparent",
-            borderLeft: isSelected ? "2px solid rgba(96,165,250,0.95)" : "2px solid transparent",
-            pl: 1,
-            ml: -1,
-          }}
-        >
-          {highlightLogLine(line, debouncedSearchQuery)}
-        </Box>
-      );
-    });
-  }, [debouncedSearchQuery, highlightLogLine, logContent, selectedMatchLine]);
+      const actions = {
+        Escape: () => setSelection(null),
+        n: () => moveToSearchResult("next"),
+        N: () => moveToSearchResult("previous"),
+        e: () => moveToError("next"),
+        E: () => moveToError("previous"),
+        p: togglePause,
+        End: followLatest,
+        G: followLatest,
+        Home: () => {
+          setFollowing(false);
+          viewerRef.current?.scrollToTop();
+        },
+        w: () => updateViewerSettings((previous) => ({ wrap: !previous.wrap })),
+        "+": () => updateViewerSettings((previous) => ({ fontSize: FONT_SIZES.find((size) => size > previous.fontSize) || previous.fontSize })),
+        "=": () => updateViewerSettings((previous) => ({ fontSize: FONT_SIZES.find((size) => size > previous.fontSize) || previous.fontSize })),
+        "-": () => updateViewerSettings((previous) => ({ fontSize: [...FONT_SIZES].reverse().find((size) => size < previous.fontSize) || previous.fontSize })),
+        "?": () => setShortcutsOpen(true),
+      };
+      const action = actions[key];
+      if (action) {
+        event.preventDefault();
+        action();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [copySelectedLines, currentService, followLatest, isActive, moveToError, moveToSearchResult, selection, togglePause, updateViewerSettings]);
 
   const renderSearchControls = () => (
     <Stack direction="row" spacing={0.5} alignItems="center">
       <TextField
         size="small"
         placeholder="Search inside current log"
+        inputRef={searchInputRef}
         value={searchQuery}
         onChange={(event) => updateCurrentSearchState({ searchQuery: event.target.value })}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
             moveToSearchResult(event.shiftKey ? "previous" : "next");
+          } else if (event.key === "Escape") {
+            event.currentTarget.querySelector("input")?.blur();
           }
         }}
         inputProps={{ "aria-label": "Search inside current log (Enter: next match, Shift+Enter: previous)" }}
@@ -770,9 +1129,45 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               <SearchIcon sx={{ fontSize: "1rem" }} />
             </InputAdornment>
           ),
+          endAdornment: (
+            <InputAdornment position="end" sx={{ gap: 0.25 }}>
+              {[
+                ["caseSensitive", "Aa", "Match case"],
+                ["regex", ".*", "Regular expression"],
+              ].map(([setting, label, title]) => (
+                <Tooltip key={setting} title={title}>
+                  <Box
+                    component="button"
+                    type="button"
+                    aria-pressed={Boolean(viewerSettings[setting])}
+                    aria-label={title}
+                    onClick={() => updateViewerSettings((previous) => ({ [setting]: !previous[setting] }))}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: viewerSettings[setting] ? "primary.main" : "transparent",
+                      bgcolor: viewerSettings[setting] ? "color-mix(in srgb, var(--sm-accent) 12%, transparent)" : "transparent",
+                      color: viewerSettings[setting] ? "primary.main" : "text.secondary",
+                      borderRadius: 1,
+                      px: 0.5,
+                      py: 0,
+                      cursor: "pointer",
+                      font: "inherit",
+                      fontFamily: CODE_FONT,
+                      fontSize: "0.7rem",
+                      fontWeight: 700,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {label}
+                  </Box>
+                </Tooltip>
+              ))}
+            </InputAdornment>
+          ),
           sx: SEARCH_INPUT_SX,
         }}
-        sx={{ width: { xs: "100%", sm: 240 } }}
+        error={Boolean(matcher?.error)}
+        sx={{ width: { xs: "100%", sm: 300 } }}
       />
       {searchQuery ? (
         <Button size="small" variant="text" onClick={() => updateCurrentSearchState({
@@ -787,13 +1182,166 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
           Clear
         </Button>
       ) : null}
-      <Tooltip title={wrapped ? "Disable wrap" : "Wrap lines"}>
-        <IconButton size="small" color={wrapped ? "primary" : "default"} onClick={() => setWrapped((previous) => !previous)}>
+      <Tooltip title={wrapped ? "Disable wrap (w)" : "Wrap lines (w)"}>
+        <IconButton size="small" color={wrapped ? "primary" : "default"} onClick={() => updateViewerSettings({ wrap: !wrapped })}>
           <WrapTextIcon fontSize="small" />
         </IconButton>
       </Tooltip>
     </Stack>
   );
+
+  const renderFilterBar = () => (
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        flexWrap: "wrap",
+        gap: 0.75,
+        px: 1.5,
+        py: 0.5,
+        flexShrink: 0,
+        borderBottom: "1px solid var(--c-border-94a3b8-016)",
+      }}
+    >
+      {LEVELS.map((level) => {
+        const shown = !shownLevels || shownLevels.includes(level);
+        const fileCount = fileLevels?.counts?.[level];
+        const showFileCount = partialView && fileCount !== undefined && fileCount !== levelCounts[level];
+        const countText = showFileCount
+          ? `${levelCounts[level].toLocaleString()} / ${fileCount.toLocaleString()}`
+          : levelCounts[level].toLocaleString();
+        return (
+          <Tooltip
+            key={level}
+            title={`${shown ? "Hide" : "Show"} ${LEVEL_LABELS[level].toLowerCase()}${showFileCount
+              ? ` · ${levelCounts[level].toLocaleString()} loaded, ${fileCount.toLocaleString()} in the whole file`
+              : ""}`}
+          >
+            <Chip
+              size="small"
+              clickable
+              onClick={() => toggleLevel(level)}
+              label={`${LEVEL_LABELS[level]} ${countText}`}
+              variant={shown ? "filled" : "outlined"}
+              sx={{
+                ...compactChipSx,
+                fontWeight: 700,
+                color: shown ? "#fff" : "text.secondary",
+                bgcolor: shown ? LEVEL_CHIP_COLORS[level] : "transparent",
+                "&:hover": { bgcolor: shown ? LEVEL_CHIP_COLORS[level] : undefined, opacity: 0.9 },
+              }}
+            />
+          </Tooltip>
+        );
+      })}
+      <Tooltip title={debouncedSearchQuery ? "Show only lines matching the search" : "Type a search first"}>
+        <span>
+          <Chip
+            size="small"
+            clickable
+            disabled={!debouncedSearchQuery}
+            onClick={() => updateServiceFilters({ onlyMatching: !onlyMatching })}
+            label="Only matching lines"
+            color={onlyMatching && debouncedSearchQuery ? "primary" : "default"}
+            variant={onlyMatching && debouncedSearchQuery ? "filled" : "outlined"}
+            sx={compactChipSx}
+          />
+        </span>
+      </Tooltip>
+      {rows.length !== loadedLineCount && !logView.message ? (
+        <Typography variant="caption" sx={{ color: "text.secondary" }}>
+          {rowsToIndexes(rows).length.toLocaleString()} of {loadedLineCount.toLocaleString()} lines shown
+        </Typography>
+      ) : null}
+
+      <Box sx={{ flex: 1 }} />
+
+      {selectedIndexes.length ? (
+        <Stack direction="row" spacing={0.5} alignItems="center">
+          <Typography variant="caption" sx={{ fontWeight: 700 }}>
+            {selectedIndexes.length.toLocaleString()} line{selectedIndexes.length === 1 ? "" : "s"} selected
+          </Typography>
+          <Button size="small" startIcon={<ContentCopyIcon sx={{ fontSize: "0.9rem !important" }} />} onClick={copySelectedLines} sx={{ minWidth: 0, py: 0 }}>
+            Copy
+          </Button>
+          <Button size="small" onClick={() => setSelection(null)} sx={{ minWidth: 0, py: 0 }}>
+            Clear
+          </Button>
+        </Stack>
+      ) : null}
+      <Stack direction="row" spacing={0.25} alignItems="center" sx={{ flexShrink: 0 }}>
+        <Tooltip title="Previous error (Shift+E)">
+          <IconButton size="small" aria-label="Previous error" onClick={() => moveToError("previous")}>
+            <ArrowUpIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+        <Chip size="small" icon={<ErrorIcon sx={{ fontSize: "0.9rem !important" }} />} label="Errors" variant="outlined" sx={compactChipSx} />
+        <Tooltip title="Next error (e)">
+          <IconButton size="small" aria-label="Next error" onClick={() => moveToError("next")}>
+            <ArrowDownIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Stack>
+      <TextField
+        size="small"
+        placeholder="Go to line"
+        inputRef={goToLineInputRef}
+        value={goToLineText}
+        onChange={(event) => setGoToLineText(event.target.value.replace(/[^0-9]/g, ""))}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            goToLine();
+          }
+        }}
+        inputProps={{ "aria-label": "Go to line (Ctrl/⌘ G)", inputMode: "numeric" }}
+        InputProps={{ sx: { ...SEARCH_INPUT_SX, height: 28, fontSize: "0.75rem" } }}
+        sx={{ width: 110 }}
+      />
+    </Box>
+  );
+
+  const renderNotices = () => {
+    const items = [];
+    if (logWindowed) {
+      items.push(
+        <Alert key="window" severity="info" icon={false} sx={{ py: 0, borderRadius: 0 }}
+          action={<Button size="small" onClick={showLatestLog}>Back to latest</Button>}>
+          Showing lines {(logLineOffset + 1).toLocaleString()}–{(logLineOffset + loadedLineCount).toLocaleString()} · live updates paused
+        </Alert>
+      );
+    } else if (logLineOffset > 0) {
+      items.push(
+        <Alert key="trimmed" severity="info" icon={false} sx={{ py: 0, borderRadius: 0 }}
+          action={<Button size="small" startIcon={<DownloadIcon />} onClick={downloadLogFile}>Download full log</Button>}>
+          {logLineOffset.toLocaleString()} earlier lines aren't loaded. Search and "Go to line" still cover the whole file.
+        </Alert>
+      );
+    }
+    if (paused) {
+      items.push(
+        <Alert key="paused" severity="warning" icon={false} sx={{ py: 0, borderRadius: 0 }}
+          action={<Button size="small" startIcon={<ResumeIcon />} onClick={togglePause}>Resume</Button>}>
+          Live output paused{pausedNewLines ? ` · ${pausedNewLines.toLocaleString()} new line${pausedNewLines === 1 ? "" : "s"} waiting` : ""}
+        </Alert>
+      );
+    }
+    if (matcher?.error) {
+      items.push(
+        <Alert key="regex" severity="error" sx={{ py: 0, borderRadius: 0 }}>
+          Invalid regular expression: {matcher.error}
+        </Alert>
+      );
+    }
+    if (notice) {
+      items.push(
+        <Alert key="notice" severity="info" sx={{ py: 0, borderRadius: 0 }} onClose={() => setNotice("")}>
+          {notice}
+        </Alert>
+      );
+    }
+    return items.length ? <Box sx={{ flexShrink: 0 }}>{items}</Box> : null;
+  };
 
   const openServiceFromExplorer = (serviceName) => {
     setSelectedServiceName(serviceName);
@@ -1000,20 +1548,24 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       <Box sx={{ flex: 1 }} />
 
       {renderSearchControls()}
-      <Tooltip title={following ? "Following new lines — scroll up to pause" : "Jump to latest and follow new lines"}>
+      <Tooltip title={following ? "Following new lines — scroll up to stop" : "Jump to latest and follow new lines (End)"}>
         <IconButton
           size="small"
           color={following ? "primary" : "default"}
           aria-pressed={following}
           aria-label="Follow new lines"
-          onClick={() => {
-            setFollowing(true);
-            if (logContentRef.current) logContentRef.current.scrollTop = logContentRef.current.scrollHeight;
-          }}
+          onClick={followLatest}
         >
           <FollowIcon fontSize="small" />
         </IconButton>
       </Tooltip>
+      {isActiveSelection && !logWindowed ? (
+        <Tooltip title={paused ? "Resume live output (p)" : "Pause live output (p)"}>
+          <IconButton size="small" aria-label={paused ? "Resume live output" : "Pause live output"} color={paused ? "warning" : "default"} onClick={togglePause}>
+            {paused ? <ResumeIcon fontSize="small" /> : <PauseIcon fontSize="small" />}
+          </IconButton>
+        </Tooltip>
+      ) : null}
       <Tooltip title="Reload log">
         <IconButton size="small" aria-label="Reload log" onClick={refreshCurrentLog}>
           <ReloadIcon fontSize="small" />
@@ -1021,12 +1573,83 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
       </Tooltip>
       <Tooltip
         open={copyState ? true : undefined}
-        title={copyState === "copied" ? "Copied" : copyState === "failed" ? "Couldn't copy — clipboard blocked" : "Copy log"}
+        title={copyState === "copied" ? copiedLabel || "Copied" : copyState === "failed" ? "Couldn't copy — clipboard blocked" : "Copy or download"}
       >
-        <IconButton size="small" aria-label="Copy log" onClick={copyLogs} color={copyState === "failed" ? "error" : "default"}>
+        <IconButton size="small" aria-label="Copy log" onClick={(event) => setCopyMenuAnchor(event.currentTarget)} color={copyState === "failed" ? "error" : "default"}>
           {copyState === "copied" ? <CheckIcon fontSize="small" sx={{ color: "success.main" }} /> : <ContentCopyIcon fontSize="small" />}
         </IconButton>
       </Tooltip>
+      <Menu anchorEl={copyMenuAnchor} open={Boolean(copyMenuAnchor)} onClose={() => setCopyMenuAnchor(null)}>
+        {[
+          ["Copy selected lines", selectedIndexes.length, copySelectedLines, "Click line numbers (Shift+click for a range) to select"],
+          ["Copy lines shown", rowsToIndexes(rows).length, copyVisibleLines, "Lines that pass the level and search filters, stack traces included"],
+          ["Copy all loaded lines", loadedLineCount, copyAllLines, logLineOffset > 0 ? "Earlier lines aren't loaded — download for the whole file" : "The whole log"],
+        ].map(([label, count, action, hint]) => (
+          <MenuItem
+            key={label}
+            disabled={!count || Boolean(logView.message)}
+            onClick={() => {
+              setCopyMenuAnchor(null);
+              action();
+            }}
+          >
+            <ListItemIcon><ContentCopyIcon fontSize="small" /></ListItemIcon>
+            <ListItemText primary={`${label} (${count.toLocaleString()})`} secondary={hint} secondaryTypographyProps={{ fontSize: "0.7rem" }} />
+          </MenuItem>
+        ))}
+        <Divider />
+        <MenuItem
+          disabled={!selectedLogFile}
+          onClick={() => {
+            setCopyMenuAnchor(null);
+            downloadLogFile();
+          }}
+        >
+          <ListItemIcon><DownloadIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary="Download full log file" secondary={selectedLogFile} secondaryTypographyProps={{ fontSize: "0.7rem" }} />
+        </MenuItem>
+      </Menu>
+      <Tooltip title="View options">
+        <IconButton size="small" aria-label="View options" onClick={(event) => setViewMenuAnchor(event.currentTarget)}>
+          <ViewOptionsIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+      <Menu anchorEl={viewMenuAnchor} open={Boolean(viewMenuAnchor)} onClose={() => setViewMenuAnchor(null)}>
+        <MenuItem disableRipple sx={{ cursor: "default", "&:hover": { bgcolor: "transparent" } }}>
+          <ListItemText primary="Text size" secondary={`${fontSize}px`} secondaryTypographyProps={{ fontSize: "0.7rem" }} />
+          <IconButton size="small" aria-label="Smaller text" disabled={fontSize <= FONT_SIZES[0]}
+            onClick={() => updateViewerSettings({ fontSize: [...FONT_SIZES].reverse().find((size) => size < fontSize) || fontSize })}>
+            <TextDecreaseIcon fontSize="small" />
+          </IconButton>
+          <IconButton size="small" aria-label="Larger text" disabled={fontSize >= FONT_SIZES[FONT_SIZES.length - 1]}
+            onClick={() => updateViewerSettings({ fontSize: FONT_SIZES.find((size) => size > fontSize) || fontSize })}>
+            <TextIncreaseIcon fontSize="small" />
+          </IconButton>
+        </MenuItem>
+        <Divider />
+        {[
+          ["wrap", "Wrap long lines", <WrapTextIcon fontSize="small" />],
+          ["colorLevels", "Color lines by level", <ErrorIcon fontSize="small" />],
+          ["collapseStacks", "Collapse long stack traces", <CollapseIcon fontSize="small" />],
+        ].map(([setting, label, icon]) => (
+          <MenuItem key={setting} onClick={() => updateViewerSettings((previous) => ({ [setting]: !previous[setting] }))}>
+            <ListItemIcon>{icon}</ListItemIcon>
+            <ListItemText primary={label} />
+            {viewerSettings[setting] ? <CheckIcon fontSize="small" sx={{ ml: 2, color: "primary.main" }} /> : <Box sx={{ width: 20, ml: 2 }} />}
+          </MenuItem>
+        ))}
+        {expandedFolds.size ? (
+          <MenuItem onClick={() => { setExpandedFolds(new Set()); setViewMenuAnchor(null); }}>
+            <ListItemIcon><CollapseIcon fontSize="small" /></ListItemIcon>
+            <ListItemText primary="Collapse all opened stack traces" />
+          </MenuItem>
+        ) : null}
+        <Divider />
+        <MenuItem onClick={() => { setViewMenuAnchor(null); setShortcutsOpen(true); }}>
+          <ListItemIcon><KeyboardIcon fontSize="small" /></ListItemIcon>
+          <ListItemText primary="Keyboard shortcuts" secondary="?" secondaryTypographyProps={{ fontSize: "0.7rem" }} />
+        </MenuItem>
+      </Menu>
       <Tooltip title="Clear log">
         <span>
           <IconButton size="small" aria-label="Clear log" onClick={() => setConfirmClearOpen(true)} disabled={!selectedLogFile}>
@@ -1076,6 +1699,16 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               {selectedMatch.preview ? highlightMatchPreview(selectedMatch.preview, debouncedSearchQuery) : "(empty line)"}
             </Typography>
             <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+              {!isLineLoaded(selectedMatch.lineNumber) ? (
+                <Button size="small" variant="contained" disableElevation onClick={() => jumpToMatch(selectedMatch.lineNumber)}>
+                  Show line
+                </Button>
+              ) : null}
+              {logWindowed ? (
+                <Button size="small" onClick={showLatestLog}>
+                  Back to latest
+                </Button>
+              ) : null}
               <Button
                 size="small"
                 variant="outlined"
@@ -1237,28 +1870,26 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
               {renderViewerTabs()}
               {renderLogToolbar()}
               {debouncedSearchQuery ? renderSearchResults() : null}
+              {renderFilterBar()}
+              {renderNotices()}
 
-              <Box
-                component="pre"
-                ref={logContentRef}
-                onScroll={handleLogScroll}
-                sx={{
-                  flexGrow: 1,
-                  minHeight: 0,
-                  overflow: "auto",
-                  m: 0,
-                  px: 2,
-                  py: 1.5,
-                  backgroundColor: "#0f172a",
-                  color: "#e2e8f0",
-                  whiteSpace: wrapped ? "pre-wrap" : "pre",
-                  fontFamily: CODE_FONT,
-                  fontSize: "0.8rem",
-                  lineHeight: 1.5,
-                }}
-              >
-                {renderedLogContent}
-              </Box>
+              <LogViewer
+                ref={viewerRef}
+                view={logView}
+                rows={rows}
+                layoutKey={layoutKey}
+                fontSize={fontSize}
+                wrap={wrapped}
+                colorLevels={colorLevels}
+                matcher={matcher && !matcher.error ? matcher : null}
+                selectedMatchLine={debouncedSearchQuery ? selectedMatchLine : null}
+                selection={selection}
+                following={following}
+                onFollowingChange={handleFollowingChange}
+                onGutterClick={handleGutterClick}
+                onToggleFold={toggleFold}
+                emptyText={filterByMatch || shownLevels ? "(no lines match the filters)" : "(empty log)"}
+              />
             </>
           ) : (
             <Box sx={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", p: 4 }}>
@@ -1268,6 +1899,23 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         </Box>
       </Box>
       </Paper>
+
+      <Dialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Log viewer shortcuts</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Box component="dl" sx={{ display: "grid", gridTemplateColumns: "auto 1fr", columnGap: 2, rowGap: 0.75, m: 0 }}>
+            {SHORTCUTS.map(([keys, description]) => (
+              <Box key={keys} sx={{ display: "contents" }}>
+                <Box component="dt" sx={{ fontFamily: CODE_FONT, fontSize: "0.75rem", fontWeight: 700, whiteSpace: "nowrap" }}>{keys}</Box>
+                <Box component="dd" sx={{ m: 0, fontSize: "0.8rem", color: "text.secondary" }}>{description}</Box>
+              </Box>
+            ))}
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setShortcutsOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={confirmClearOpen} onClose={() => setConfirmClearOpen(false)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 800 }}>Clear this log?</DialogTitle>

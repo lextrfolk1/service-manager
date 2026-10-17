@@ -267,6 +267,7 @@ function App() {
             onOpenHelp={handleOpenHelp}
             onCloneService={handleCloneService}
             onEditInAdmin={handleEditInAdmin}
+            isActive={currentTab === 0}
           />
         </TabPanel>
         <TabPanel value={currentTab} index={1}>

@@ -1,28 +1,31 @@
 import { useEffect, useState } from "react";
 import api from "../services/api";
+import usePageVisible from "./usePageVisible";
 
 const DEFAULT_POLL_MS = 5000;
 
-// Polls each service's status and returns { [serviceName]: boolean running }.
-// Polling only runs while `enabled` is true; it fetches immediately when enabled.
+// Polls service status (one request for all services, without git info) and returns
+// { [serviceName]: boolean running }. Polling only runs while `enabled` is true and the
+// browser tab is visible; it fetches immediately when enabled.
 export default function useServiceRunningStates(services, enabled = true, pollMs = DEFAULT_POLL_MS) {
   const [runningStates, setRunningStates] = useState({});
+  const pageVisible = usePageVisible();
+  const active = enabled && pageVisible;
 
   useEffect(() => {
-    if (!enabled || services.length === 0) return undefined;
+    if (!active || services.length === 0) return undefined;
     let isSubscribed = true;
 
     async function fetchRunningStates() {
-      const results = await Promise.all(
-        services.map(async (service) => {
-          try {
-            const status = await api.get(`/service/${service.name}/status`);
-            return [service.name, Boolean(status?.running)];
-          } catch {
-            return [service.name, false];
-          }
-        })
-      );
+      let statuses = {};
+      try {
+        const names = services.map((service) => service.name).join(",");
+        const data = await api.get(`/services/status?git=false&names=${encodeURIComponent(names)}`);
+        statuses = data?.statuses || {};
+      } catch {
+        // Treat as not running
+      }
+      const results = services.map((service) => [service.name, Boolean(statuses[service.name]?.running)]);
       if (!isSubscribed) return;
       setRunningStates((previous) => {
         const changed = results.some(([name, running]) => previous[name] !== running);
@@ -36,7 +39,7 @@ export default function useServiceRunningStates(services, enabled = true, pollMs
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [enabled, services, pollMs]);
+  }, [active, services, pollMs]);
 
   return runningStates;
 }

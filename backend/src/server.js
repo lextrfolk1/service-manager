@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
+const fsp = require("fs/promises");
 const path = require("path");
 const os = require("os");
 const { execFile } = require("child_process");
@@ -8,7 +9,7 @@ const { execFile } = require("child_process");
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
 const runConfig = require("./runConfig");
-const { resolveConfigPath, getConfigMetadata } = require("./configResolver");
+const { resolveConfigPath, getConfigMetadata, readConfig, invalidateConfigCache } = require("./configResolver");
 const { killProcessOnPort, getPortProcess } = require("./utils/portUtils");
 let servicesConfigPath = resolveConfigPath();
 
@@ -83,11 +84,21 @@ async function openNativeDirectoryPicker(initialPath) {
 
 function loadConfig() {
   servicesConfigPath = resolveConfigPath();
-  console.log('Loading config from:', servicesConfigPath);
-  const raw = fs.readFileSync(servicesConfigPath, "utf8");
-  const parsed = JSON.parse(raw);
-  console.log('Config loaded, services found:', Object.keys(parsed.services || {}));
-  return parsed;
+  return readConfig();
+}
+
+// Length of buffer[0..length) without a trailing, incomplete UTF-8 character
+// (it is picked up on the next read once the rest of its bytes are written).
+function completeUtf8Length(buffer, length) {
+  let continuation = 0;
+  while (continuation < 3 && continuation < length && (buffer[length - 1 - continuation] & 0xc0) === 0x80) {
+    continuation += 1;
+  }
+  const leadIndex = length - 1 - continuation;
+  if (leadIndex < 0) return length;
+  const lead = buffer[leadIndex];
+  const expected = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
+  return expected > continuation + 1 ? leadIndex : length;
 }
 
 function sendOperationError(res, err) {
@@ -100,7 +111,8 @@ function sendOperationError(res, err) {
   });
 }
 
-let config = loadConfig();
+// Own copy: the PUT handlers below modify `config` before writing it, and must not touch the shared cache.
+let config = structuredClone(loadConfig());
 let services = config.services;
 let manager = new ServiceManager(config);
 
@@ -110,7 +122,8 @@ app.use(express.json());
 
 // Reload config helper
 function reloadConfig() {
-  config = loadConfig();
+  invalidateConfigCache();
+  config = structuredClone(loadConfig());
   services = config.services;
   manager = new ServiceManager(config);
 }
@@ -121,9 +134,7 @@ app.get("/services", (req, res) => {
     // Always use fresh config to catch manual edits
     const freshConfig = loadConfig();
     const freshServices = freshConfig.services;
-    
-    console.log('Services endpoint called, found services:', Object.keys(freshServices));
-    
+
     const list = Object.entries(freshServices).map(([name, meta]) => ({
       name,
       type: meta.type,
@@ -139,8 +150,7 @@ app.get("/services", (req, res) => {
       healthPath: meta.healthPath || null,
       enableGit: meta.enableGit !== false && freshConfig.config?.enableGit !== false
     }));
-    
-    console.log('Returning services list:', list.map(s => s.name));
+
     res.json({ services: list });
   } catch (error) {
     console.error('Error in /services endpoint:', error);
@@ -160,6 +170,20 @@ app.get("/services/metrics", async (req, res) => {
   }
 });
 
+// Status of all (or ?names=a,b) services in one request; ?git=false skips git info
+app.get("/services/status", async (req, res) => {
+  try {
+    const freshManager = getFreshManager();
+    const names = req.query.names
+      ? String(req.query.names).split(",").map((name) => name.trim()).filter(Boolean)
+      : undefined;
+    const statuses = await freshManager.statusAll(names, { includeGit: req.query.git !== "false" });
+    res.json({ statuses });
+  } catch (error) {
+    sendOperationError(res, error);
+  }
+});
+
 // Get single service metadata
 app.get("/services/:name", (req, res) => {
   // Always use fresh config to catch manual edits
@@ -174,7 +198,6 @@ app.get("/config", (req, res) => {
   try {
     // Always read fresh from file to catch manual edits
     const freshConfig = loadConfig();
-    console.log('Config loaded successfully, keys:', Object.keys(freshConfig));
     res.json({
       ...freshConfig,
       runtime: getConfigMetadata(),
@@ -439,9 +462,11 @@ app.get("/logs/:name", (req, res) => {
 });
 
 // Logs: get content
-app.get("/logs/:name/:file", (req, res) => {
+app.get("/logs/:name/:file", async (req, res) => {
   try {
-    const data = logger.getLog(req.params.name, req.params.file);
+    const startLine = Number(req.query.startLine) || undefined;
+    const count = Number(req.query.count) || undefined;
+    const data = await logger.getLog(req.params.name, req.params.file, { startLine, count });
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -449,106 +474,143 @@ app.get("/logs/:name/:file", (req, res) => {
 });
 
 // Logs: search within file
-app.get("/logs/:name/:file/search", (req, res) => {
+app.get("/logs/:name/:file/search", async (req, res) => {
   try {
     const query = req.query.q || "";
     const limit = Number(req.query.limit || 100);
-    const data = logger.searchLog(req.params.name, req.params.file, query, limit);
+    const data = await logger.searchLog(req.params.name, req.params.file, query, limit, {
+      caseSensitive: req.query.case === "true",
+      regex: req.query.regex === "true",
+    });
     res.json(data);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 
-// Logs: stream content via Server-Sent Events
-app.get("/logs/:name/:file/stream", (req, res) => {
+// Logs: entry counts per level for the whole file
+app.get("/logs/:name/:file/levels", async (req, res) => {
   try {
-    const serviceName = req.params.name;
-    const fileName = req.params.file;
-    
-    // Set SSE headers
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Cache-Control'
-    });
-
-    // Send initial log content
-    try {
-      const initialData = logger.getLog(serviceName, fileName);
-      res.write(`data: ${JSON.stringify({ type: 'initial', content: initialData.content })}\n\n`);
-    } catch (error) {
-      res.write(`data: ${JSON.stringify({ type: 'initial', content: `Error loading log: ${error.message}` })}\n\n`);
-    }
-
-    // Set up file watching
-    const logPath = logger.getLogPath(serviceName, fileName);
-    let lastSize = 0;
-    
-    if (fs.existsSync(logPath)) {
-      lastSize = fs.statSync(logPath).size;
-    }
-
-    const watchInterval = setInterval(() => {
-      try {
-        if (fs.existsSync(logPath)) {
-          const stats = fs.statSync(logPath);
-          if (stats.size > lastSize) {
-            // Read only the new content
-            const stream = fs.createReadStream(logPath, { start: lastSize });
-            let newContent = '';
-            
-            stream.on('data', (chunk) => {
-              newContent += chunk.toString();
-            });
-            
-            stream.on('end', () => {
-              if (newContent) {
-                res.write(`data: ${JSON.stringify({ type: 'append', content: newContent })}\n\n`);
-              }
-              lastSize = stats.size;
-            });
-
-            stream.on('error', (error) => {
-              console.error('Error reading log stream:', error);
-            });
-          } else if (stats.size < lastSize) {
-            // File was truncated (cleared)
-            try {
-              const fullContent = fs.readFileSync(logPath, 'utf8');
-              res.write(`data: ${JSON.stringify({ type: 'replace', content: fullContent })}\n\n`);
-              lastSize = stats.size;
-            } catch (readError) {
-              console.error('Error reading cleared log file:', readError);
-              res.write(`data: ${JSON.stringify({ type: 'replace', content: '' })}\n\n`);
-              lastSize = 0;
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error watching log file:', error);
-      }
-    }, 1000); // Check every second
-
-    // Send heartbeat every 30 seconds to keep connection alive
-    const heartbeatInterval = setInterval(() => {
-      res.write(`data: ${JSON.stringify({ type: 'heartbeat' })}\n\n`);
-    }, 30000);
-
-    // Clean up on client disconnect
-    const cleanup = () => {
-      clearInterval(watchInterval);
-      clearInterval(heartbeatInterval);
-    };
-
-    req.on('close', cleanup);
-    req.on('aborted', cleanup);
-
+    res.json(await logger.getLevelSummary(req.params.name, req.params.file));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.code === "ENOENT" ? 404 : err.statusCode || 500).json({ error: err.message });
   }
+});
+
+// Logs: next/previous entry at a level (?level=error|warn&from=<line>&direction=next|previous)
+app.get("/logs/:name/:file/levels/find", async (req, res) => {
+  try {
+    const fromLine = Number(req.query.from) || 0;
+    const direction = req.query.direction === "previous" ? "previous" : "next";
+    res.json(await logger.findLevelEntry(req.params.name, req.params.file, String(req.query.level || "error"), fromLine, direction));
+  } catch (err) {
+    res.status(err.code === "ENOENT" ? 404 : err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+// Logs: download the whole log file
+app.get("/logs/:name/:file/download", (req, res) => {
+  const { name, file } = req.params;
+  if (path.basename(file) !== file || !file.endsWith(".log") || name.includes("..") || name.includes("/")) {
+    return res.status(400).json({ error: "Invalid log file" });
+  }
+  const logPath = logger.getLogPath(name, file);
+  if (!fs.existsSync(logPath)) {
+    return res.status(404).json({ error: "Log file not found" });
+  }
+  res.download(logPath, file);
+});
+
+// Logs: stream content via Server-Sent Events
+app.get("/logs/:name/:file/stream", async (req, res) => {
+  const serviceName = req.params.name;
+  const fileName = req.params.file;
+  let closed = false;
+  let lastSize = 0;
+  let checking = false;
+  let watchInterval = null;
+  let heartbeatInterval = null;
+
+  const send = (payload) => {
+    if (!closed) res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+  const cleanup = () => {
+    closed = true;
+    clearInterval(watchInterval);
+    clearInterval(heartbeatInterval);
+  };
+  req.on("close", cleanup);
+  req.on("aborted", cleanup);
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Cache-Control"
+  });
+
+  const logPath = logger.getLogPath(serviceName, fileName);
+
+  // Whole-file level counts follow the stream, so the UI never waits for a poll.
+  const sendLevels = async () => {
+    try {
+      send({ type: "levels", ...(await logger.levelSummary(logPath)) });
+    } catch {
+      // Counts are optional; the file may not exist yet
+    }
+  };
+
+  // Sends the newest part of the file (bounded size) and remembers how much was read.
+  const sendTail = async (type) => {
+    try {
+      const tail = await logger.readLogTail(logPath);
+      lastSize = tail.size;
+      send({ type, content: tail.content, lineOffset: tail.lineOffset, truncated: tail.truncated });
+      await sendLevels();
+    } catch (error) {
+      lastSize = 0;
+      send({ type, content: error.code === "ENOENT" ? "" : `Error loading log: ${error.message}`, lineOffset: 0 });
+    }
+  };
+
+  await sendTail("initial");
+  if (closed) return;
+
+  // Poll size with async stat; skip a tick if the previous read is still running.
+  watchInterval = setInterval(async () => {
+    if (checking || closed) return;
+    checking = true;
+    try {
+      const { size } = await fsp.stat(logPath);
+      if (size < lastSize || size - lastSize > logger.MAX_LOG_RESPONSE_BYTES) {
+        // Truncated (cleared), or too much new output to append: resend the newest part.
+        await sendTail("replace");
+      } else if (size > lastSize) {
+        const handle = await fsp.open(logPath, "r");
+        try {
+          const length = size - lastSize;
+          const buffer = Buffer.alloc(length);
+          const { bytesRead } = await handle.read(buffer, 0, length, lastSize);
+          const end = completeUtf8Length(buffer, bytesRead);
+          if (end > 0) {
+            send({ type: "append", content: buffer.toString("utf8", 0, end) });
+            lastSize += end;
+            await sendLevels();
+          }
+        } finally {
+          await handle.close();
+        }
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") console.error("Error watching log file:", error);
+    } finally {
+      checking = false;
+    }
+  }, 1000);
+
+  // Send heartbeat every 30 seconds to keep connection alive
+  heartbeatInterval = setInterval(() => send({ type: "heartbeat" }), 30000);
 });
 
 // Logs: clear log file

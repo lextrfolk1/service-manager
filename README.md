@@ -318,6 +318,7 @@ Current log file behavior:
 - older files are static
 - log viewing is service-oriented in the UI
 - earlier runs are archived and kept for 3 days or 20 runs by default; change this in **Admin › Log retention** or with `LOG_RETENTION_DAYS` and `LOG_MAX_ARCHIVED_RUNS`
+- large logs open at their newest 8 MB (set `LOG_MAX_RESPONSE_BYTES` to change); search, go to line and download cover the whole file
 
 ---
 
