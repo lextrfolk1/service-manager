@@ -85,6 +85,7 @@ function trim(view) {
     levels: view.levels.slice(dropped),
     starts: view.starts.slice(dropped),
     frames: view.frames.slice(dropped),
+    ...(view.services ? { services: view.services.slice(dropped) } : {}),
     lineOffset: view.lineOffset + dropped,
   };
 }
@@ -124,6 +125,48 @@ export function appendToLogView(view, chunk) {
   return trim(next);
 }
 
+// Combined view of several services: a log view plus services[i], the index in serviceNames of the service
+// that wrote line i. Levels and stack frames carry over from the previous line of the same service, since
+// lines of other services can come in between. entries: [[serviceIndex, rawLine], …], complete lines only.
+export function createCombinedView(serviceNames, entries = []) {
+  viewVersion += 1;
+  const view = {
+    raw: [], plain: [], levels: [], starts: [], frames: [], services: [],
+    serviceNames, lastByService: {}, lineOffset: 0, windowed: false, message: "", version: viewVersion,
+  };
+  return appendCombinedLines(view, entries);
+}
+
+export function appendCombinedLines(view, entries) {
+  if (!entries.length) return view;
+  const next = {
+    ...view,
+    raw: view.raw.slice(), plain: view.plain.slice(), levels: view.levels.slice(), starts: view.starts.slice(),
+    frames: view.frames.slice(), services: view.services.slice(), lastByService: { ...view.lastByService },
+  };
+  entries.forEach(([service, rawLine]) => {
+    const text = plainText(rawLine);
+    const level = detectLevel(text);
+    const last = next.lastByService[service] || { level: "other", frame: false };
+    const frame = isStackFrame(text, last.frame);
+    next.raw.push(rawLine);
+    next.plain.push(text);
+    next.levels.push(level || last.level);
+    next.starts.push(Boolean(level));
+    next.frames.push(frame);
+    next.services.push(service);
+    next.lastByService[service] = { level: level || last.level, frame };
+  });
+  return trim(next);
+}
+
+const SERVICE_COLORS = ["#60a5fa", "#34d399", "#f472b6", "#fbbf24", "#a78bfa", "#22d3ee", "#fb923c", "#a3e635", "#f87171", "#2dd4bf", "#e879f9", "#facc15"];
+
+// Color of a service's name in the combined view (readable on the dark log background).
+export function serviceColor(index) {
+  return SERVICE_COLORS[index % SERVICE_COLORS.length];
+}
+
 // Number of lines worth showing (the trailing "" after a final newline is not a line).
 export function visibleLineCount(view) {
   const count = view.raw.length;
@@ -136,11 +179,13 @@ const MIN_FOLD_RUN = 4;
 // Rows for the viewer: line indexes that pass the filters, with long stack-trace runs replaced by a fold row
 // { start, end, count } (indexes of the hidden lines). An expanded run keeps its lines and gets a closing
 // row { start, end, count, expanded: true } after them. Fold rows are keyed by the file line of `start`.
-export function buildRows(view, { levels = null, matcher = null, collapseStacks = true, expandedFolds = null } = {}) {
+// services (combined view only): the service indexes to show.
+export function buildRows(view, { levels = null, matcher = null, collapseStacks = true, expandedFolds = null, services = null } = {}) {
   const count = visibleLineCount(view);
   const indexes = [];
   for (let index = 0; index < count; index += 1) {
     if (levels && !levels.has(view.levels[index])) continue;
+    if (services && !services.has(view.services[index])) continue;
     if (matcher && !matcher.test(view.plain[index])) continue;
     indexes.push(index);
   }

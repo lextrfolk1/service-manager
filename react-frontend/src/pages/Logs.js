@@ -51,13 +51,16 @@ import {
   UnfoldLess as CollapseIcon,
   KeyboardArrowUp as ArrowUpIcon,
   KeyboardArrowDown as ArrowDownIcon,
+  CallMerge as CombinedIcon,
 } from "@mui/icons-material";
 import api from "../services/api";
+import { copyToClipboard } from "../utils/clipboard";
 import useServiceRunningStates from "../hooks/useServiceRunningStates";
 import { CODE_FONT, SEARCH_INPUT_SX, STATUS_COLORS, TOP_BAR_HEIGHT } from "../theme/tokens";
 import StatusDot from "../components/StatusDot";
 import EmptyState from "../components/EmptyState";
 import LogViewer from "../components/logViewer/LogViewer";
+import CombinedLogs from "../components/logViewer/CombinedLogs";
 import {
   LEVELS,
   LEVEL_LABELS,
@@ -103,6 +106,17 @@ const DEFAULT_VIEWER_SETTINGS = {
 
 // Display preferences are saved per browser. Line filters (levels, only matching) are per service and not
 // saved, so a log never opens with lines silently hidden.
+const COMBINED_SERVICES_KEY = "struo_combined_log_services";
+
+function loadCombinedServices() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COMBINED_SERVICES_KEY));
+    return Array.isArray(saved) ? saved.filter((name) => typeof name === "string") : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadViewerSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(VIEWER_SETTINGS_KEY) || "{}");
@@ -141,24 +155,6 @@ function countNewlines(text) {
   let count = 0;
   for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) count += 1;
   return count;
-}
-
-// Clipboard API needs a secure context (https or localhost); fall back to a hidden textarea otherwise.
-async function copyToClipboard(text) {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  document.body.removeChild(textarea);
-  if (!copied) throw new Error("Copy was blocked");
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -436,6 +432,9 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   const [maximized, setMaximized] = useState(false);
   const [pinnedServices, setPinnedServices] = useState([]);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
+  const [combinedEnabled, setCombinedEnabled] = useState(false); // config.logs.combinedView (Admin › Logs)
+  const [combinedOpen, setCombinedOpen] = useState(false);
+  const [combinedServices, setCombinedServices] = useState(() => loadCombinedServices() || openServices);
   const eventSourceRef = useRef(null);
   const latestFileRef = useRef("");
 
@@ -658,6 +657,27 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   useEffect(() => {
     loadServices();
   }, [loadServices]);
+
+  // The combined view is behind a flag in the config; re-read it whenever the Logs tab is shown.
+  useEffect(() => {
+    if (!isActive) return;
+    api.get("/config")
+      .then((data) => {
+        const enabled = data?.config?.logs?.combinedView === true;
+        setCombinedEnabled(enabled);
+        if (!enabled) setCombinedOpen(false);
+      })
+      .catch(() => {});
+  }, [isActive]);
+
+  const updateCombinedServices = useCallback((names) => {
+    setCombinedServices(names);
+    try {
+      localStorage.setItem(COMBINED_SERVICES_KEY, JSON.stringify(names));
+    } catch {
+      // Still applies for this session
+    }
+  }, []);
 
   useEffect(() => {
     if (activeServiceFromTabs) {
@@ -1046,7 +1066,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
 
   // Keyboard shortcuts while the Logs tab is shown (see SHORTCUTS).
   useEffect(() => {
-    if (!isActive || !currentService) return undefined;
+    if (!isActive || !currentService || combinedOpen) return undefined;
     const handleKeyDown = (event) => {
       if (event.defaultPrevented) return;
       const target = event.target;
@@ -1104,7 +1124,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [copySelectedLines, currentService, followLatest, isActive, moveToError, moveToSearchResult, selection, togglePause, updateViewerSettings]);
+  }, [combinedOpen, copySelectedLines, currentService, followLatest, isActive, moveToError, moveToSearchResult, selection, togglePause, updateViewerSettings]);
 
   const renderSearchControls = () => (
     <Stack direction="row" spacing={0.5} alignItems="center">
@@ -1344,6 +1364,15 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
   };
 
   const openServiceFromExplorer = (serviceName) => {
+    if (combinedOpen) {
+      // In the combined view the explorer adds or removes services.
+      updateCombinedServices(
+        combinedServices.includes(serviceName)
+          ? combinedServices.filter((name) => name !== serviceName)
+          : [...combinedServices, serviceName]
+      );
+      return;
+    }
     setSelectedServiceName(serviceName);
     if (!openServices.includes(serviceName)) {
       onAddService(serviceName);
@@ -1803,6 +1832,19 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                   }}
                 />
               ) : null}
+              {combinedEnabled ? (
+                <Tooltip title={combinedOpen ? "Back to single-service logs" : "Combined logs: several services in one live view"}>
+                  <IconButton
+                    size="small"
+                    color={combinedOpen ? "primary" : "default"}
+                    aria-label="Combined logs"
+                    aria-pressed={combinedOpen}
+                    onClick={() => setCombinedOpen((previous) => !previous)}
+                  >
+                    <CombinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              ) : null}
               <Tooltip title={explorerCollapsed ? "Expand explorer" : "Collapse explorer"}>
                 <IconButton size="small" onClick={() => setExplorerCollapsed((previous) => !previous)}>
                   {explorerCollapsed ? <ChevronRightIcon fontSize="small" /> : <ChevronLeftIcon fontSize="small" />}
@@ -1816,7 +1858,7 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                   <ExplorerItem
                     key={service.name}
                     service={service}
-                    active={currentService === service.name}
+                    active={combinedOpen ? combinedServices.includes(service.name) : currentService === service.name}
                     pinned={pinnedServices.includes(service.name)}
                     running={Boolean(runningServices[service.name])}
                     onOpen={() => openServiceFromExplorer(service.name)}
@@ -1845,8 +1887,8 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
                     <Chip
                       size="small"
                       clickable
-                      color={currentService === service.name ? "primary" : "default"}
-                      variant={currentService === service.name ? "filled" : "outlined"}
+                      color={(combinedOpen ? combinedServices.includes(service.name) : currentService === service.name) ? "primary" : "default"}
+                      variant={(combinedOpen ? combinedServices.includes(service.name) : currentService === service.name) ? "filled" : "outlined"}
                       label={serviceInitials(service.name)}
                       aria-label={service.name}
                       onClick={() => openServiceFromExplorer(service.name)}
@@ -1865,7 +1907,19 @@ const Logs = forwardRef(({ openServices, activeServiceTab, onCloseService, onSer
         )}
 
         <Box sx={{ minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {currentService ? (
+          {combinedOpen ? (
+            <CombinedLogs
+              apiBase={LOG_API_BASE}
+              services={services}
+              selected={combinedServices}
+              onSelectedChange={updateCombinedServices}
+              isActive={isActive}
+              fontSize={fontSize}
+              wrap={wrapped}
+              colorLevels={colorLevels}
+              onClose={() => setCombinedOpen(false)}
+            />
+          ) : currentService ? (
             <>
               {renderViewerTabs()}
               {renderLogToolbar()}

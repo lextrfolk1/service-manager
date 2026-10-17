@@ -283,7 +283,7 @@ The Admin screen has these tabs:
 | --- | --- |
 | Paths | Base paths, with native folder picking |
 | Services | Service definitions, dependencies, groups and run configuration |
-| Log retention | How many earlier runs to keep and for how long |
+| Logs | How many earlier runs to keep and for how long; turns the combined log view on or off |
 | Presets | Named service lists for the dashboard |
 | Appearance | Default card style for everyone, with live previews, and your own theme |
 | Import / Export | Export or import the configuration, and edit `services.json` or `run-config.json` as JSON |
@@ -317,7 +317,8 @@ Current log file behavior:
 - current active file supports live streaming
 - older files are static
 - log viewing is service-oriented in the UI
-- earlier runs are archived and kept for 3 days or 20 runs by default; change this in **Admin › Log retention** or with `LOG_RETENTION_DAYS` and `LOG_MAX_ARCHIVED_RUNS`
+- earlier runs are archived and kept for 3 days or 20 runs by default; change this in **Admin › Logs** or with `LOG_RETENTION_DAYS` and `LOG_MAX_ARCHIVED_RUNS`
+- **Combined logs** (off by default; turn on in **Admin › Logs**): several services' current runs in one live view, ordered by time and tagged by service, with a filter for following a trace ID across services
 - large logs open at their newest 8 MB (set `LOG_MAX_RESPONSE_BYTES` to change); search, go to line and download cover the whole file
 
 ---

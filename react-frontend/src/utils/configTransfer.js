@@ -16,7 +16,7 @@ const SECRET_NAME = /(pass(word|wd)?|secret|token|api[_-]?key|access[_-]?key|pri
 export const TRANSFER_SECTIONS = [
   { id: "services", label: "Services and groups", hint: "Service definitions, dependencies and groups", exportByDefault: true },
   { id: "presets", label: "Presets", hint: "Named service lists for Start", exportByDefault: true },
-  { id: "logs", label: "Log retention", hint: "Archive and cleanup settings", exportByDefault: true },
+  { id: "logs", label: "Logs", hint: "Retention and log viewer settings", exportByDefault: true },
   { id: "settings", label: "General settings", hint: "Default card style and dependency check", exportByDefault: true },
   { id: "paths", label: "Paths", hint: "Folders on this machine", exportByDefault: false },
   { id: "runConfig", label: "Run configuration", hint: "This machine's JVM options, arguments and environment variables", exportByDefault: false },
@@ -237,7 +237,7 @@ export function planImport(current, doc, sections, mode) {
   };
   pick("services", "Services", current.services, doc.services);
   pick("paths", "Paths", current.basePaths, config.basePaths);
-  pick("logs", "Log retention", current.logs, config.logs);
+  pick("logs", "Logs", current.logs, config.logs);
 
   if (sections.includes("presets")) {
     const incoming = isPlainObject(config.presets) && Object.keys(config.presets).length ? config.presets : null;

@@ -91,8 +91,9 @@ const FEATURE_GROUPS = [
     items: [
       ["Live streaming", "The current log streams live while the service writes to it. The indicator shows Live, Idle or Stream error.", "Logs tab"],
       ["Several services at once", "Open services as tabs and switch between them. The left list shows which services are running (green dot) and lets you pin favourites to the top.", "Logs tab: service list and tabs"],
-      ["One log per run", "Every start or restart writes a separate log, so runs never mix. The run picker lists runs by day with start time, how long each ran and its size; the viewer jumps to the current run automatically. How long earlier runs are kept is set in Admin › Log retention.", "Run picker in the log toolbar"],
-      ["Log retention", "Choose whether earlier runs are archived or deleted when a service restarts, how many days archived runs are kept, and how many per service (defaults: archive, 3 days, 20 runs). See how much space they use and delete them all in one click.", "Admin › Log retention"],
+      ["One log per run", "Every start or restart writes a separate log, so runs never mix. The run picker lists runs by day with start time, how long each ran and its size; the viewer jumps to the current run automatically. How long earlier runs are kept is set in Admin › Logs.", "Run picker in the log toolbar"],
+      ["Log retention", "Choose whether earlier runs are archived or deleted when a service restarts, how many days archived runs are kept, and how many per service (defaults: archive, 3 days, 20 runs). See how much space they use and delete them all in one click.", "Admin › Logs"],
+      ["Combined logs", "Turn on Combined log view in Admin › Logs (off by default), then use the merge button above the service list. The current runs of several services stream into one view, ordered by the time in each line and tagged with a colored service name. Filter all of them at once, for example by a trace ID: double-click an ID in a line to filter by it. Click a service name to show only that service; Errors & warnings, Pause and Copy work as in the single view.", "Logs tab: merge button next to the service search"],
       ["Search in log", "Search the whole file and step through matches with Previous / Next (or n / Shift+N); the matching line is highlighted. Aa matches case, .* uses a regular expression. Matches outside the loaded part are loaded when you go to them.", "Search box in the log toolbar"],
       ["Filter by level", "Color chips count Error, Warning, Info and Debug entries; when only part of a large log is loaded they show loaded / whole file (e.g. 120 / 3,034). Click a chip to hide or show that level. Stack trace lines stay with the entry they belong to. \"Only matching lines\" hides everything that doesn't match the search. Filters apply to the open service only and reset when Struo reloads.", "Filter bar under the log toolbar"],
       ["Errors, stack traces and colors", "Jump between errors with the arrows (or e / Shift+E) — across the whole file, loading earlier parts as needed. Long stack traces are folded to their first frame; click \"more stack lines\" to open one. ANSI colors from the service are shown as colors.", "Filter bar and log lines"],
@@ -319,10 +320,10 @@ const GLOBAL_FIELDS = [
   {
     name: "config.logs",
     required: "No",
-    admin: "Admin › Log retention",
-    what: "How long logs from earlier runs are kept.",
-    how: "previousRuns is \"archive\" (keep earlier runs within the limits) or \"delete\" (remove them when a new run starts). retentionDays and maxRuns limit archived runs per service; whichever is reached first applies. The current run is never deleted.",
-    examples: [["Defaults", '{ "previousRuns": "archive", "retentionDays": 3, "maxRuns": 20 }'], ["Keep only the latest", '{ "previousRuns": "delete" }']],
+    admin: "Admin › Logs",
+    what: "How long logs from earlier runs are kept, and whether the combined log view is available.",
+    how: "previousRuns is \"archive\" (keep earlier runs within the limits) or \"delete\" (remove them when a new run starts). retentionDays and maxRuns limit archived runs per service; whichever is reached first applies. The current run is never deleted. combinedView: true adds the Combined logs view to the Logs page (off by default).",
+    examples: [["Defaults", '{ "previousRuns": "archive", "retentionDays": 3, "maxRuns": 20 }'], ["Keep only the latest", '{ "previousRuns": "delete" }'], ["Combined log view on", '{ "combinedView": true }']],
     tip: "Settings apply immediately after Save — no backend restart needed.",
   },
   {

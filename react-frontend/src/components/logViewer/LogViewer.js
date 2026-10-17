@@ -1,7 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box } from "@mui/material";
 import { CODE_FONT } from "../../theme/tokens";
-import { ansiSegments } from "./logLines";
+import { ansiSegments, serviceColor } from "./logLines";
 
 // Rows are rendered in blocks; only blocks near the viewport are in the DOM. Without wrapping every row is
 // exactly one line high; with wrapping, block heights are measured after they render.
@@ -9,6 +9,24 @@ const BLOCK_SIZE = 100;
 const OVERSCAN_PX = 800;
 
 const LEVEL_CLASS = { error: "lv-error", warn: "lv-warn", debug: "lv-debug" };
+
+const TOKEN_CHAR = /[\w.:-]/;
+
+// The word under a double-click, widened to a whole ID such as a trace ID or UUID (selection stops at "-").
+function wordAtSelection() {
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  if (!node || node.nodeType !== Node.TEXT_NODE) return selection?.toString().trim() || "";
+  const text = node.textContent;
+  let start = Math.min(selection.anchorOffset, node === selection.focusNode ? selection.focusOffset : selection.anchorOffset);
+  let end = node === selection.focusNode ? Math.max(selection.anchorOffset, selection.focusOffset) : text.length;
+  while (start > 0 && TOKEN_CHAR.test(text[start - 1])) start -= 1;
+  while (end < text.length && TOKEN_CHAR.test(text[end])) end += 1;
+  const word = text.slice(start, end).replace(/^[.:-]+|[.:-]+$/g, "");
+  // "traceId-spanId" (Spring) or a W3C traceparent "00-traceId-spanId-01": the trace ID is shared across services.
+  const traceAndSpan = /(?:^|-)([0-9a-f]{32})-[0-9a-f]{16}(?:-[0-9a-f]{2})?$/i.exec(word);
+  return traceAndSpan ? traceAndSpan[1] : word;
+}
 
 function rowLine(row, lineOffset) {
   return lineOffset + (typeof row === "number" ? row : row.start) + 1;
@@ -67,6 +85,8 @@ const LogViewer = forwardRef(function LogViewer(
     onFollowingChange,
     onGutterClick,
     onToggleFold,
+    onServiceClick, // combined view: click on a service name
+    onWordDoubleClick, // double-click on a word in a line, with the word (e.g. a trace ID)
     emptyText = "(empty log)",
   },
   ref
@@ -252,6 +272,7 @@ const LogViewer = forwardRef(function LogViewer(
   });
 
   const gutterWidth = `${String(view.lineOffset + view.raw.length).length + 1}ch`;
+  const tagWidth = view.serviceNames ? `${Math.min(24, Math.max(...view.serviceNames.map((name) => name.length), 4))}ch` : 0;
   const fromLine = selection ? Math.min(selection.from, selection.to) : null;
   const toLine = selection ? Math.max(selection.from, selection.to) : null;
 
@@ -286,7 +307,25 @@ const LogViewer = forwardRef(function LogViewer(
         >
           {line}
         </span>
-        <span className="lv-text">{renderText(view.raw[row], plain, matcher)}</span>
+        {view.services ? (
+          <span
+            className="lv-tag"
+            title={onServiceClick ? `${view.serviceNames[view.services[row]]} · click to show only this service` : undefined}
+            style={{ color: serviceColor(view.services[row]) }}
+            onClick={onServiceClick ? () => onServiceClick(view.services[row]) : undefined}
+          >
+            {view.serviceNames[view.services[row]]}
+          </span>
+        ) : null}
+        <span
+          className="lv-text"
+          onDoubleClick={onWordDoubleClick ? () => {
+            const word = wordAtSelection();
+            if (word) onWordDoubleClick(word);
+          } : undefined}
+        >
+          {renderText(view.raw[row], plain, matcher)}
+        </span>
       </div>
     );
   };
@@ -349,6 +388,17 @@ const LogViewer = forwardRef(function LogViewer(
           "&:hover": { color: "#cbd5e1" },
         },
         "& .lv-text": { flex: 1, minWidth: 0, pr: 2 },
+        "& .lv-tag": {
+          flexShrink: 0,
+          width: tagWidth,
+          mr: 1.5,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontWeight: 600,
+          cursor: onServiceClick ? "pointer" : "default",
+          "&:hover": onServiceClick ? { textDecoration: "underline" } : {},
+        },
         "& .lv-error": { backgroundColor: "rgba(239,68,68,0.08)", "& .lv-text": { color: "#fecaca" } },
         "& .lv-warn": { backgroundColor: "rgba(245,158,11,0.07)", "& .lv-text": { color: "#fde68a" } },
         "& .lv-debug .lv-text": { color: "#94a3b8" },

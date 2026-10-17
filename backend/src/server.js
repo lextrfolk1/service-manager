@@ -8,6 +8,7 @@ const { execFile } = require("child_process");
 
 const ServiceManager = require("./serviceManager");
 const logger = require("./logger");
+const { streamCombinedLogs } = require("./combinedLogs");
 const runConfig = require("./runConfig");
 const { resolveConfigPath, getConfigMetadata, readConfig, invalidateConfigCache } = require("./configResolver");
 const { killProcessOnPort, getPortProcess } = require("./utils/portUtils");
@@ -611,6 +612,21 @@ app.get("/logs/:name/:file/stream", async (req, res) => {
 
   // Send heartbeat every 30 seconds to keep connection alive
   heartbeatInterval = setInterval(() => send({ type: "heartbeat" }), 30000);
+});
+
+// Combined live log of several services (?names=a,b&lines=300). Off unless config.logs.combinedView is true.
+app.get("/combined-logs/stream", (req, res) => {
+  const freshConfig = loadConfig();
+  if (freshConfig.config?.logs?.combinedView !== true) {
+    return res.status(404).json({ error: "The combined log view is turned off (Admin › Logs)" });
+  }
+  const names = String(req.query.names || "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter((name, index, all) => name && freshConfig.services?.[name] && all.indexOf(name) === index)
+    .slice(0, 50);
+  if (!names.length) return res.status(400).json({ error: "No known services given" });
+  streamCombinedLogs(req, res, names, { lines: req.query.lines });
 });
 
 // Logs: clear log file
