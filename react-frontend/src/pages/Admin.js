@@ -33,7 +33,9 @@ import {
 } from "@mui/material";
 import {
   Add as AddIcon,
-  Code as CodeIcon,
+  ImportExport as ImportExportIcon,
+  LockOutlined as LockIcon,
+  LockOpenOutlined as LockOpenIcon,
   Palette as AppearanceIcon,
   AutoAwesome as AutoAwesomeIcon,
   ContentCopy as ContentCopyIcon,
@@ -57,6 +59,8 @@ import { RunConfigSection, cleanRunConfig, summarizeRunConfigChanges } from "../
 import StatusDot from "../components/StatusDot";
 import ThemePicker from "../components/ThemePicker";
 import EmptyState from "../components/EmptyState";
+import ConfigTransferPanel from "../components/ConfigTransferPanel";
+import { describeJsonError, maskRunConfig, unmaskRunConfig } from "../utils/configTransfer";
 import useServiceRunningStates from "../hooks/useServiceRunningStates";
 import { CODE_FONT, SEARCH_INPUT_SX, TOP_BAR_HEIGHT } from "../theme/tokens";
 import { CARD_STYLES, DEFAULT_CARD_STYLE, ServiceCardView, normalizeCardStyle } from "../components/cards";
@@ -922,15 +926,22 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
   const [confirmReloadOpen, setConfirmReloadOpen] = useState(false);
   const [confirmResetPresetsOpen, setConfirmResetPresetsOpen] = useState(false);
   const [cardStyle, setCardStyle] = useState(DEFAULT_CARD_STYLE); // config.ui.cardStyle (Appearance tab)
-  const [jsonText, setJsonText] = useState(""); // Advanced › JSON draft text
-  const [jsonTouched, setJsonTouched] = useState(false); // edited but not applied yet
+  // JSON editor: one document per file. touched = edited but not applied to the forms yet.
+  const [jsonDocs, setJsonDocs] = useState({ services: { text: "", touched: false }, run: { text: "", touched: false } });
+  const [jsonFile, setJsonFile] = useState("services"); // "services" (services.json) or "run" (run-config.json)
+  const [jsonUnlocked, setJsonUnlocked] = useState(false); // the JSON editor is read-only until unlocked
+  const jsonText = jsonDocs[jsonFile].text;
+  const jsonTouched = jsonDocs[jsonFile].touched;
+  const anyJsonTouched = jsonDocs.services.touched || jsonDocs.run.touched;
+  const [pendingTab, setPendingTab] = useState(null); // tab to open after confirming unapplied JSON edits are discarded
+  const [importCount, setImportCount] = useState(0); // bumped after an import so the JSON view is rebuilt
   const jsonParseError = useMemo(() => {
     if (!jsonText) return "";
     try {
       JSON.parse(jsonText);
       return "";
     } catch (error) {
-      return error.message;
+      return describeJsonError(jsonText) || error.message;
     }
   }, [jsonText]);
   const [config, setConfig] = useState(null);
@@ -979,6 +990,10 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
     [basePaths, services]
   );
   const runtimePlatform = runtimeInfo?.platform || "unknown";
+  const validateForImport = useCallback(
+    (nextServices, nextBasePaths) => validateConfiguration({ config: { basePaths: nextBasePaths }, services: nextServices }).issues,
+    []
+  );
 
   const groupedServices = useMemo(() => getServiceGroups(services), [services]);
   const serviceRefs = useMemo(() => Object.keys(services).map((name) => ({ name })), [services]);
@@ -1230,14 +1245,14 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
   const isDirty = isConfigDirty || isRunConfigDirty;
 
   useEffect(() => {
-    if (!isDirty && !jsonTouched) return undefined;
+    if (!isDirty && !anyJsonTouched) return undefined;
     const warn = (event) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
-  }, [isDirty, jsonTouched]);
+  }, [isDirty, anyJsonTouched]);
 
   const errorIssues = useMemo(
     () => validationResult.issues.filter((issue) => issue.severity === "error"),
@@ -1290,34 +1305,76 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
     services,
   });
 
-  // Advanced JSON tab: edit the draft as text, then apply it to the editor; Save still reviews and writes it.
-  const openJsonDraft = () => {
-    setJsonText(JSON.stringify(buildDraftConfig(), null, 2));
-    setJsonTouched(false);
+  // JSON editor: services.json and this machine's run-config.json, each edited as text and applied to
+  // the forms on its own; Save still reviews and writes them. Run configuration secrets show as <hidden>.
+  const jsonDraftText = (file) =>
+    JSON.stringify(file === "run" ? maskRunConfig(runConfig) : buildDraftConfig(), null, 2);
+
+  // Rebuilds the given files from the current draft, dropping their unapplied edits.
+  const openJsonDraft = (files = ["services", "run"]) => {
+    setJsonDocs((docs) => {
+      const next = { ...docs };
+      files.forEach((file) => {
+        next[file] = { text: jsonDraftText(file), touched: false };
+      });
+      return next;
+    });
+    setJsonUnlocked(false);
   };
+
+  // Rebuilds only the files without unapplied edits (after changes made elsewhere).
+  const refreshJsonDrafts = () => {
+    const files = ["services", "run"].filter((file) => !jsonDocs[file].touched);
+    if (files.length) openJsonDraft(files);
+  };
+
+  const setJsonText = (text, touched = true) =>
+    setJsonDocs((docs) => ({ ...docs, [jsonFile]: { text, touched: touched || docs[jsonFile].touched } }));
 
   const applyJsonDraft = () => {
     let parsed;
     try {
       parsed = JSON.parse(jsonText);
     } catch (error) {
-      showSnackbar(`Invalid JSON: ${error.message}`, "error");
+      showSnackbar(`Invalid JSON: ${describeJsonError(jsonText) || error.message}`, "error");
       return;
     }
     if (!parsed || typeof parsed !== "object" || !parsed.services || typeof parsed.services !== "object" || Array.isArray(parsed.services)) {
       showSnackbar('The JSON needs a "services" object', "error");
       return;
     }
-    const nextConfig = parsed.config || {};
-    setBasePaths(nextConfig.basePaths || {});
-    setLogSettings(nextConfig.logs || {});
-    setPresets(nextConfig.presets && Object.keys(nextConfig.presets).length ? nextConfig.presets : null);
-    setDependencyCheck(nextConfig.dependencyCheck !== false);
-    setCardStyle(normalizeCardStyle(nextConfig.ui?.cardStyle));
-    setServices(parsed.services);
-    setJsonTouched(false);
-    showSnackbar("JSON applied to the editor — review and Save to write it", "success");
+    if (jsonFile === "run") {
+      setRunConfig(unmaskRunConfig(parsed, runConfig));
+    } else {
+      const nextConfig = parsed.config || {};
+      setBasePaths(nextConfig.basePaths || {});
+      setLogSettings(nextConfig.logs || {});
+      setPresets(nextConfig.presets && Object.keys(nextConfig.presets).length ? nextConfig.presets : null);
+      setDependencyCheck(nextConfig.dependencyCheck !== false);
+      setCardStyle(normalizeCardStyle(nextConfig.ui?.cardStyle));
+      setServices(parsed.services);
+    }
+    setJsonDocs((docs) => ({ ...docs, [jsonFile]: { ...docs[jsonFile], touched: false } }));
+    setJsonUnlocked(false);
+    showSnackbar(`${jsonFile === "run" ? "run-config.json" : "services.json"} applied to the editor — review and Save to write it`, "success");
   };
+
+  // Import / Export: an import only changes the editor state; Save still reviews and writes it.
+  const applyImport = (next) => {
+    if (next.services) setServices(next.services);
+    if (next.paths) setBasePaths(next.paths);
+    if (next.logs) setLogSettings(next.logs);
+    if ("presets" in next) setPresets(next.presets);
+    if (next.cardStyle) setCardStyle(next.cardStyle);
+    if ("dependencyCheck" in next) setDependencyCheck(next.dependencyCheck);
+    if (next.runConfig) setRunConfig(next.runConfig);
+    setImportCount((count) => count + 1);
+  };
+
+  useEffect(() => {
+    if (importCount) refreshJsonDrafts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importCount]);
 
   const saveConfig = async () => {
     setConfirmSaveOpen(false);
@@ -1408,6 +1465,10 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
   // Presets: effective list (configured or built-in), selection and edits.
   const serviceList = useMemo(() => Object.entries(services).map(([name, svc]) => ({ name, ...svc })), [services]);
   const effectivePresets = useMemo(() => getEffectivePresets(serviceList, presets), [serviceList, presets]);
+  const transferState = useMemo(
+    () => ({ basePaths, services, logs: logSettings, presets, effectivePresets, cardStyle, dependencyCheck, runConfig }),
+    [basePaths, services, logSettings, presets, effectivePresets, cardStyle, dependencyCheck, runConfig]
+  );
   const presetNames = Object.keys(effectivePresets);
   const activePresetName = effectivePresets[selectedPresetName] ? selectedPresetName : presetNames[0] || "";
   const serviceGroupsForPresets = useMemo(() => {
@@ -1693,8 +1754,13 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
         <Tabs
           value={currentTab}
           onChange={(_, value) => {
-            // Fresh JSON view of the current draft, unless there are un-applied JSON edits.
-            if (value === 5 && !jsonTouched) openJsonDraft();
+            // Unapplied JSON edits would otherwise be left behind silently.
+            if (currentTab === 5 && value !== 5 && anyJsonTouched) {
+              setPendingTab(value);
+              return;
+            }
+            // Fresh JSON views of the current draft, except files with un-applied edits.
+            if (value === 5) refreshJsonDrafts();
             setCurrentTab(value);
           }}
           sx={{
@@ -1712,7 +1778,7 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
           <Tab icon={<LogsIcon fontSize="small" />} iconPosition="start" label="Log retention" />
           <Tab icon={<PresetsIcon fontSize="small" />} iconPosition="start" label={`Presets (${presetNames.length})`} />
           <Tab icon={<AppearanceIcon fontSize="small" />} iconPosition="start" label="Appearance" />
-          <Tab icon={<CodeIcon fontSize="small" />} iconPosition="start" label="JSON" />
+          <Tab icon={<ImportExportIcon fontSize="small" />} iconPosition="start" label="Import / Export" />
         </Tabs>
 
         <Box sx={{ flex: 1 }} />
@@ -2308,50 +2374,165 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
         )}
 
         {currentTab === 5 && (
-          <Box sx={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", p: { xs: 2, md: 2.5 }, gap: 1.25 }}>
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-              <Typography variant="body2" sx={{ color: "text.secondary", flex: 1, minWidth: 240 }}>
-                Advanced: edit the whole configuration as JSON. <strong>Apply to editor</strong> loads it into the forms;
-                nothing is written until you <strong>Save</strong> and confirm the changes.
-              </Typography>
-              {jsonTouched ? <Chip size="small" color="warning" variant="outlined" label="Not applied" /> : null}
-              <Button
-                size="small"
-                onClick={() => {
-                  try {
-                    setJsonText(JSON.stringify(JSON.parse(jsonText), null, 2));
-                  } catch (error) {
-                    showSnackbar(`Invalid JSON: ${error.message}`, "error");
-                  }
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              display: "flex",
+              flexDirection: { xs: "column", md: "row" },
+              gap: 2,
+              p: { xs: 2, md: 2.5 },
+              overflow: { xs: "auto", md: "hidden" },
+            }}
+          >
+            <Box sx={{ width: { xs: "100%", md: 400 }, flexShrink: 0, overflow: { md: "auto" } }}>
+              <ConfigTransferPanel
+                getDraftConfig={buildDraftConfig}
+                runConfig={runConfig}
+                current={transferState}
+                onApplyImport={applyImport}
+                showSnackbar={showSnackbar}
+                validate={validateForImport}
+                platform={runtimePlatform}
+              />
+            </Box>
+            <Box sx={{ flex: 1, minWidth: 0, minHeight: { xs: 480, md: 0 }, display: "flex", flexDirection: "column" }}>
+              <Box
+                sx={{
+                  flex: 1,
+                  minHeight: 320,
+                  display: "flex",
+                  flexDirection: "column",
+                  borderRadius: 2,
+                  overflow: "hidden",
+                  border: "1px solid",
+                  borderColor: jsonParseError ? "error.main" : jsonUnlocked ? "primary.main" : "var(--c-border-94a3b8-025)",
+                  backgroundColor: "background.paper",
                 }}
               >
-                Format
-              </Button>
-              <Button size="small" onClick={openJsonDraft} disabled={!jsonTouched}>
-                Discard JSON edits
-              </Button>
-              <Button size="small" variant="contained" onClick={applyJsonDraft} disabled={!jsonTouched || Boolean(jsonParseError)}>
-                Apply to editor
-              </Button>
-            </Stack>
-            <TextField
-              multiline
-              fullWidth
-              value={jsonText}
-              onChange={(event) => {
-                setJsonText(event.target.value);
-                setJsonTouched(true);
-              }}
-              error={Boolean(jsonParseError)}
-              helperText={jsonParseError || " "}
-              inputProps={{ spellCheck: false, "aria-label": "Configuration JSON" }}
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                "& .MuiInputBase-root": { height: "100%", alignItems: "flex-start", overflow: "auto" },
-                "& textarea": { fontFamily: CODE_FONT, fontSize: "0.8rem", lineHeight: 1.5 },
-              }}
-            />
+                <Tabs
+                  value={jsonFile}
+                  onChange={(_, value) => setJsonFile(value)}
+                  aria-label="Configuration file"
+                  sx={{
+                    minHeight: 40,
+                    px: 1,
+                    backgroundColor: "var(--c-bg-f8fafc)",
+                    borderBottom: "1px solid var(--c-border-94a3b8-016)",
+                    "& .MuiTab-root": { minHeight: 40, textTransform: "none", fontWeight: 700, px: 1.5 },
+                  }}
+                >
+                  {[
+                    { value: "services", file: "services.json", scope: "Shared" },
+                    { value: "run", file: "run-config.json", scope: "This machine" },
+                  ].map((tab) => (
+                    <Tab
+                      key={tab.value}
+                      value={tab.value}
+                      label={
+                        <Stack direction="row" spacing={0.75} alignItems="center">
+                          <Box component="span" sx={{ fontFamily: CODE_FONT, fontSize: "0.82rem" }}>
+                            {tab.file}
+                          </Box>
+                          <Chip size="small" variant="outlined" label={tab.scope} sx={{ height: 18, fontSize: "0.65rem", fontWeight: 600 }} />
+                          {jsonDocs[tab.value].touched ? (
+                            <Box
+                              component="span"
+                              title="Not applied"
+                              sx={{ width: 7, height: 7, borderRadius: "50%", bgcolor: "warning.main" }}
+                            />
+                          ) : null}
+                        </Stack>
+                      }
+                    />
+                  ))}
+                </Tabs>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  alignItems="center"
+                  flexWrap="wrap"
+                  useFlexGap
+                  sx={{ px: 1.5, py: 1, borderBottom: "1px solid var(--c-border-94a3b8-016)" }}
+                >
+                  <Chip
+                    size="small"
+                    icon={jsonUnlocked ? <LockOpenIcon /> : <LockIcon />}
+                    label={jsonUnlocked ? "Editing" : "Read-only"}
+                    color={jsonUnlocked ? "primary" : "default"}
+                    variant="outlined"
+                  />
+                  {jsonTouched ? <Chip size="small" color="warning" variant="outlined" label="Not applied" /> : null}
+                  <Typography sx={{ flex: 1, minWidth: 160, fontSize: "0.78rem", color: jsonParseError ? "error.main" : "text.secondary" }}>
+                    {jsonParseError ||
+                      (jsonUnlocked
+                        ? "Apply to editor loads it into the forms; Save writes it."
+                        : jsonFile === "run"
+                          ? "This machine only, never committed. Secret values show as <hidden> and are kept unless you replace them."
+                          : "Shared configuration, committed to git.")}
+                  </Typography>
+                  {jsonUnlocked ? (
+                    <>
+                      <Button
+                        size="small"
+                        onClick={() => {
+                          try {
+                            setJsonText(JSON.stringify(JSON.parse(jsonText), null, 2), false);
+                          } catch (error) {
+                            showSnackbar(`Invalid JSON: ${error.message}`, "error");
+                          }
+                        }}
+                      >
+                        Format
+                      </Button>
+                      {jsonTouched ? (
+                        <Button size="small" onClick={() => openJsonDraft([jsonFile])}>
+                          Discard
+                        </Button>
+                      ) : (
+                        <Button size="small" startIcon={<LockIcon />} onClick={() => setJsonUnlocked(false)}>
+                          Lock
+                        </Button>
+                      )}
+                      <Button size="small" variant="contained" onClick={applyJsonDraft} disabled={!jsonTouched || Boolean(jsonParseError)}>
+                        Apply to editor
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="small" variant="outlined" startIcon={<LockOpenIcon />} onClick={() => setJsonUnlocked(true)}>
+                      Unlock to edit
+                    </Button>
+                  )}
+                </Stack>
+                <Box
+                  component="textarea"
+                  value={jsonText}
+                  readOnly={!jsonUnlocked}
+                  spellCheck={false}
+                  aria-label={jsonFile === "run" ? "run-config.json" : "services.json"}
+                  onChange={(event) => setJsonText(event.target.value)}
+                  sx={{
+                    flex: 1,
+                    minHeight: 0,
+                    width: "100%",
+                    m: 0,
+                    p: 1.75,
+                    border: 0,
+                    outline: 0,
+                    resize: "none",
+                    whiteSpace: "pre",
+                    overflow: "auto",
+                    fontFamily: CODE_FONT,
+                    fontSize: "0.8rem",
+                    lineHeight: 1.55,
+                    tabSize: 2,
+                    color: jsonUnlocked ? "text.primary" : "text.secondary",
+                    backgroundColor: jsonUnlocked ? "background.paper" : "var(--c-bg-f8fafc)",
+                    cursor: jsonUnlocked ? "text" : "default",
+                  }}
+                />
+              </Box>
+            </Box>
           </Box>
         )}
 
@@ -2667,6 +2848,29 @@ const Admin = ({ onConfigReload, adminTarget, onClearAdminTarget, isActive = tru
             }}
           >
             Reset presets
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={pendingTab !== null} onClose={() => setPendingTab(null)} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 800 }}>Leave without applying?</DialogTitle>
+        <DialogContent sx={{ pt: 1 }}>
+          <Typography variant="body2">
+            Your changes in the JSON editor haven't been applied to the forms yet. Apply them first, or discard them and leave.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setPendingTab(null)}>Keep editing</Button>
+          <Button
+            variant="contained"
+            color="error"
+            onClick={() => {
+              openJsonDraft();
+              setCurrentTab(pendingTab);
+              setPendingTab(null);
+            }}
+          >
+            Discard and leave
           </Button>
         </DialogActions>
       </Dialog>
