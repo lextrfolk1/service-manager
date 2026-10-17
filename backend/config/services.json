@@ -1,9 +1,5 @@
 {
   "config": {
-    "configServerUrl": "http://localhost:8888",
-    "profiles": {
-      "active": "dev"
-    },
     "basePaths": {
       "java": "~/codebase/lextr",
       "python": "~/codebase/lextr",
