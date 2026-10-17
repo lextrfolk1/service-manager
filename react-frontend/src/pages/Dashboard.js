@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Autocomplete,
@@ -12,16 +12,11 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
-  FormControl,
   IconButton,
-  InputAdornment,
-  InputLabel,
   ListItemText,
-  ListSubheader,
   Menu,
   MenuItem,
   Paper,
-  Popover,
   Select,
   Skeleton,
   Snackbar,
@@ -33,22 +28,21 @@ import {
 } from "@mui/material";
 import {
   ExpandMore as ExpandMoreIcon,
-  FilterList as FilterListIcon,
   PlayArrow as PlayArrowIcon,
   Refresh as RefreshIcon,
   Check as CheckIcon,
   SyncRounded as SyncIcon,
   Tune as TuneIcon,
-  Search as SearchIcon,
   Stop as StopIcon,
 } from "@mui/icons-material";
 import { CARD_STYLES, DEFAULT_CARD_STYLE, ServiceCardView, normalizeCardStyle } from "../components/cards";
 import HoverSubmenu from "../components/HoverSubmenu";
 import { ACCENTS, THEME_BASES, useThemeSettings } from "../theme/ThemeController";
 import { LOOKS, findLook } from "../theme/looks";
-import { SEARCH_INPUT_SX, STATUS_COLORS } from "../theme/tokens";
+import { STATUS_COLORS } from "../theme/tokens";
 import { RunConfigDialog, cleanRunConfig, countRunConfigValues } from "../components/RunConfigEditor";
 import api from "../services/api";
+import SmartSearch, { splitFieldToken } from "../components/SmartSearch";
 import usePageVisible from "../hooks/usePageVisible";
 import {
   DEFAULT_GROUPS,
@@ -83,6 +77,104 @@ function sleep(ms) {
 
 function normalizeFilterValue(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+// Status filter pills. Waiting, failed and unhealthy are shown only while some service is in that state.
+const STATUS_PILLS = [
+  { key: "running", label: "running", title: "Running", always: true, dot: { bgcolor: STATUS_COLORS.running }, color: STATUS_COLORS.runningText },
+  { key: "stopped", label: "stopped", title: "Stopped", always: true, dot: { border: `1.5px solid ${STATUS_COLORS.stopped}` }, color: STATUS_COLORS.stoppedText },
+  { key: "waiting", label: "waiting", title: "Waiting", dot: { border: `1.5px solid ${STATUS_COLORS.busy}` }, color: STATUS_COLORS.busy },
+  { key: "failed", label: "failed", title: "Failed", dot: { bgcolor: STATUS_COLORS.failed }, color: STATUS_COLORS.failedText },
+  { key: "unhealthy", label: "unhealthy", title: "Unhealthy (running)", dot: { bgcolor: STATUS_COLORS.busy }, color: STATUS_COLORS.busy },
+];
+
+function matchesStatusFilter(state = {}, key) {
+  switch (key) {
+    case "running": return Boolean(state.running);
+    case "waiting": return state.lifecycleState === "waiting";
+    case "failed": return state.lifecycleState === "failed";
+    case "unhealthy": return Boolean(state.running) && state.healthState === "unhealthy";
+    case "stopped": return !state.running && state.lifecycleState !== "failed" && state.lifecycleState !== "waiting";
+    default: return true;
+  }
+}
+
+// Search: every word must match some field of the service (global search). A "key:value" word (e.g. port:80,
+// type:java) only checks that field. Filter fields compare by their option labels, text fields by their values.
+function matchesSearch(service, state, words, fields) {
+  if (!words.length) return true;
+  const fieldTexts = fields.map((field) => ({
+    key: field.key,
+    texts: field.values(service, state)
+      .filter((value) => value !== undefined && value !== null && value !== "")
+      .map((value) => normalizeFilterValue(field.text ? value : field.options.find((option) => option.value === value)?.label || value)),
+  }));
+  return words.every((word) => {
+    const token = splitFieldToken(word, fields);
+    const candidates = token ? fieldTexts.filter((item) => item.key === token.field.key) : fieldTexts;
+    const term = token ? token.value : word;
+    return candidates.some((item) => item.texts.some((text) => text.includes(term)));
+  });
+}
+
+// Fields of the Filter button. To add a filter, add an entry here: values(service, state) returns the service's
+// value(s) for that field; options (optional) lists the choices in order, otherwise the values found are listed
+// (sorted by compare, or alphabetically); aliases (optional) are extra words the search suggests a value for.
+// Every field can be searched as key:value; plain words search all fields.
+const FILTER_FIELDS = [
+  {
+    key: "status",
+    label: "Status",
+    options: STATUS_PILLS.map((pill) => ({ value: pill.key, label: pill.title })),
+    aliases: {
+      running: ["up", "started", "on"],
+      stopped: ["down", "off", "stop"],
+      waiting: ["pending", "starting"],
+      failed: ["error", "errors", "broken", "crashed", "fail"],
+      unhealthy: ["sick", "degraded", "health"],
+    },
+    values: (service, state) => STATUS_PILLS.filter((pill) => matchesStatusFilter(state, pill.key)).map((pill) => pill.key),
+  },
+  {
+    key: "group",
+    label: "Group",
+    values: (service) => [service.group],
+    // Built-in groups in their usual order, then the others alphabetically.
+    compare: (a, b) => {
+      const rank = (group) => (DEFAULT_GROUPS.includes(group) ? DEFAULT_GROUPS.indexOf(group) : DEFAULT_GROUPS.length);
+      return rank(a) - rank(b) || a.localeCompare(b);
+    },
+  },
+  {
+    key: "type",
+    label: "Type",
+    values: (service) => (service.type ? [service.type] : []),
+    aliases: { java: ["spring", "jvm", "maven"], python: ["py"], npm: ["node", "js"], docker: ["container"], database: ["db", "postgres"] },
+  },
+  // Text fields: searched with key:value (and by plain words), never chips. suggest: false skips value completions.
+  { key: "name", label: "Name", text: true, values: (service) => [service.name] },
+  { key: "port", label: "Port", text: true, values: (service) => (service.port ? [String(service.port)] : []) },
+  { key: "branch", label: "Branch", text: true, values: (service, state) => [state?.git?.currentBranch] },
+  { key: "depends", label: "Depends on", text: true, values: (service) => service.dependsOn || [] },
+  { key: "description", label: "Description", text: true, suggest: false, values: (service) => [service.description] },
+  { key: "path", label: "Path", text: true, suggest: false, values: (service) => [service.path] },
+  { key: "command", label: "Command", text: true, suggest: false, values: (service) => [service.command, service.build] },
+];
+
+const SEARCH_DEBOUNCE_MS = 400;
+
+// Filters are remembered in this browser (search is not).
+const SAVED_FILTERS_KEY = "struo_dashboard_filters";
+
+function loadSavedFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SAVED_FILTERS_KEY)) || {};
+    return Object.fromEntries(
+      FILTER_FIELDS.map((field) => [field.key, Array.isArray(saved[field.key]) ? saved[field.key].filter((value) => typeof value === "string") : []])
+    );
+  } catch {
+    return {};
+  }
 }
 
 function formatLifecycleLabel(state) {
@@ -204,10 +296,10 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   const [statuses, setStatuses] = useState({});
   const [uiStates, setUiStates] = useState({});
   const [selectedServices, setSelectedServices] = useState([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
-  const [groupFilter, setGroupFilter] = useState("all");
+  const [searchText, setSearchText] = useState(""); // what is typed; suggestions follow it as you type
+  const [searchQuery, setSearchQuery] = useState(""); // what the cards are filtered by (after a pause in typing)
+  const [filters, setFilters] = useState(loadSavedFilters); // { [field key]: selected values }
+  const searchInputRef = useRef(null);
   const [preset, setPreset] = useState("Core");
   const [buildEnabled, setBuildEnabled] = useState(false);
   const [groupedView, setGroupedView] = useState(() => {
@@ -252,10 +344,9 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       return {};
     }
   }); // { [group]: true } = collapsed; groups are expanded by default
-  const [filtersAnchorEl, setFiltersAnchorEl] = useState(null);
   const [viewAnchorEl, setViewAnchorEl] = useState(null);
   const { base: themeBase, accent: accentId, setBase: setThemeBase, setAccent } = useThemeSettings();
-  const [bulkConfirm, setBulkConfirm] = useState(null); // { action: "start" | "stop", count } awaiting confirmation
+  const [bulkConfirm, setBulkConfirm] = useState(null); // { action: "start" | "stop", names, affected, scoped } awaiting confirmation
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [toast, setToast] = useState({ open: false, message: "", severity: "info" });
@@ -300,43 +391,99 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     return next;
   }, [normalizedServices, statuses, uiStates]);
 
-  const groups = useMemo(() => {
-    const dynamic = new Set(normalizedServices.map((service) => service.group));
-    return [...DEFAULT_GROUPS.filter((group) => dynamic.has(group)), ...[...dynamic].filter((group) => !DEFAULT_GROUPS.includes(group))];
-  }, [normalizedServices]);
+  // Filter fields with their choices; selections of a value that no longer exists are ignored.
+  const filterFields = useMemo(() => FILTER_FIELDS.map((field) => {
+    if (field.options) return field;
+    if (field.text && field.suggest === false) return { ...field, options: [] };
+    const found = normalizedServices.flatMap((service) => field.values(service, displayStates[service.name] || {}));
+    const values = [...new Set(found.filter(Boolean).map(String))].sort(field.compare);
+    return { ...field, options: values.map((value) => ({ value, label: value })) };
+  }), [normalizedServices, displayStates]);
+  const activeFilters = useMemo(() => Object.fromEntries(filterFields.map((field) => [
+    field.key,
+    (filters[field.key] || []).filter((value) => field.options.some((option) => option.value === value)),
+  ])), [filterFields, filters]);
+  const setFilterValues = useCallback((key, values) => setFilters((previous) => ({ ...previous, [key]: values })), []);
 
-  const filteredServices = useMemo(() => {
-    return normalizedServices.filter((service) => {
-      const state = displayStates[service.name];
-      const normalizedSearch = normalizeFilterValue(searchQuery);
-      const normalizedTypeFilter = normalizeFilterValue(typeFilter);
-      const normalizedGroupFilter = normalizeFilterValue(groupFilter);
-      const normalizedServiceType = normalizeFilterValue(service.type);
-      const normalizedServiceGroup = normalizeFilterValue(service.group);
+  useEffect(() => {
+    try {
+      localStorage.setItem(SAVED_FILTERS_KEY, JSON.stringify(filters));
+    } catch {
+      // Filters still apply for this session
+    }
+  }, [filters]);
 
-      const matchesSearch =
-        !normalizedSearch ||
-        normalizeFilterValue(service.name).includes(normalizedSearch) ||
-        normalizeFilterValue(service.description).includes(normalizedSearch) ||
-        normalizedServiceType.includes(normalizedSearch) ||
-        normalizedServiceGroup.includes(normalizedSearch);
+  // The cards follow the search after a pause in typing (Enter, a suggestion or clearing apply at once).
+  useEffect(() => {
+    if (!searchText.trim()) {
+      setSearchQuery("");
+      return undefined;
+    }
+    const timer = setTimeout(() => setSearchQuery(searchText), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchText]);
 
-      const matchesType = normalizedTypeFilter === "all" || normalizedServiceType === normalizedTypeFilter;
-      const matchesGroup = normalizedGroupFilter === "all" || normalizedServiceGroup === normalizedGroupFilter;
+  const applySearchNow = useCallback((text) => {
+    setSearchText(text);
+    setSearchQuery(text);
+  }, []);
 
-      const matchesStatus =
-        statusFilter === "all" ||
-        (statusFilter === "running" && state.running) ||
-        (statusFilter === "healthy" && state.healthState === "healthy") ||
-        (statusFilter === "failed" && state.lifecycleState === "failed") ||
-        (statusFilter === "waiting" && state.lifecycleState === "waiting") ||
-        (statusFilter === "stopped" && !state.running && state.lifecycleState !== "failed") ||
-        (statusFilter === "needs-attention" &&
-          (state.lifecycleState === "failed" || state.healthState === "unhealthy"));
+  // "/" focuses the search box while the Dashboard is shown.
+  useEffect(() => {
+    if (!isActive) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) return;
+      if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isActive]);
 
-      return matchesSearch && matchesType && matchesGroup && matchesStatus;
+  // Services passing a search text and filter selection; also used to preview counts in search suggestions.
+  const evaluateServices = useCallback((selection, text) => {
+    const words = normalizeFilterValue(text).split(/\s+/).filter(Boolean);
+    return normalizedServices.map((service) => {
+      const state = displayStates[service.name] || {};
+      const values = Object.fromEntries(filterFields.map((field) => [field.key, field.values(service, state)]));
+      const passes = Object.fromEntries(filterFields.map((field) => {
+        const chosen = selection[field.key] || [];
+        return [field.key, !chosen.length || values[field.key].some((value) => chosen.includes(value))];
+      }));
+      return { service, values, passes, search: matchesSearch(service, state, words, filterFields) };
     });
-  }, [normalizedServices, displayStates, searchQuery, statusFilter, typeFilter, groupFilter]);
+  }, [normalizedServices, displayStates, filterFields]);
+
+  const previewCount = useCallback(
+    (selection, text) => evaluateServices(selection, text).filter((check) => check.search && filterFields.every((field) => check.passes[field.key])).length,
+    [evaluateServices, filterFields]
+  );
+
+  // Shown services, plus counts for each filter option given the other filters (so the numbers match the grid).
+  const { filteredServices, filterCounts } = useMemo(() => {
+    const checks = evaluateServices(activeFilters, searchQuery);
+    const counts = Object.fromEntries(filterFields.map((field) => [field.key, {}]));
+    checks.forEach(({ values, passes, search }) => {
+      if (!search) return;
+      filterFields.forEach((field) => {
+        if (!filterFields.every((other) => other.key === field.key || passes[other.key])) return;
+        values[field.key].forEach((value) => { counts[field.key][value] = (counts[field.key][value] || 0) + 1; });
+      });
+    });
+    return {
+      filteredServices: checks.filter((check) => check.search && filterFields.every((field) => check.passes[field.key])).map((check) => check.service),
+      filterCounts: counts,
+    };
+  }, [evaluateServices, activeFilters, searchQuery, filterFields]);
+
+  const isFiltered = Boolean(searchQuery.trim()) || Object.values(activeFilters).some((values) => values.length > 0);
+  // Start all / Stop all act on the services shown while any search or filter is on.
+  const bulkScope = isFiltered ? filteredServices : normalizedServices;
+  const bulkStartNames = bulkScope.filter((service) => !displayStates[service.name]?.running).map((service) => service.name);
+  const bulkStopNames = bulkScope.filter((service) => displayStates[service.name]?.running).map((service) => service.name);
 
   const groupedServices = useMemo(() => {
     const availableGroups = [...new Set(filteredServices.map((service) => service.group))];
@@ -953,31 +1100,20 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
     }
   }
 
-  // Start all / Stop all ask first when they affect more than one service.
+  // Start all / Stop all (or the services shown, while filtered) ask first when they affect more than one service.
   function requestBulk(action) {
-    const count = normalizedServices.filter((service) =>
-      action === "stop" ? displayStates[service.name]?.running : !displayStates[service.name]?.running
-    ).length;
-    if (count > 1) {
-      setBulkConfirm({ action, count });
-    } else if (action === "stop") {
-      handleBulkStopAll();
-    } else {
-      handleBulkStartAll();
-    }
+    const names = action === "stop" ? bulkStopNames : bulkStartNames;
+    if (!names.length) return;
+    const request = { action, names: bulkScope.map((service) => service.name), affected: names, scoped: isFiltered };
+    if (names.length > 1) setBulkConfirm(request);
+    else runBulk(request);
   }
 
-  async function handleBulkStartAll() {
+  async function runBulk({ action, names, scoped }) {
+    const label = `${action === "stop" ? "Stop" : "Start"} ${scoped ? "shown" : "all"} services`;
     try {
-      await executeStartFlow(normalizedServices.map((service) => service.name), "Start all services");
-    } catch (error) {
-      showToast(error.message, "error");
-    }
-  }
-
-  async function handleBulkStopAll() {
-    try {
-      await executeStopFlow(normalizedServices.map((service) => service.name), "Stop all services");
+      if (action === "stop") await executeStopFlow(names, label);
+      else await executeStartFlow(names, label);
     } catch (error) {
       showToast(error.message, "error");
     }
@@ -1092,7 +1228,6 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   const someFilteredSelected =
     filteredServices.some((service) => selectedServices.includes(service.name)) && !allFilteredSelected;
 
-  const activeFilterCount = [statusFilter, groupFilter, typeFilter].filter((value) => value !== "all").length;
 
   const effectiveCardStyle = normalizeCardStyle(personalCardStyle || adminCardStyle);
   const choosePersonalCardStyle = (value) => {
@@ -1106,21 +1241,13 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
   };
 
   // At-a-glance state summary; each count filters the grid (click again to clear).
-  const stateSummary = normalizedServices.reduce(
-    (counts, service) => {
-      const state = displayStates[service.name] || {};
-      if (state.lifecycleState === "failed") counts.failed += 1;
-      else if (state.running) counts.running += 1;
-      else counts.stopped += 1;
-      return counts;
-    },
-    { running: 0, stopped: 0, failed: 0 }
-  );
-
   function resetFilters() {
-    setStatusFilter("all");
-    setGroupFilter("all");
-    setTypeFilter("all");
+    setFilters({});
+  }
+
+  function clearSearchAndFilters() {
+    applySearchNow("");
+    resetFilters();
   }
 
   if (loading) {
@@ -1162,24 +1289,29 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
       >
         <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1, minWidth: 0 }}>
           <Stack direction="row" spacing={1}>
-            <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={() => requestBulk("start")} sx={{ height: 32 }}>
-              Start all
-            </Button>
-            <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={() => requestBulk("stop")} sx={{ height: 32 }}>
-              Stop all
-            </Button>
+            <Tooltip title={isFiltered ? "Starts the services shown (current search and filters)" : "Starts every service, in dependency order"}>
+              <span>
+                <Button size="small" variant="contained" startIcon={<PlayArrowIcon />} onClick={() => requestBulk("start")} disabled={!bulkStartNames.length} sx={{ height: 32, whiteSpace: "nowrap" }}>
+                  {isFiltered ? `Start ${bulkStartNames.length || ""} shown` : "Start all"}
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title={isFiltered ? "Stops the running services shown (current search and filters)" : "Stops every running service"}>
+              <span>
+                <Button size="small" variant="outlined" color="error" startIcon={<StopIcon />} onClick={() => requestBulk("stop")} disabled={!bulkStopNames.length} sx={{ height: 32, whiteSpace: "nowrap" }}>
+                  {isFiltered ? `Stop ${bulkStopNames.length || ""} shown` : "Stop all"}
+                </Button>
+              </span>
+            </Tooltip>
           </Stack>
           <Stack direction="row" spacing={0.5} alignItems="center" sx={{ px: 0.5 }} role="group" aria-label="Service state summary">
-            {[
-              { key: "running", label: "running", count: stateSummary.running, dot: { bgcolor: STATUS_COLORS.running }, color: STATUS_COLORS.runningText },
-              { key: "stopped", label: "stopped", count: stateSummary.stopped, dot: { border: `1.5px solid ${STATUS_COLORS.stopped}` }, color: STATUS_COLORS.stoppedText },
-              { key: "failed", label: "failed", count: stateSummary.failed, dot: { bgcolor: STATUS_COLORS.failed }, color: stateSummary.failed ? STATUS_COLORS.failedText : STATUS_COLORS.stopped },
-            ].map((item) => {
-              const active = statusFilter === item.key;
+            {STATUS_PILLS.filter((pill) => pill.always || filterCounts.status[pill.key] > 0 || activeFilters.status.includes(pill.key)).map((pill) => {
+              const item = { ...pill, count: filterCounts.status[pill.key] || 0 };
+              const active = activeFilters.status.includes(item.key);
               return (
                 <ButtonBase
                   key={item.key}
-                  onClick={() => setStatusFilter(active ? "all" : item.key)}
+                  onClick={() => setFilterValues("status", active ? activeFilters.status.filter((key) => key !== item.key) : [...activeFilters.status, item.key])}
                   aria-pressed={active}
                   sx={{
                     display: "inline-flex",
@@ -1264,85 +1396,28 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                 sx={{ p: 0.5 }}
               />
             </Tooltip>
-            <TextField
-              fullWidth
-              size="small"
-              placeholder="Search services"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon sx={{ fontSize: "1rem" }} />
-                  </InputAdornment>
-                ),
-                sx: SEARCH_INPUT_SX,
-              }}
+            <SmartSearch
+              fields={filterFields}
+              selected={activeFilters}
+              text={searchText}
+              onTextChange={setSearchText}
+              onSubmit={applySearchNow}
+              onSelectedChange={setFilters}
+              previewCount={previewCount}
+              inputRef={searchInputRef}
+              placeholder="Search or filter: name, port, branch, “running java”…  ( / )"
             />
           </Box>
-          <Button
-            size="small"
-            variant="outlined"
-            color="inherit"
-            startIcon={<FilterListIcon />}
-            endIcon={<ExpandMoreIcon sx={{ transform: filtersAnchorEl ? "rotate(180deg)" : "none", transition: "transform 160ms ease" }} />}
-            onClick={(event) => setFiltersAnchorEl(event.currentTarget)}
-            aria-haspopup="dialog"
-            aria-expanded={Boolean(filtersAnchorEl)}
-            sx={{ height: 32, borderColor: "divider", textTransform: "none" }}
-          >
-            Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}
-          </Button>
-          <Popover
-            open={Boolean(filtersAnchorEl)}
-            anchorEl={filtersAnchorEl}
-            onClose={() => setFiltersAnchorEl(null)}
-            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-            transformOrigin={{ vertical: "top", horizontal: "right" }}
-            PaperProps={{ sx: { mt: 1, width: 280, maxWidth: "calc(100vw - 32px)", p: 1.5, borderRadius: 2 } }}
-          >
-            <Stack spacing={1.25}>
-              <FormControl size="small" sx={{ width: "100%" }}>
-                <InputLabel>Status</InputLabel>
-                <Select value={statusFilter} label="Status" onChange={(event) => setStatusFilter(event.target.value)}>
-                  <MenuItem value="all">All</MenuItem>
-                  <ListSubheader sx={{ lineHeight: "28px", fontSize: "0.7rem", fontWeight: 700 }}>LIFECYCLE</ListSubheader>
-                  <MenuItem value="running">Running</MenuItem>
-                  <MenuItem value="waiting">Waiting</MenuItem>
-                  <MenuItem value="stopped">Stopped</MenuItem>
-                  <MenuItem value="failed">Failed</MenuItem>
-                  <ListSubheader sx={{ lineHeight: "28px", fontSize: "0.7rem", fontWeight: 700 }}>HEALTH</ListSubheader>
-                  <MenuItem value="healthy">Healthy</MenuItem>
-                  <MenuItem value="needs-attention">Needs attention</MenuItem>
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ width: "100%" }}>
-                <InputLabel>Group</InputLabel>
-                <Select value={groupFilter} label="Group" onChange={(event) => setGroupFilter(event.target.value)}>
-                  <MenuItem value="all">All groups</MenuItem>
-                  {groups.map((group) => (
-                    <MenuItem key={group} value={group}>
-                      {group}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <FormControl size="small" sx={{ width: "100%" }}>
-                <InputLabel>Type</InputLabel>
-                <Select value={typeFilter} label="Type" onChange={(event) => setTypeFilter(event.target.value)}>
-                  <MenuItem value="all">All types</MenuItem>
-                  {[...new Set(normalizedServices.map((service) => service.type).filter(Boolean))].map((type) => (
-                    <MenuItem key={type} value={type}>
-                      {type}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <Button size="small" variant="text" onClick={resetFilters} disabled={!activeFilterCount} sx={{ alignSelf: "flex-start" }}>
-                Reset filters
+          {isFiltered ? (
+            <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flexShrink: 0 }}>
+              <Typography variant="caption" sx={{ color: "text.secondary", whiteSpace: "nowrap" }}>
+                Showing {filteredServices.length} of {normalizedServices.length}
+              </Typography>
+              <Button size="small" onClick={clearSearchAndFilters} sx={{ minWidth: 0, px: 0.75, textTransform: "none" }}>
+                Clear
               </Button>
             </Stack>
-          </Popover>
+          ) : null}
 
           {/* Display options live in one menu instead of a row of switches */}
           <Button
@@ -1558,10 +1633,7 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
                 <Button
                   color="inherit"
                   size="small"
-                  onClick={() => {
-                    setSearchQuery("");
-                    resetFilters();
-                  }}
+                  onClick={clearSearchAndFilters}
                 >
                   Reset filters
                 </Button>
@@ -1791,14 +1863,23 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
 
       <Dialog open={Boolean(bulkConfirm)} onClose={() => setBulkConfirm(null)} maxWidth="xs" fullWidth>
         <DialogTitle sx={{ fontWeight: 800 }}>
-          {bulkConfirm?.action === "stop" ? "Stop all services?" : "Start all services?"}
+          {bulkConfirm?.scoped
+            ? `${bulkConfirm?.action === "stop" ? "Stop" : "Start"} ${bulkConfirm?.affected.length} shown services?`
+            : bulkConfirm?.action === "stop" ? "Stop all services?" : "Start all services?"}
         </DialogTitle>
         <DialogContent sx={{ pt: 1 }}>
           <Typography variant="body2">
             {bulkConfirm?.action === "stop"
-              ? `This stops ${bulkConfirm?.count} running services.`
-              : `This starts ${bulkConfirm?.count} services, in dependency order.`}
+              ? `This stops ${bulkConfirm?.affected.length} running services`
+              : `This starts ${bulkConfirm?.affected.length} services, in dependency order`}
+            {bulkConfirm?.scoped ? " that match the current search and filters:" : "."}
           </Typography>
+          {bulkConfirm?.scoped ? (
+            <Typography variant="body2" sx={{ mt: 1, color: "text.secondary" }}>
+              {bulkConfirm.affected.slice(0, 8).join(", ")}
+              {bulkConfirm.affected.length > 8 ? ` and ${bulkConfirm.affected.length - 8} more` : ""}
+            </Typography>
+          ) : null}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setBulkConfirm(null)}>Cancel</Button>
@@ -1806,13 +1887,12 @@ const Dashboard = forwardRef(({ onViewLogs, onOpenHelp, onCloneService, onEditIn
             variant="contained"
             color={bulkConfirm?.action === "stop" ? "error" : "primary"}
             onClick={() => {
-              const action = bulkConfirm?.action;
+              const request = bulkConfirm;
               setBulkConfirm(null);
-              if (action === "stop") handleBulkStopAll();
-              else handleBulkStartAll();
+              if (request) runBulk(request);
             }}
           >
-            {bulkConfirm?.action === "stop" ? `Stop ${bulkConfirm?.count}` : `Start ${bulkConfirm?.count}`}
+            {bulkConfirm?.action === "stop" ? `Stop ${bulkConfirm?.affected.length}` : `Start ${bulkConfirm?.affected.length}`}
           </Button>
         </DialogActions>
       </Dialog>

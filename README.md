@@ -272,7 +272,8 @@ The startup scripts:
 - Start, stop and restart from each card, or for a selection of services
 - When a start fails because a dependency isn't running, **Start all needed** starts the service with everything it depends on (Detailed, Accent strip and Elevated cards, when the dependency check is on)
 - Presets start a named set of services
-- Search and filters by status, type and group
+- One smart search box: plain words search every field; suggestions turn words into filters (status, group, type) and combine them ("running java"); `key:value` searches one field (`port:8080`, `name:auth`, `branch:main`…)
+- While a search or filter is on, Start / Stop act only on the services shown
 - The **View** menu turns grouping, git branches and live resources (CPU, memory) on cards on or off, toggles **Build before start**, and sets the look, theme and card style for you only
 
 ## Admin Experience
