@@ -284,7 +284,7 @@
       "type": "docker",
       "port": 8181,
       "daemon": true,
-      "command": "docker start lextr-opa 2>/dev/null || docker run -d --name lextr-opa --restart unless-stopped -p 8181:8181 openpolicyagent/opa:1.4.2 run --server --addr 0.0.0.0:8181 --v0-compatible --log-level info",
+      "command": "docker start lextr-opa 2>/dev/null || docker run -d --name lextr-opa --restart unless-stopped -p 8181:8181 openpolicyagent/opa:1.9.0 run --server --addr 0.0.0.0:8181 --log-level info",
       "stopCommand": "docker stop lextr-opa",
       "healthCommand": "curl -sf http://127.0.0.1:8181/health > /dev/null",
       "description": "Open Policy Agent on Docker",
